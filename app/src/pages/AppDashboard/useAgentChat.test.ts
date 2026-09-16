@@ -1,0 +1,633 @@
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { act } from "react";
+import { deferred, flush, renderHook } from "../../test-utils";
+import type { ProjectPlan } from "../../shared/lib/libraryApi";
+import type { ChatMessage } from "../../widgets/AgentDock";
+
+/**
+ * 只 mock `chatClient` 一个模块——它是唯一会真的发网络请求的地方，而且运行时
+ * 就只导出 `streamChat` 一个符号，整体替换不会丢东西。
+ *
+ * 其余依赖一律走真实接缝：API key 直接写 localStorage（happy-dom 提供），
+ * `libraryApi`/`workflowClient` 在本文件的用例里根本不会被调用，没必要替换。
+ * `mock.module` 在 bun 里是**全局且整体替换**的，替掉一个模块就等于删掉它其余的
+ * 导出，会串到同一次运行的其他测试文件里去（`useTaskPolling` 找不到 `listTasks`
+ * 就是这么来的）——所以 mock 的范围要压到最小。
+ */
+const streamChat = mock(async (..._args: unknown[]) => {});
+mock.module("../../shared/lib/chatClient", () => ({ streamChat }));
+
+const { useAgentChat } = await import("./useAgentChat");
+
+type Handlers = {
+  onDelta: (t: string) => void;
+  onTool: (name: string, toolCallId?: string, args?: Record<string, unknown>) => void;
+  onToolResult: (
+    name: string,
+    toolCallId?: string,
+    images?: string[],
+    taskIds?: string[],
+    plan?: ProjectPlan,
+  ) => void;
+  onToolError: (name: string, toolCallId?: string) => void;
+  onError: (m: string) => void;
+  onDone: () => void;
+};
+
+const handlersOf = (call: number) => streamChat.mock.calls[call]![3] as Handlers;
+const signalOf = (call: number) => streamChat.mock.calls[call]![5] as AbortSignal;
+
+const PLAN: ProjectPlan = {
+  schemaVersion: 1,
+  revision: 1,
+  title: "生成椅子",
+  steps: [{ id: "model", content: "生成模型", status: "in_progress" }],
+  updatedAt: "2026-08-09T00:00:00.000Z",
+};
+
+function harness() {
+  const pushAssistant = mock((_c: string) => {});
+  const pushMessage = mock((_message: ChatMessage) => {});
+  const updateMessage = mock(
+    (_id: string, _updater: (message: ChatMessage) => ChatMessage) => {},
+  );
+  const onPlanUpdated = mock(() => {});
+  const pollTasks = mock((..._args: unknown[]) => {});
+  const messagesRef = { current: [] as ChatMessage[] };
+  const mount = (slug = "proj-a") =>
+    renderHook(
+      (projectSlug: string) =>
+        useAgentChat({
+          projectSlug,
+          messagesRef,
+          pushMessage,
+          pushAssistant,
+          updateMessage,
+          appendTo: () => {},
+          setActivity: () => {},
+          pollTasks: pollTasks as never,
+          bumpRefresh: () => {},
+          sessionPlan: null,
+          onPlanUpdated,
+        }),
+      slug,
+    );
+  return {
+    messagesRef,
+    pushAssistant,
+    pushMessage,
+    updateMessage,
+    onPlanUpdated,
+    pollTasks,
+    mount,
+  };
+}
+
+beforeEach(() => {
+  streamChat.mockReset();
+  streamChat.mockImplementation(async () => {});
+  localStorage.clear();
+  localStorage.setItem("gabo.apiKeys", JSON.stringify({ openai: "test-key" }));
+});
+
+describe("useAgentChat 服务端凭证", () => {
+  test("浏览器不持有 LLM key 时仍能发送请求", async () => {
+    localStorage.removeItem("gabo.apiKeys");
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成一把椅子"));
+
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(streamChat.mock.calls[0]![2]).toEqual({
+      provider: undefined,
+      baseUrl: undefined,
+      model: undefined,
+    });
+
+    await h.unmount();
+  });
+
+  test("旧浏览器密钥与旧 OpenAI 设置不会进入新请求", async () => {
+    localStorage.setItem(
+      "gabo.llmSettings",
+      JSON.stringify({
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        model: "gpt-4o-mini",
+      }),
+    );
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成一把椅子"));
+
+    expect(streamChat.mock.calls[0]![2]).toEqual({
+      provider: undefined,
+      baseUrl: undefined,
+      model: undefined,
+    });
+    expect(Object.keys(streamChat.mock.calls[0]![4] ?? {}).some((key) => key.endsWith("ApiKey"))).toBe(false);
+
+    await h.unmount();
+  });
+
+  test("图片生成模型偏好随下一轮请求发送", async () => {
+    localStorage.setItem(
+      "gabo.imageGenerateModelSettings:v1",
+      JSON.stringify({ model: "seedream" }),
+    );
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成一张机器人参考图"));
+
+    expect(streamChat.mock.calls[0]![4]).toMatchObject({
+      imageGenerateModel: "seedream",
+    });
+
+    await h.unmount();
+  });
+
+  test("选中资产作为消息部件发送，历史会永久保留当时的目标", async () => {
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () =>
+      h.result.current.send("把它改成红色", undefined, [
+        {
+          assetSlug: "chair",
+          name: "休闲椅",
+          thumbPath: "projects/proj-a/assets/chair/.thumb-0-chair.png",
+          kind: "model",
+        },
+      ]),
+    );
+
+    expect(streamChat.mock.calls[0]![1]).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "asset", assetSlug: "chair" },
+          { type: "text", text: "把它改成红色" },
+        ],
+      },
+    ]);
+
+    await h.unmount();
+  });
+
+  test("图片消息只把用户指令和真实图片部件发给 LLM，不注入文件名或资源路径", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () =>
+      Response.json({ path: "projects/proj-a/source/0-bedroom.png" }),
+    ) as unknown as typeof fetch;
+    const { mount, pushMessage } = harness();
+    const h = await mount();
+
+    try {
+      h.result.current.send(
+        "分析卧室里的家具",
+        new File(["image bytes"], "bedroom.png", { type: "image/png" }),
+      );
+      await flush();
+
+      expect(streamChat.mock.calls[0]![1]).toEqual([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "分析卧室里的家具" },
+            { type: "image", path: "projects/proj-a/source/0-bedroom.png" },
+          ],
+        },
+      ]);
+      expect(pushMessage.mock.calls[0]![0]).toMatchObject({
+        role: "user",
+        content: "分析卧室里的家具",
+        images: ["projects/proj-a/source/0-bedroom.png"],
+      });
+    } finally {
+      await h.unmount();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("没有用户文本的图片消息只补最小看图指令，不注入附件元数据", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () =>
+      Response.json({ path: "projects/proj-a/source/0-image.png" }),
+    ) as unknown as typeof fetch;
+    const { mount } = harness();
+    const h = await mount();
+
+    try {
+      h.result.current.send(
+        "",
+        new File(["image bytes"], "image.png", { type: "image/png" }),
+      );
+      await flush();
+
+      expect(streamChat.mock.calls[0]![1]).toEqual([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "请查看这张图片。" },
+            { type: "image", path: "projects/proj-a/source/0-image.png" },
+          ],
+        },
+      ]);
+    } finally {
+      await h.unmount();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("图片上传在途时卸载：continuation 不写消息也不启动 Agent", async () => {
+    const originalFetch = globalThis.fetch;
+    const upload = deferred<Response>();
+    globalThis.fetch = mock(async () => upload.promise) as unknown as typeof fetch;
+    const { mount, pushMessage } = harness();
+    const h = await mount("proj-a");
+    let mounted = true;
+
+    try {
+      h.result.current.send(
+        "分析这张图",
+        new File(["image bytes"], "scene.png", { type: "image/png" }),
+      );
+      await flush();
+      await h.unmount();
+      mounted = false;
+
+      upload.resolve(Response.json({ path: "projects/proj-a/source/0-scene.png" }));
+      await flush(20);
+
+      expect(pushMessage).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled();
+    } finally {
+      if (mounted) await h.unmount();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe("useAgentChat 并发不变量", () => {
+  test("update-plan 完成时通知页面捕获当前会话的计划快照", async () => {
+    const { mount, onPlanUpdated } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("制定一个三步计划"));
+    await act(async () =>
+      handlersOf(0).onToolResult(
+        "update-plan",
+        "tool-plan",
+        undefined,
+        undefined,
+        PLAN,
+      ),
+    );
+
+    expect(onPlanUpdated).toHaveBeenCalledTimes(1);
+    expect(onPlanUpdated).toHaveBeenCalledWith(PLAN);
+
+    await act(async () => handlersOf(0).onDone());
+    await act(async () => h.result.current.send("继续"));
+    expect(streamChat.mock.calls[1]![4]).toMatchObject({ plan: PLAN });
+    await h.unmount();
+  });
+
+  test("兼容旧服务发出的 updatePlanTool 名称并刷新计划", async () => {
+    const { mount, onPlanUpdated } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("制定一个三步计划"));
+    await act(async () =>
+      handlersOf(0).onToolResult(
+        "updatePlanTool",
+        "tool-plan",
+        undefined,
+        undefined,
+        PLAN,
+      ),
+    );
+
+    expect(onPlanUpdated).toHaveBeenCalledTimes(1);
+    await h.unmount();
+  });
+
+  test("后台任务结束后把结果送回同一会话并自动继续", async () => {
+    const { mount, pollTasks } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成椅子并继续完成计划"));
+    await act(async () =>
+      handlersOf(0).onToolResult(
+        "start-3d-batch",
+        "tool-task",
+        undefined,
+        ["task-1"],
+      ),
+    );
+    expect(pollTasks).toHaveBeenCalledTimes(1);
+    expect(pollTasks.mock.calls[0]![0]).toEqual(["task-1"]);
+
+    await act(async () => handlersOf(0).onDone());
+    const onSettled = pollTasks.mock.calls[0]![1] as (value: unknown) => void;
+    await act(async () =>
+      onSettled({
+        tasks: [
+          {
+            id: "task-1",
+            workflowId: "3d",
+            projectSlug: "proj-a",
+            subject: "3D 生成：椅子",
+            status: "succeeded",
+          },
+        ],
+      }),
+    );
+    await flush(20);
+
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    expect(streamChat.mock.calls[1]![1]).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("【后台任务已结束】"),
+      }),
+    ]);
+    await h.unmount();
+  });
+
+  /**
+   * 这条是整个改动的核心：不变量住在 startStream 里，不是按钮的 disabled 上。
+   * 两条流并发时第二条的历史不含第一条的消息，上下文分叉、回复交错，
+   * 而且两边都可能各自调用一次付费生成工具。
+   */
+  test("流进行中再次 send，不会拉起第二条流", async () => {
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("第一条"));
+    expect(streamChat).toHaveBeenCalledTimes(1);
+
+    await act(async () => h.result.current.send("第二条"));
+    await act(async () => h.result.current.send("第三条"));
+    expect(streamChat).toHaveBeenCalledTimes(1);
+
+    await h.unmount();
+  });
+
+  test("上一轮结束后可以正常再发", async () => {
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("第一条"));
+    expect(streamChat).toHaveBeenCalledTimes(1);
+
+    await act(async () => handlersOf(0).onDone());
+    await act(async () => h.result.current.send("第二条"));
+    expect(streamChat).toHaveBeenCalledTimes(2);
+
+    await h.unmount();
+  });
+
+  test("思考状态不沉淀为历史工具节点", async () => {
+    const { mount, pushMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("第一条"));
+    const sent = pushMessage.mock.calls.map(([message]) => message);
+    expect(sent).toEqual([
+      expect.objectContaining({ role: "user", content: "第一条" }),
+      expect.objectContaining({ role: "assistant", content: "" }),
+    ]);
+    expect(sent[1]?.activities).toBeUndefined();
+
+    await act(async () => handlersOf(0).onDone());
+    expect(pushMessage.mock.calls.map(([message]) => message)).toEqual([
+      expect.objectContaining({ role: "user", content: "第一条" }),
+      expect.objectContaining({ role: "assistant", content: "" }),
+    ]);
+
+    await h.unmount();
+  });
+
+  test("工具完成事件把对应消息轨迹从播放态改为完成态", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成参考图"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-1"));
+    const afterTool = updateMessage.mock.calls.at(-1)![1](assistant);
+    expect(afterTool.activities).toHaveLength(1);
+    expect(afterTool.activities?.at(-1)).toMatchObject({
+      id: "tool-1",
+      contentOffset: 0,
+      label: "正在生成参考图",
+      status: "running",
+    });
+
+    await act(async () => handlersOf(0).onToolResult("generate-reference-images", "tool-1"));
+    const afterResult = updateMessage.mock.calls.at(-1)![1](afterTool);
+    expect(afterResult.activities?.at(-1)).toMatchObject({
+      id: "tool-1",
+      label: "已生成参考图",
+      status: "completed",
+    });
+
+    await h.unmount();
+  });
+
+  test("参考图工具完成时把落盘图片追加到 assistant 消息", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成参考图"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-1"));
+    const afterTool = updateMessage.mock.calls.at(-1)![1](assistant);
+
+    await act(async () =>
+      handlersOf(0).onToolResult("generate-reference-images", "tool-1", [
+        "projects/demo/source/0-ref.png",
+        "projects/demo/source/0-ref-v2.png",
+      ]),
+    );
+    const afterResult = updateMessage.mock.calls.at(-1)![1](afterTool);
+    expect(afterResult.images).toEqual([
+      "projects/demo/source/0-ref.png",
+      "projects/demo/source/0-ref-v2.png",
+    ]);
+
+    await h.unmount();
+  });
+
+  test("旧 camelCase 工具名仍显示产品文案而不是内部变量名", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成参考图"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+
+    await act(async () => handlersOf(0).onTool("generateReferenceImagesTool", "tool-1"));
+    const afterTool = updateMessage.mock.calls.at(-1)![1](assistant);
+    expect(afterTool.activities?.at(-1)).toMatchObject({
+      toolName: "generate-reference-images",
+      label: "正在生成参考图",
+      status: "running",
+    });
+
+    await act(async () =>
+      handlersOf(0).onToolResult("generateReferenceImagesTool", "tool-1"),
+    );
+    const afterResult = updateMessage.mock.calls.at(-1)![1](afterTool);
+    expect(afterResult.activities?.at(-1)).toMatchObject({
+      label: "已生成参考图",
+      status: "completed",
+    });
+
+    await h.unmount();
+  });
+
+  test("连续工具调用记录各自发生时的正文偏移", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成模型"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+    const intro = "我先生成参考图。";
+    const middle = "参考图完成，继续生成模型。";
+
+    await act(async () => handlersOf(0).onDelta(intro));
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-1"));
+    const afterFirstTool = updateMessage.mock.calls.at(-1)![1](assistant);
+    expect(afterFirstTool.activities?.at(-1)?.contentOffset).toBe(intro.length);
+
+    await act(async () => handlersOf(0).onToolResult("generate-reference-images", "tool-1"));
+    const afterFirstResult = updateMessage.mock.calls.at(-1)![1](afterFirstTool);
+    await act(async () => handlersOf(0).onDelta(middle));
+    await act(async () => handlersOf(0).onTool("start-3d-batch", "tool-2"));
+    const afterSecondTool = updateMessage.mock.calls.at(-1)![1](afterFirstResult);
+    expect(afterSecondTool.activities?.at(-1)?.contentOffset).toBe(
+      (intro + middle).length,
+    );
+
+    await h.unmount();
+  });
+
+  test("缺少 tool-call 前置事件时，tool-error 仍补建失败节点", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("构建 CAD"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+    const intro = "我先尝试构建。";
+    await act(async () => handlersOf(0).onDelta(intro));
+    await act(async () => handlersOf(0).onToolError("build-cad-model", "tool-failed"));
+
+    const afterError = updateMessage.mock.calls.at(-1)![1](assistant);
+    expect(afterError.agentStatus).toEqual({
+      label: "正在思考",
+      status: "running",
+    });
+    expect(afterError.activities).toEqual([
+      expect.objectContaining({
+        id: "tool-failed",
+        toolName: "build-cad-model",
+        contentOffset: intro.length,
+        label: "构建 CAD 模型失败",
+        status: "failed",
+      }),
+    ]);
+
+    await h.unmount();
+  });
+
+  test("请求时过滤旧会话遗留的空 assistant 消息", async () => {
+    const { mount, messagesRef } = harness();
+    messagesRef.current = [
+      { id: "old-user", role: "user", content: "上一条" },
+      { id: "old-empty", role: "assistant", content: "" },
+    ];
+    const h = await mount();
+
+    await act(async () => h.result.current.send("继续"));
+
+    expect(streamChat.mock.calls[0]![1]).toEqual([
+      { role: "user", content: "上一条" },
+      { role: "user", content: "继续" },
+    ]);
+
+    await h.unmount();
+  });
+
+  test("出错结束后也能再发（不会把输入永久卡死）", async () => {
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("第一条"));
+    await act(async () => handlersOf(0).onError("服务炸了"));
+    await act(async () => h.result.current.send("第二条"));
+    expect(streamChat).toHaveBeenCalledTimes(2);
+
+    await h.unmount();
+  });
+});
+
+describe("useAgentChat 中止能力", () => {
+  test("stopStream 会中止在途请求并解除 streaming", async () => {
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成一把椅子"));
+    const signal = signalOf(0);
+    expect(signal.aborted).toBe(false);
+    expect(h.result.current.streaming).toBe(true);
+
+    await act(async () => h.result.current.stopStream());
+    expect(signal.aborted).toBe(true);
+    expect(h.result.current.streaming).toBe(false);
+
+    await h.unmount();
+  });
+
+  test("停止之后可以立刻重新发起", async () => {
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("第一条"));
+    await act(async () => h.result.current.stopStream());
+    await act(async () => h.result.current.send("第二条"));
+    expect(streamChat).toHaveBeenCalledTimes(2);
+
+    await h.unmount();
+  });
+
+  /**
+   * 没有这条，离开工作台后读取循环仍会跑到自然结束，并继续往已卸载的组件里
+   * 回调 onDelta——与 useTaskPolling 那个泄漏同一类根因。
+   */
+  test("卸载时中止在途请求", async () => {
+    const { mount } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成一把椅子"));
+    const signal = signalOf(0);
+
+    await h.unmount();
+    expect(signal.aborted).toBe(true);
+  });
+
+});

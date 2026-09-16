@@ -1,0 +1,614 @@
+@import "tailwindcss";
+
+/* 唯一视觉来源：自有语义 token（工作台 chrome 视觉迁移自 image-blaster——
+   纯黑画布 + 半透明黑面板 + 白色低透明度描边/文字，单色无品牌色；
+   项目入口单独使用浅灰画布和文件夹插画 token）。
+   组件只允许使用这些 token 类，禁止硬编码颜色。 */
+@theme {
+  /* 画布与面板表面 */
+  --color-canvas: #000000;
+  --color-surface: rgb(0 0 0 / 0.7);
+  --color-surface-raised: rgb(0 0 0 / 0.85);
+
+  /* 描边 */
+  --color-line: rgb(255 255 255 / 0.15);
+  --color-hairline: rgb(255 255 255 / 0.1);
+
+  /* 交互填充（悬浮/选中） */
+  --color-fill: rgb(255 255 255 / 0.1);
+  --color-fill-active: rgb(255 255 255 / 0.15);
+  --color-fill-selected: rgb(255 255 255 / 0.3);
+  --color-field: rgb(255 255 255 / 0.05);
+
+  /* 文字 */
+  --color-ink: rgb(255 255 255 / 0.9);
+  --color-ink-strong: #ffffff;
+  --color-ink-subtle: rgb(255 255 255 / 0.55);
+  --color-ink-faint: rgb(255 255 255 / 0.35);
+  --color-ink-inverse: #000000;
+
+  /* 强调（主按钮）：单色白 */
+  --color-accent: #ffffff;
+  --color-accent-hover: rgb(255 255 255 / 0.85);
+
+  /* 自有动态玻璃发送按钮的图标色 */
+  --color-metal-ink: #f8f8f8;
+
+  /* 危险与错误状态 */
+  --color-signal: #ff3045;
+
+  /* 项目入口：独立于 3D 工作台黑色画布的浅色项目选择界面 */
+  --color-project-hub-canvas: #f3f3f1;
+  --color-project-hub-fill: rgb(255 255 255 / 0.58);
+  --color-project-hub-ink: rgb(22 22 24 / 0.9);
+  --color-project-hub-ink-strong: #161618;
+  --color-project-hub-ink-subtle: rgb(22 22 24 / 0.55);
+  --color-project-hub-ink-faint: rgb(22 22 24 / 0.36);
+
+  /* 项目文件夹 Logo */
+  --color-project-folder-back: #8da5f3;
+  --color-project-folder-back-light: #a6b7f7;
+  --color-project-folder-front: #a8b9f7;
+  --color-project-folder-front-deep: #8da5f3;
+  --color-project-folder-edge: rgb(103 133 230 / 0.62);
+  --color-project-folder-monogram: rgb(236 241 255 / 0.72);
+  --color-project-folder-shadow: rgb(58 80 151 / 0.16);
+  --color-project-folder-inner-shadow: rgb(61 88 180 / 0.12);
+  --color-project-folder-highlight: rgb(255 255 255 / 0.36);
+  --color-project-folder-card-shell: #f7f7f5;
+  --color-project-folder-card-yellow: #ffc33a;
+  --color-project-folder-card-blue: #c6d2ff;
+  --color-project-folder-card-coral: #f45d70;
+  --color-project-folder-card-shadow: rgb(49 61 101 / 0.12);
+
+  /* 全局圆角层级：
+     surface：面板、弹窗、菜单等独立浮层；
+     inset：距 surface 边缘 8px 的内嵌容器，与外圆角保持同心（35 - 8 = 27）；
+     control：输入框、卡片、普通图标按钮等交互元素；
+     media：缩略图、预览图等紧凑媒体。
+     胶囊按钮、选择器、徽标、开关继续使用 rounded-full。 */
+  --radius-surface: 35px;
+  --radius-inset: 27px;
+  --radius-control: 12px;
+  --radius-media: 10px;
+
+  /* 类弹簧缓动：临界阻尼（damping 1.0，无回弹）在 CSS 下的近似曲线，
+     供按压反馈/展开折叠/浮层入场统一复用（apple-design skill §4/§7） */
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* 入场动画 */
+  --animate-chrome-enter: chrome-enter 180ms ease-out both;
+  --animate-chrome-enter-center: chrome-enter-center 180ms ease-out both;
+
+  @keyframes chrome-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-0.5rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* 不用 transform 做垂直位移:动画结束后 fill-mode:both 会把 transform 永久
+     留在元素上(哪怕是 translateY(0) 这种视觉无效值),而只要 transform 不是
+     none 就会新建层叠上下文——这两处调用方(AgentDock/ProjectHubPage 顶栏)
+     都是 liquid 档 backdrop-filter 面板,常驻 transform 会导致 Chromium 合
+     成器在窗口 resize/切标签页等场景下间歇性丢失取景内容,液态玻璃效果时
+     隐时现。改用 margin-top 走布局位移,水平居中也相应挪到调用方的 flex
+     wrapper 上,不再靠 translate(-50%, ...) 兼职。 */
+  @keyframes chrome-enter-center {
+    from {
+      opacity: 0;
+      margin-top: -0.5rem;
+    }
+    to {
+      opacity: 1;
+      margin-top: 0;
+    }
+  }
+}
+
+/* 两档玻璃材质(仅 shared/ui 的 Panel/Dialog 使用,业务层禁止直接引用):
+   glass = 便宜档,纯 CSS 毛玻璃(模糊 + 饱和 + 内侧高光描边),全浏览器支持;
+   不含背景色——由使用方叠加 bg-surface / bg-surface-raised token。
+   贵档 liquid(SVG 位移滤镜折射)在 Panel variant="liquid" 里以内联
+   backdrop-filter 覆盖本档,仅 Chromium 生效,其余浏览器停留在本档。 */
+@utility glass {
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  backdrop-filter: blur(10px) saturate(150%);
+  box-shadow:
+    inset 0 0 1px 1px rgb(255 255 255 / 0.12),
+    inset 0 0 10px 2px rgb(255 255 255 / 0.05),
+    0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+/* 小型胶囊/圆形控件的边缘内收高光：底色仍由调用方的 bg-fill 决定，
+   两层 inset shadow 沿真实 border-radius 从四周向中心衰减，不能改成
+   linear-gradient——参考质感是外亮内暗，不是上亮下暗。 */
+@utility control-edge-lit {
+  box-shadow:
+    inset 0 0 1px var(--color-ink-faint),
+    inset 0 0 10px var(--color-fill-active);
+}
+
+@layer components {
+  /* AgentDock 历史区保持轨道透明，只露出一枚低对比度的细胶囊滑块，
+     避免系统原生浅色滚动条切断液态玻璃面板。 */
+  .agent-dock-scrollbar {
+    scrollbar-color: var(--color-ink-faint) transparent;
+    scrollbar-width: thin;
+  }
+
+  .agent-dock-scrollbar::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .agent-dock-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+    margin-block: 12px;
+  }
+
+  .agent-dock-scrollbar::-webkit-scrollbar-thumb {
+    min-height: 36px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: var(--color-ink-faint);
+    background-clip: content-box;
+  }
+
+  .agent-dock-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-ink-subtle);
+  }
+
+  /* 左下导航与右下视口控制共用的圆形按钮。选中态参考圆形工具栏：
+     更亮的填充 + 一圈浅描边 + 从边缘向内收的高光，不靠改变圆角表达状态。 */
+  .toolbar-button {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--color-ink);
+    opacity: 0.85;
+  }
+
+  .toolbar-button:hover {
+    background: var(--color-fill-active);
+    opacity: 1;
+  }
+
+  .toolbar-button[data-selected="true"] {
+    border-color: var(--color-ink-faint);
+    background: var(--color-fill-selected);
+    box-shadow:
+      inset 0 0 1px var(--color-ink-subtle),
+      inset 0 0 10px var(--color-fill-active);
+    opacity: 1;
+  }
+
+  .liquid-metal-send-button {
+    overflow: visible;
+    background: transparent;
+  }
+
+  .liquid-metal-send-button__shadow,
+  .liquid-metal-send-button__chroma,
+  .liquid-metal-send-button__shell,
+  .liquid-metal-send-button__core,
+  .liquid-metal-send-button__shader,
+  .liquid-metal-send-button__glass,
+  .liquid-metal-send-button__sheen {
+    position: absolute;
+    border-radius: 999px;
+    pointer-events: none;
+  }
+
+  .liquid-metal-send-button__shadow {
+    z-index: -1;
+    inset: 1px;
+    box-shadow: 0 6px 8px -2px rgb(133 139 150 / 0.5);
+  }
+
+  .liquid-metal-send-button__chroma {
+    z-index: 1;
+    inset: 0;
+    padding: 2px;
+    background: conic-gradient(
+      from 12deg,
+      #ffffff 0deg 30deg,
+      #ff8a3d 34deg,
+      #ffffff 40deg 112deg,
+      #42c9ff 117deg,
+      #ffffff 123deg 205deg,
+      #ff9b42 211deg,
+      #ffffff 217deg 302deg,
+      #4acfff 307deg,
+      #ffffff 313deg 360deg
+    );
+    filter: saturate(1.15) drop-shadow(0 0 1px rgb(255 255 255 / 0.75));
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  .liquid-metal-send-button__shell {
+    z-index: 2;
+    inset: 1px;
+    border: 1px solid rgb(255 255 255 / 0.82);
+    background: radial-gradient(
+      circle at 34% 20%,
+      rgb(255 255 255 / 0.8),
+      rgb(255 255 255 / 0.16) 24%,
+      transparent 48%
+    );
+    box-shadow:
+      inset 0 1px 1px rgb(255 255 255 / 0.95),
+      inset 1px -1px 2px rgb(255 255 255 / 0.34),
+      0 0 0 0.5px rgb(17 20 22 / 0.72);
+  }
+
+  .liquid-metal-send-button__core {
+    z-index: 3;
+    inset: 3px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 42% 8%, rgb(255 255 255 / 0.14), transparent 38%),
+      linear-gradient(145deg, #626768, #4c5152 58%, #5b6061);
+    box-shadow:
+      inset 0 1px 2px rgb(255 255 255 / 0.34),
+      inset 0 -3px 5px rgb(0 0 0 / 0.22);
+  }
+
+  .liquid-metal-send-button__shader {
+    inset: -55%;
+    background: linear-gradient(
+      17deg,
+      transparent 0 38.5%,
+      rgb(255 210 142 / 0.12) 40%,
+      rgb(255 133 55 / 0.74) 42.3%,
+      rgb(54 47 38 / 0.96) 45%,
+      rgb(15 18 20 / 0.98) 50.5%,
+      rgb(20 30 36 / 0.98) 54.5%,
+      rgb(54 163 255 / 0.64) 57.2%,
+      rgb(174 232 255 / 0.16) 59.5%,
+      transparent 62% 100%
+    );
+    filter: blur(0.45px) saturate(1.24);
+    opacity: 0.98;
+    animation: liquid-glass-band-translate 4.4s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+
+  .liquid-metal-send-button__glass {
+    inset: 0;
+    background:
+      radial-gradient(circle at 34% 15%, rgb(255 255 255 / 0.25), transparent 26%),
+      radial-gradient(circle at 50% 118%, rgb(255 255 255 / 0.24), transparent 42%),
+      linear-gradient(142deg, rgb(255 255 255 / 0.06), rgb(0 0 0 / 0.1) 54%, rgb(255 255 255 / 0.08));
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 0.16),
+      inset 2px 2px 4px rgb(255 255 255 / 0.1),
+      inset -2px -3px 5px rgb(0 0 0 / 0.18);
+  }
+
+  .liquid-metal-send-button__sheen {
+    inset: 0;
+    background: radial-gradient(
+      ellipse at 35% 12%,
+      rgb(255 255 255 / 0.22),
+      transparent 34%
+    );
+    mix-blend-mode: screen;
+  }
+
+  .liquid-metal-send-button__star {
+    display: block;
+    width: 18px;
+    height: 21px;
+    filter:
+      drop-shadow(0 0 1.5px rgb(255 255 255 / 0.52))
+      drop-shadow(0 1px 2px rgb(34 81 255 / 0.34));
+  }
+
+  .liquid-metal-send-button__stop {
+    display: block;
+    width: 20px;
+    height: 20px;
+    filter:
+      drop-shadow(0 0 2px rgb(255 255 255 / 0.48))
+      drop-shadow(0 1px 3px rgb(255 48 69 / 0.42));
+  }
+
+  .liquid-metal-send-button[data-intent="stop"] .liquid-metal-send-button__shader {
+    animation-duration: 2.2s;
+  }
+
+  .liquid-metal-send-button__control {
+    transition:
+      color 150ms ease,
+      transform 150ms var(--ease-spring);
+  }
+
+  .liquid-metal-send-button__control:hover {
+    transform: scale(1.06);
+  }
+
+  .liquid-metal-send-button__control:active {
+    transform: scale(0.92);
+  }
+
+  .liquid-metal-send-button__control:focus-visible {
+    outline: 2px solid rgb(255 255 255 / 0.82);
+    outline-offset: 3px;
+  }
+
+  .liquid-metal-send-button[data-disabled="true"] {
+    opacity: 0.4;
+  }
+
+  @keyframes liquid-glass-band-translate {
+    from {
+      transform: translate3d(-28%, 0, 0);
+    }
+    to {
+      transform: translate3d(28%, 0, 0);
+    }
+  }
+
+  /* liquid 档 SVG 滤镜 defs 的宿主:零尺寸留在文档流——
+     display:none 会让部分引擎丢弃 backdrop-filter 对滤镜的引用 */
+  .liquid-glass-defs {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .project-folder-button {
+    transition:
+      background-color 180ms var(--ease-spring),
+      transform 180ms var(--ease-spring);
+  }
+
+  .project-folder-button:hover,
+  .project-folder-button:focus-visible {
+    background: var(--color-project-hub-fill);
+    transform: translateY(-2px);
+  }
+
+  .project-folder-button:focus-visible {
+    outline: 2px solid var(--color-project-folder-edge);
+    outline-offset: 2px;
+  }
+
+  .project-folder-button:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .project-folder-logo {
+    position: relative;
+    display: block;
+    width: min(100%, 11rem);
+    aspect-ratio: 1;
+    filter: drop-shadow(0 14px 12px var(--color-project-folder-shadow));
+  }
+
+  .project-folder-logo--red {
+    --color-project-folder-back: #e8727e;
+    --color-project-folder-back-light: #f39ca4;
+    --color-project-folder-front: #f3a0a8;
+    --color-project-folder-front-deep: #df6472;
+    --color-project-folder-edge: rgb(182 53 70 / 0.45);
+    --color-project-folder-monogram: rgb(255 238 240 / 0.78);
+    --color-project-folder-shadow: rgb(166 46 63 / 0.16);
+    --color-project-folder-inner-shadow: rgb(155 38 54 / 0.11);
+  }
+
+  .project-folder-logo--orange {
+    --color-project-folder-back: #ed9657;
+    --color-project-folder-back-light: #f7bd8a;
+    --color-project-folder-front: #f8bd8b;
+    --color-project-folder-front-deep: #e88745;
+    --color-project-folder-edge: rgb(180 89 32 / 0.44);
+    --color-project-folder-monogram: rgb(255 244 235 / 0.8);
+    --color-project-folder-shadow: rgb(164 80 30 / 0.16);
+    --color-project-folder-inner-shadow: rgb(151 67 20 / 0.11);
+  }
+
+  .project-folder-logo--yellow {
+    --color-project-folder-back: #e8bd43;
+    --color-project-folder-back-light: #f5db7d;
+    --color-project-folder-front: #f6db7d;
+    --color-project-folder-front-deep: #e6b63a;
+    --color-project-folder-edge: rgb(164 119 20 / 0.42);
+    --color-project-folder-monogram: rgb(112 75 9 / 0.45);
+    --color-project-folder-shadow: rgb(153 108 17 / 0.15);
+    --color-project-folder-inner-shadow: rgb(143 97 11 / 0.1);
+  }
+
+  .project-folder-logo--green {
+    --color-project-folder-back: #67ba81;
+    --color-project-folder-back-light: #a2dcb3;
+    --color-project-folder-front: #a5deb6;
+    --color-project-folder-front-deep: #59b676;
+    --color-project-folder-edge: rgb(43 137 74 / 0.42);
+    --color-project-folder-monogram: rgb(237 255 243 / 0.78);
+    --color-project-folder-shadow: rgb(42 127 68 / 0.15);
+    --color-project-folder-inner-shadow: rgb(32 119 58 / 0.1);
+  }
+
+  .project-folder-logo--blue {
+    --color-project-folder-back: #8da5f3;
+    --color-project-folder-back-light: #a6b7f7;
+    --color-project-folder-front: #a8b9f7;
+    --color-project-folder-front-deep: #8da5f3;
+    --color-project-folder-edge: rgb(103 133 230 / 0.62);
+    --color-project-folder-monogram: rgb(236 241 255 / 0.72);
+    --color-project-folder-shadow: rgb(58 80 151 / 0.16);
+    --color-project-folder-inner-shadow: rgb(61 88 180 / 0.12);
+  }
+
+  .project-folder-logo--purple {
+    --color-project-folder-back: #9279db;
+    --color-project-folder-back-light: #bba9ef;
+    --color-project-folder-front: #bdadef;
+    --color-project-folder-front-deep: #8c70d6;
+    --color-project-folder-edge: rgb(111 77 193 / 0.45);
+    --color-project-folder-monogram: rgb(247 243 255 / 0.78);
+    --color-project-folder-shadow: rgb(91 62 159 / 0.16);
+    --color-project-folder-inner-shadow: rgb(80 49 148 / 0.11);
+  }
+
+  .project-folder-back,
+  .project-folder-card,
+  .project-folder-front {
+    position: absolute;
+    display: block;
+    box-sizing: border-box;
+  }
+
+  .project-folder-back {
+    z-index: 1;
+    top: 25%;
+    right: 6%;
+    bottom: 38%;
+    left: 14%;
+    border: 1px solid var(--color-project-folder-edge);
+    border-radius: 24px 24px 18px 18px;
+    background: linear-gradient(
+      145deg,
+      var(--color-project-folder-back-light),
+      var(--color-project-folder-back)
+    );
+    box-shadow: inset 0 1px 1px var(--color-project-folder-highlight);
+  }
+
+  .project-folder-card {
+    z-index: 2;
+    width: 22%;
+    height: 30%;
+    border: 4px solid var(--color-project-folder-card-shell);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--project-folder-card-color);
+    box-shadow: 0 3px 8px var(--color-project-folder-card-shadow);
+    transform: translate(
+        var(--project-folder-card-tuck-x, 0),
+        var(--project-folder-card-tuck-y, 72%)
+      )
+      rotate(var(--project-folder-card-rotation));
+    transition: transform 260ms var(--ease-spring);
+    will-change: transform;
+  }
+
+  .project-folder-card--yellow {
+    --project-folder-card-color: var(--color-project-folder-card-yellow);
+    top: 17%;
+    left: 24.5%;
+    --project-folder-card-tuck-y: 42%;
+    --project-folder-card-rotation: -12deg;
+    transition-delay: 20ms;
+  }
+
+  .project-folder-card--blue {
+    --project-folder-card-color: var(--color-project-folder-card-blue);
+    top: 7%;
+    left: 43.5%;
+    --project-folder-card-rotation: 0deg;
+  }
+
+  .project-folder-card-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .project-folder-card--coral {
+    --project-folder-card-color: var(--color-project-folder-card-coral);
+    top: 17%;
+    left: 62.5%;
+    --project-folder-card-tuck-y: 42%;
+    --project-folder-card-rotation: 12deg;
+    transition-delay: 20ms;
+  }
+
+  .project-folder-button:hover .project-folder-card,
+  .project-folder-button:focus-visible .project-folder-card {
+    transform: translate(0, 0) rotate(var(--project-folder-card-rotation));
+  }
+
+  .project-folder-front {
+    z-index: 4;
+    top: 32%;
+    right: 5%;
+    bottom: 7%;
+    left: 14%;
+    border-radius: 24px 24px 27px 27px;
+    background: linear-gradient(
+      180deg,
+      var(--color-project-folder-front),
+      var(--color-project-folder-front-deep)
+    );
+    clip-path: polygon(
+      round 11px,
+      0 0,
+      39% 0,
+      52% 14%,
+      100% 14%,
+      100% 100%,
+      0 100%
+    );
+    box-shadow:
+      inset 0 -7px 10px var(--color-project-folder-inner-shadow),
+      inset 0 1px 1px var(--color-project-folder-highlight);
+  }
+
+  .project-folder-monogram {
+    position: absolute;
+    z-index: 5;
+    top: 40%;
+    right: 5%;
+    bottom: 7%;
+    left: 14%;
+    display: grid;
+    place-items: center;
+    color: var(--color-project-folder-monogram);
+    font-size: clamp(2.35rem, 4.2vw, 3.25rem);
+    font-weight: 650;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-folder-button {
+    transition: background-color 120ms ease-out;
+  }
+
+  .project-folder-button:hover,
+  .project-folder-button:focus-visible,
+  .project-folder-button:active {
+    transform: none;
+  }
+
+  .project-folder-card {
+    transition: none;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--color-canvas);
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "gabo-lite",
+  "private": true,
+  "workspaces": ["app", "chat"],
+  "overrides": {
+    "three": "0.185.1",
+    "@types/three": "0.185.4"
+  },
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "dev:web": "bun run --filter app dev",
+    "dev:local": "bun run --filter chat dev",
+    "build": "bun run --filter app build",
+    "start": "bun run --filter chat start",
+    "start:local": "bun run --filter chat start",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
+    "check": "bun run typecheck && bun run test && bun run build"
+  }
+}
