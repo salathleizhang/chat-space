@@ -1,0 +1,189 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
+import { AssetIdentitySchema, RequestSidecarSchema } from "../../dto/library";
+import {
+  LocalFileStorage,
+  readJson,
+  writeJson,
+} from "../../services/assetStorage";
+import { createProject, getProjectState } from "./projectTools";
+import { runTripoImageTo3d, runTripoSegmentation } from "./tripoOps";
+
+const root = await mkdtemp(join(tmpdir(), "gabo-tripo-test-"));
+const storage = new LocalFileStorage(root);
+const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status });
+}
+
+/** 假 Tripo：上传 → file_token；STS + S3 直传；v2/v3 任务 → task_id → success + CDN */
+function makeFakeTripoFetch() {
+  const calls: { url: string; body?: unknown }[] = [];
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith("https://cdn.fake/")) {
+      return new Response(GLB_BYTES.buffer.slice(0), { status: 200 });
+    }
+    if (url.endsWith("/upload/file")) {
+      calls.push({ url });
+      return jsonResponse({ code: 0, data: { file_token: "ft-1" } });
+    }
+    if (url.endsWith("/upload/sts/token")) {
+      calls.push({ url });
+      return jsonResponse({
+        code: 0,
+        data: {
+          s3_host: "s3.fake",
+          sts_ak: "ak",
+          sts_sk: "sk",
+          session_token: "st",
+          resource_bucket: "tripo-data",
+          resource_uri: "up/model.glb",
+        },
+      });
+    }
+    if (url.startsWith("https://s3.fake/") && init?.method === "PUT") {
+      calls.push({ url });
+      return new Response(null, { status: 200 });
+    }
+    if (url.endsWith("/v3/mesh/segment")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "seg-1" } });
+    }
+    if (url.includes("/v3/tasks/")) {
+      return jsonResponse({
+        code: 0,
+        data: {
+          status: "success",
+          output: {
+            parts: [
+              { model: "https://cdn.fake/part1.glb" },
+              { model: "https://cdn.fake/part2.glb" },
+            ],
+          },
+        },
+      });
+    }
+    if (url.endsWith("/task") && init?.method === "POST") {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "gen-1" } });
+    }
+    if (url.includes("/task/")) {
+      return jsonResponse({
+        code: 0,
+        data: {
+          status: "success",
+          output: {
+            pbr_model: "https://cdn.fake/model.glb",
+            rendered_image: "https://cdn.fake/render.webp",
+          },
+        },
+      });
+    }
+    return jsonResponse({}, 404);
+  }) as typeof fetch;
+  return { fetchFn, calls };
+}
+
+beforeAll(async () => {
+  await createProject(storage, { name: "Tripo 演示", slug: "tp" });
+  await storage.writeBytes(`${projectSourceDir("tp")}/0-photo.png`, PNG_BYTES);
+});
+
+afterAll(() => rm(root, { recursive: true, force: true }));
+
+describe("runTripoImageTo3d", () => {
+  test("上传参考图 → 建任务 → 产物落盘 + 侧写存 tripo task id", async () => {
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoImageTo3d(
+      storage,
+      { projectSlug: "tp", assetSlug: "crate" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+
+    const createCall = calls.find((c) => c.url.endsWith("/task"));
+    expect((createCall?.body as { type: string }).type).toBe("image_to_model");
+    expect(
+      (createCall?.body as { file: { file_token: string } }).file.file_token,
+    ).toBe("ft-1");
+
+    const dir = assetDir("tp", "crate");
+    expect(result.tripoTaskId).toBe("gen-1");
+    expect(result.files[0]).toBe(`${dir}/0-crate.glb`);
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.provider).toBe("tripo");
+    expect(sidecar.providerTaskId).toBe("gen-1");
+    expect(sidecar.status).toBe("succeeded");
+  });
+});
+
+describe("runTripoSegmentation", () => {
+  test("链最近一次 Tripo 任务 → v3 分割 → 部件落盘", async () => {
+    await writeJson(storage, assetIdentityFile("tp", "crate"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "crate",
+      kind: "model",
+      name: "Crate",
+      intent: "A wooden crate",
+      sourceImages: [`${projectSourceDir("tp")}/0-photo.png`],
+      createdAt: new Date().toISOString(),
+    });
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoSegmentation(
+      storage,
+      { projectSlug: "tp", assetSlug: "crate" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+
+    const segCall = calls.find((c) => c.url.endsWith("/v3/mesh/segment"));
+    expect((segCall?.body as { input: string }).input).toBe("gen-1");
+    expect(result.files).toHaveLength(2);
+    for (const file of result.files) {
+      expect(await storage.exists(file)).toBe(true);
+    }
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.params.original_model_task_id).toBe("gen-1");
+    const asset = (await getProjectState(storage, "tp")).assets.find(
+      (entry) => entry.slug === "crate",
+    );
+    expect(asset?.latestModelOperation).toBe("v3/mesh/segment");
+  });
+
+  test("非 Tripo 生成但有模型文件的资产：自动 STS 导入后分割", async () => {
+    const dir = assetDir("tp", "imported");
+    await storage.writeBytes(`${dir}/0-imported.glb`, GLB_BYTES);
+
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoSegmentation(
+      storage,
+      { projectSlug: "tp", assetSlug: "imported" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+    // 走了 STS 直传 + import_model
+    expect(calls.some((c) => c.url.endsWith("/upload/sts/token"))).toBe(true);
+    expect(calls.some((c) => c.url.startsWith("https://s3.fake/"))).toBe(true);
+    const importCall = calls.find(
+      (c) => (c.body as { type?: string } | undefined)?.type === "import_model",
+    );
+    expect(
+      (importCall?.body as { file: { object: { bucket: string } } }).file.object.bucket,
+    ).toBe("tripo-data");
+    expect(result.files.length).toBeGreaterThan(0);
+  });
+
+  test("既无 Tripo 记录也无模型文件：明确报错", async () => {
+    const { fetchFn } = makeFakeTripoFetch();
+    expect(
+      runTripoSegmentation(
+        storage,
+        { projectSlug: "tp", assetSlug: "no-tripo" },
+        { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+      ),
+    ).rejects.toThrow("没有模型文件");
+  });
+});
