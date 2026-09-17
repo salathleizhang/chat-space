@@ -527,6 +527,36 @@ describe("useAgentChat 并发不变量", () => {
     await h.unmount();
   });
 
+  test("只读查询工具不进入时间线，避免多出一步 checking", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("进度怎么样"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+    updateMessage.mockClear();
+
+    await act(async () =>
+      handlersOf(0).onTool("list-generation-tasks", "tool-9"),
+    );
+    expect(updateMessage).not.toHaveBeenCalled();
+
+    // 旧 camelCase 注册名同样按只读查询处理
+    await act(async () =>
+      handlersOf(0).onTool("listGenerationTasksTool", "tool-10"),
+    );
+    expect(updateMessage).not.toHaveBeenCalled();
+
+    await act(async () =>
+      handlersOf(0).onToolResult("list-generation-tasks", "tool-9"),
+    );
+    const after = updateMessage.mock.calls.at(-1)![1](assistant);
+    expect(after.activities).toBeUndefined();
+
+    await h.unmount();
+  });
+
   test("参考图工具完成时把落盘图片追加到 assistant 消息", async () => {
     const { mount, pushMessage, updateMessage } = harness();
     const h = await mount();
@@ -601,11 +631,62 @@ describe("useAgentChat 并发不变量", () => {
     await act(async () => handlersOf(0).onToolResult("generate-reference-images", "tool-1"));
     const afterFirstResult = updateMessage.mock.calls.at(-1)![1](afterFirstTool);
     await act(async () => handlersOf(0).onDelta(middle));
-    await act(async () => handlersOf(0).onTool("start-3d-batch", "tool-2"));
+    await act(async () => handlersOf(0).onTool("edit-reference-image", "tool-2"));
     const afterSecondTool = updateMessage.mock.calls.at(-1)![1](afterFirstResult);
     expect(afterSecondTool.activities?.at(-1)?.contentOffset).toBe(
       (intro + middle).length,
     );
+
+    await h.unmount();
+  });
+
+  test("生成类工具不进入时间线，但状态行仍然显示正在生成", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("把这只猫生成成 3D 模型"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+
+    await act(async () => handlersOf(0).onTool("start-3d-batch", "tool-1"));
+    const afterStart = updateMessage.mock.calls.at(-1)![1](assistant);
+    // 步骤节点被收起，但状态行还是"在生成"
+    expect(afterStart.activities).toBeUndefined();
+    expect(afterStart.agentStatus).toEqual({
+      label: "Starting 3D generation",
+      status: "running",
+    });
+
+    // 生成链路上的自检同样不占时间线
+    await act(async () => handlersOf(0).onToolResult("start-3d-batch", "tool-1"));
+    const afterResult = updateMessage.mock.calls.at(-1)![1](afterStart);
+    await act(async () => handlersOf(0).onTool("inspect-asset", "tool-2"));
+    const afterInspect = updateMessage.mock.calls.at(-1)![1](afterResult);
+    expect(afterInspect.activities).toBeUndefined();
+
+    await h.unmount();
+  });
+
+  test("生成类工具失败时仍然落一行失败节点", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("把这只猫生成成 3D 模型"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+
+    await act(async () => handlersOf(0).onToolError("start-3d-batch", "tool-1"));
+    const afterError = updateMessage.mock.calls.at(-1)![1](assistant);
+    expect(afterError.activities).toEqual([
+      expect.objectContaining({
+        id: "tool-1",
+        toolName: "start-3d-batch",
+        label: "Failed: starting 3D generation",
+        status: "failed",
+      }),
+    ]);
 
     await h.unmount();
   });

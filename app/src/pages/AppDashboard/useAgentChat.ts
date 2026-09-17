@@ -57,6 +57,31 @@ const IMAGE_OUTPUT_TOOLS = new Set([
   "edit-reference-image",
 ]);
 
+/**
+ * 只读查询工具：它们不产生用户可见的动作，也不落任何产物，只把状态交回给模型。
+ * 时间线是"这一步做了什么"的记录，查询本身不是一步——展示出来会和它正在等的那个
+ * 生成步骤抢同一块地方，读起来像多了一步"checking generation progress"。
+ * 失败仍然落一行：查不到状态是要让用户看见的，不该静默。
+ */
+const SILENT_ACTIVITY_TOOLS = new Set(["list-generation-tasks"]);
+
+/**
+ * 生产步骤不进时间线：长耗时生成（3D / 世界 / 天空盒 / 后处理…）以及紧随其后的
+ * 自检，用户只需要看到状态行里的"正在生成"和最终产物，不需要看到一步步的工具节点
+ * （先一个 generator、再一个 check）。
+ *
+ * 与 SILENT_ACTIVITY_TOOLS 的区别：这里的工具仍然驱动状态行——它就是在生成；
+ * 失败也照旧落一行（见 onToolError），不静默。任务化生成共用 TASK_STARTING_TOOLS，
+ * 将来新增的生成工具自动跟着收进去。
+ */
+const BACKGROUND_ACTIVITY_TOOLS = new Set([
+  ...TASK_STARTING_TOOLS,
+  "build-cad-model",
+  "inspect-asset",
+  "resume-generation",
+  "repair-assets",
+]);
+
 const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "update-plan": "Updating plan",
   "generate-reference-images": "Generating reference images",
@@ -549,21 +574,27 @@ export function useAgentChat({
           const label = toolActivityMessage(name);
           const activityId = toolCallId ?? `tool-${assistantId}-${++toolSequence}`;
           replying = false;
-          setActivity({ state: "working", message: label });
-          updateMessage(assistantId, (message) => ({
-            ...message,
-            agentStatus: { label, status: "running" },
-            activities: [
-              ...(message.activities ?? []),
-              {
-                id: activityId,
-                toolName: name,
-                contentOffset: streamedContent.length,
-                label,
-                status: "running",
-              },
-            ],
-          }));
+          // 只读查询不占时间线，也不顶掉状态行里正在跑的生成进度
+          if (!SILENT_ACTIVITY_TOOLS.has(name)) {
+            const hiddenStep = BACKGROUND_ACTIVITY_TOOLS.has(name);
+            setActivity({ state: "working", message: label });
+            updateMessage(assistantId, (message) => ({
+              ...message,
+              agentStatus: { label, status: "running" },
+              activities: hiddenStep
+                ? message.activities
+                : [
+                    ...(message.activities ?? []),
+                    {
+                      id: activityId,
+                      toolName: name,
+                      contentOffset: streamedContent.length,
+                      label,
+                      status: "running",
+                    },
+                  ],
+            }));
+          }
           if (name === "inspect-asset" && typeof args?.assetSlug === "string") {
             void startInspection(args.assetSlug, toolCallId);
           } else if (
