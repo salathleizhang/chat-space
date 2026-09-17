@@ -6,7 +6,7 @@ import { SquaresFourIcon } from "@phosphor-icons/react/SquaresFour";
 import { XIcon } from "@phosphor-icons/react/X";
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ACCEPTED_IMAGE_TYPES, imageFileFromClipboard } from "../shared/lib/imageAttachment";
+import { ACCEPTED_IMAGE_TYPES, imageFilesFromClipboard } from "../shared/lib/imageAttachment";
 import { createProject } from "../shared/lib/libraryApi";
 import { Button, Input, Panel, Tooltip } from "../shared/ui";
 
@@ -18,22 +18,18 @@ export function HomePage() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [actionIndex, setActionIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
 
   useEffect(() => {
-    if (!imageFile) {
-      setImagePreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(imageFile);
-    setImagePreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [imageFile]);
+    const urls = imageFiles.map((file) => URL.createObjectURL(file));
+    setImagePreviewUrls(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [imageFiles]);
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -62,8 +58,8 @@ export function HomePage() {
     event.preventDefault();
     const projectName =
       name.trim() ||
-      (imageFile
-        ? imageFile.name.replace(/\.[^.]+$/, "").trim().slice(0, 120) || "Image project"
+      (imageFiles.length > 0
+        ? imageFiles[0]!.name.replace(/\.[^.]+$/, "").trim().slice(0, 120) || "Image project"
         : "");
     if (!projectName || creating) return;
 
@@ -72,7 +68,7 @@ export function HomePage() {
     try {
       const project = await createProject(projectName);
       navigate(`/app/${project.slug}`, {
-        state: imageFile ? { initialImageFile: imageFile } : null,
+        state: imageFiles.length > 0 ? { initialImageFiles: imageFiles } : null,
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -96,17 +92,17 @@ export function HomePage() {
     dragDepthRef.current = 0;
     setIsDragOver(false);
     if (creating) return;
-    const file = Array.from(event.dataTransfer.files).find((candidate) =>
+    const files = Array.from(event.dataTransfer.files).filter((candidate) =>
       ACCEPTED_IMAGE_TYPES.includes(candidate.type),
     );
-    if (file) setImageFile(file);
+    if (files.length > 0) setImageFiles((current) => [...current, ...files]);
   }
 
   function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
-    const file = imageFileFromClipboard(event.clipboardData);
-    if (!file) return;
+    const files = imageFilesFromClipboard(event.clipboardData);
+    if (files.length === 0) return;
     event.preventDefault();
-    setImageFile(file);
+    setImageFiles((current) => [...current, ...files]);
   }
 
   return (
@@ -167,32 +163,33 @@ export function HomePage() {
                 Drop to upload image
               </div>
             )}
-            {imageFile && (
+            {imageFiles.length > 0 && (
               <div className="flex items-center gap-3 px-2 pb-2 text-left">
-                <div className="relative h-16 w-16 shrink-0">
-                  {imagePreviewUrl && (
-                    <img
-                      src={imagePreviewUrl}
-                      alt=""
-                      className="h-16 w-16 rounded-media object-cover ring-2 ring-ink-strong"
-                    />
-                  )}
-                  <Button
-                    variant="primary"
-                    shape="circle"
-                    size="xs"
-                    icon={XIcon}
-                    aria-label="Remove image"
-                    className="absolute -top-1.5 -right-1.5"
-                    disabled={creating}
-                    onClick={() => {
-                      setImageFile(null);
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }}
-                  />
+                <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 pt-4 pb-2">
+                  {imageFiles.map((file, index) => (
+                    <div key={index} className="relative h-16 w-16 shrink-0">
+                      {imagePreviewUrls[index] && (
+                        <img
+                          src={imagePreviewUrls[index]}
+                          alt={file.name}
+                          className="h-16 w-16 rounded-[calc(var(--radius-surface)-1.5rem)] bg-field object-contain ring-2 ring-ink-strong"
+                        />
+                      )}
+                      <Button
+                        variant="primary"
+                        shape="circle"
+                        size="xs"
+                        icon={XIcon}
+                        aria-label={`Remove image ${file.name}`}
+                        className="absolute top-0 right-0"
+                        disabled={creating}
+                        onClick={() => setImageFiles((current) => current.filter((_, i) => i !== index))}
+                      />
+                    </div>
+                  ))}
                 </div>
                 <span className="min-w-0 text-xs text-project-hub-ink-subtle">
-                  The image will be analyzed after the project is created.
+                  {imageFiles.length} {imageFiles.length === 1 ? "image" : "images"} will be sent after the project is created.
                 </span>
               </div>
             )}
@@ -201,9 +198,14 @@ export function HomePage() {
                 ref={fileInputRef}
                 type="file"
                 accept={ACCEPTED_IMAGE_TYPES.join(",")}
+                multiple
                 className="hidden"
                 disabled={creating}
-                onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []).filter((file) => ACCEPTED_IMAGE_TYPES.includes(file.type));
+                  if (files.length > 0) setImageFiles((current) => [...current, ...files]);
+                  event.target.value = "";
+                }}
               />
               <Tooltip content="Upload an image to start creating">
                 <Button
@@ -223,7 +225,7 @@ export function HomePage() {
                 size="lg"
                 className="min-w-0 flex-1"
                 aria-label="Project name"
-                placeholder={imageFile ? "Project name (optional)" : "Name your new project…"}
+                placeholder={imageFiles.length > 0 ? "Project name (optional)" : "Name your new project…"}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 onPaste={handlePaste}
@@ -238,8 +240,8 @@ export function HomePage() {
                 size="lg"
                 icon={ArrowRightIcon}
                 className="shrink-0"
-                disabled={(!name.trim() && !imageFile) || creating}
-                aria-label={creating ? "Creating project" : imageFile ? "Create project and analyze image" : "Create project from name"}
+                disabled={(!name.trim() && imageFiles.length === 0) || creating}
+                aria-label={creating ? "Creating project" : imageFiles.length > 0 ? "Create project and send images" : "Create project from name"}
               />
             </form>
           </Panel>
@@ -247,7 +249,7 @@ export function HomePage() {
             <p role="alert" className="mt-3 text-sm text-signal">{error}</p>
           ) : (
             <p className="mt-3 text-xs text-project-hub-ink-faint">
-              {imageFile ? "Press Enter to create your project and analyze the image" : "Press Enter to create your project"}
+              {imageFiles.length > 0 ? "Press Enter to create your project and send the images" : "Press Enter to create your project"}
             </p>
           )}
         </section>

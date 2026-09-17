@@ -38,7 +38,7 @@ const CHAIR: LibraryAsset = {
 
 async function render(props: Partial<Parameters<typeof AgentDock>[0]> = {}) {
   const onSend = mock(
-    (_t: string, _f?: File, _assets?: ChatAssetAttachment[]) => {},
+    (_t: string, _f?: File[], _assets?: ChatAssetAttachment[]) => {},
   );
   const onStop = mock(() => {});
   const container = document.createElement("div");
@@ -160,14 +160,31 @@ describe("AgentDock 提交闸门", () => {
     await act(async () => input.dispatchEvent(pasteEvent));
 
     expect(pasteEvent.defaultPrevented).toBe(true);
-    expect(container.querySelector('button[aria-label="Remove image"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Analyze image"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Remove image pasted-image.png"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Send images"]')).not.toBeNull();
 
     await pressEnter(container);
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend.mock.calls[0]![1]).toBeInstanceOf(File);
-    expect(onSend.mock.calls[0]![1]?.name).toBe("pasted-image.png");
-    expect(onSend.mock.calls[0]![1]?.type).toBe("image/png");
+    expect(onSend.mock.calls[0]![1]).toHaveLength(1);
+    expect(onSend.mock.calls[0]![1]?.[0]?.name).toBe("pasted-image.png");
+    expect(onSend.mock.calls[0]![1]?.[0]?.type).toBe("image/png");
+  });
+
+  test("文件选择可追加多图并单独移除", async () => {
+    const { container, onSend } = await render();
+    const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(picker.multiple).toBe(true);
+    const first = new File(["first"], "first.png", { type: "image/png" });
+    const second = new File(["second"], "second.webp", { type: "image/webp" });
+    Object.defineProperty(picker, "files", { configurable: true, value: [first, second] });
+    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+
+    expect(container.querySelectorAll('button[aria-label^="Remove image "]')).toHaveLength(2);
+    await act(async () => {
+      (container.querySelector('button[aria-label="Remove image first.png"]') as HTMLButtonElement).click();
+    });
+    await pressEnter(container);
+    expect(onSend.mock.calls[0]![1]).toEqual([second]);
   });
 
   test("选中模型显示为缩略图附件，并随消息提交选中快照", async () => {
@@ -804,7 +821,7 @@ describe("AgentDock 状态行", () => {
 });
 
 describe("AgentDock LLM 能力筛选", () => {
-  test("env 激活火山方舟时，展示 GLM-5.3 与 DeepSeek V4.1 Flash", async () => {
+  test("env 激活火山方舟时，展示 Doubao Seed 2.0 Lite 与 DeepSeek V4.1 Flash", async () => {
     globalThis.fetch = mock(async () =>
       Response.json({ llmProviders: ["volcengine"] }),
     ) as unknown as typeof fetch;
@@ -818,7 +835,7 @@ describe("AgentDock LLM 能力筛选", () => {
     ) as HTMLButtonElement;
     await act(async () => modelSelect.click());
 
-    expect(document.body.textContent).toContain("GLM-5.3");
+    expect(document.body.textContent).toContain("Doubao Seed 2.0 Lite");
     expect(document.body.textContent).toContain("DeepSeek V4.1 Flash");
     expect(document.body.textContent).not.toContain("GPT-4o mini");
     expect(document.body.textContent).not.toContain("Gemini 2.5 Flash");

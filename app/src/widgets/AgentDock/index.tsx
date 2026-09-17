@@ -20,7 +20,7 @@ import {
   type ProjectPlan,
 } from "../../shared/lib/libraryApi";
 import { fetchEnvLlmProviders } from "../../shared/lib/capabilitiesClient";
-import { ACCEPTED_IMAGE_TYPES, imageFileFromClipboard } from "../../shared/lib/imageAttachment";
+import { ACCEPTED_IMAGE_TYPES, imageFilesFromClipboard } from "../../shared/lib/imageAttachment";
 import type { SessionSummary } from "../../shared/lib/sessionsClient";
 import {
   Badge,
@@ -94,13 +94,13 @@ interface AgentDockProps {
   messages: ChatMessage[];
   activity: AgentActivity;
   /**
-   * 是否有一条对话流在跑。不等于 `activity.state === "working"`——后台生成任务
-   * 轮询期间 activity 同样是 working，但那时用户完全可以继续对话。
+   * 是否正在上传图片或运行对话流。后台生成任务轮询期间 activity 也是 working，
+   * 但不应阻止用户继续对话。
    */
   streaming: boolean;
   onSend: (
     text: string,
-    imageFile?: File,
+    imageFiles?: File[],
     assets?: ChatAssetAttachment[],
   ) => void;
   /** 中止当前这轮生成（发送按钮在流式期间就是这个动作） */
@@ -363,7 +363,7 @@ function AssetAttachmentChip({
 }
 
 /**
- * 消息历史 + 计划卡：独立成 memo 组件，避免输入框打字（text/imageFile/model
+ * 消息历史 + 计划卡：独立成 memo 组件，避免输入框打字（text/imageFiles/model
  * 局部状态）时把整条消息历史（含图片）跟着重新 map 一遍——历史只在 messages/
  * plan/expanded 真正变化时才需要重渲染。
  */
@@ -648,7 +648,7 @@ export function AgentDock({
 }: AgentDockProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [text, setText] = useState("");
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [model, setModel] = useState(() => loadLlmSettings().model);
   const [llmProvider, setLlmProvider] = useState<LlmProviderId | "">(
     () => loadLlmSettings().provider,
@@ -663,19 +663,15 @@ export function AgentDock({
     () => loadImageGenerateModelSettings().model,
   );
   const [isDragOver, setIsDragOver] = useState(false);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
 
   useEffect(() => {
-    if (!imageFile) {
-      setImagePreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(imageFile);
-    setImagePreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [imageFile]);
+    const urls = imageFiles.map((file) => URL.createObjectURL(file));
+    setImagePreviewUrls(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [imageFiles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -749,7 +745,7 @@ export function AgentDock({
   const submit = () => {
     const trimmed = text.trim();
     // UI 这道只是可供性，真正的"同时至多一条流"不变量在 useAgentChat.startStream
-    if (streaming || (!trimmed && !imageFile)) return;
+    if (streaming || (!trimmed && imageFiles.length === 0)) return;
     const assets =
       selectedAssets.length > 0
         ? selectedAssets.map(({ assetSlug, name, thumbPath, kind }) => ({
@@ -759,9 +755,9 @@ export function AgentDock({
             kind,
           }))
         : undefined;
-    onSend(trimmed, imageFile ?? undefined, assets);
+    onSend(trimmed, imageFiles.length > 0 ? imageFiles : undefined, assets);
     setText("");
-    setImageFile(null);
+    setImageFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -771,7 +767,7 @@ export function AgentDock({
     if (!created) return false;
     setExpanded(true);
     setText("");
-    setImageFile(null);
+    setImageFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
     return true;
   };
@@ -797,17 +793,17 @@ export function AgentDock({
     event.preventDefault();
     dragDepthRef.current = 0;
     setIsDragOver(false);
-    const file = Array.from(event.dataTransfer.files).find((candidate) =>
+    const files = Array.from(event.dataTransfer.files).filter((candidate) =>
       ACCEPTED_IMAGE_TYPES.includes(candidate.type),
     );
-    if (file) setImageFile(file);
+    if (files.length > 0) setImageFiles((current) => [...current, ...files]);
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
-    const file = imageFileFromClipboard(event.clipboardData);
-    if (!file) return;
+    const files = imageFilesFromClipboard(event.clipboardData);
+    if (files.length === 0) return;
     event.preventDefault();
-    setImageFile(file);
+    setImageFiles((current) => [...current, ...files]);
   };
 
   return (
@@ -939,31 +935,32 @@ export function AgentDock({
               </div>
             </div>
           )}
-          {imageFile && (
+          {imageFiles.length > 0 && (
             <div className="flex items-center gap-2 px-1">
-              <div className="relative h-16 w-16 shrink-0">
-                {imagePreviewUrl && (
-                  <img
-                    src={imagePreviewUrl}
-                    alt=""
-                    className="h-16 w-16 rounded-media object-cover ring-2 ring-ink-strong"
-                  />
-                )}
-                <Button
-                  variant="primary"
-                  shape="circle"
-                  size="xs"
-                  icon={XIcon}
-                  aria-label="Remove image"
-                  className="absolute -top-1.5 -right-1.5"
-                  onClick={() => {
-                    setImageFile(null);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
-                />
+              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 py-2">
+                {imageFiles.map((file, index) => (
+                  <div key={index} className="relative h-16 w-16 shrink-0">
+                    {imagePreviewUrls[index] && (
+                      <img
+                        src={imagePreviewUrls[index]}
+                        alt={file.name}
+                        className="h-16 w-16 rounded-media bg-field object-contain ring-2 ring-ink-strong"
+                      />
+                    )}
+                    <Button
+                      variant="primary"
+                      shape="circle"
+                      size="xs"
+                      icon={XIcon}
+                      aria-label={`Remove image ${file.name}`}
+                      className="absolute top-0 right-0"
+                      onClick={() => setImageFiles((current) => current.filter((_, i) => i !== index))}
+                    />
+                  </div>
+                ))}
               </div>
               <span className="hidden truncate text-[11px] text-ink-subtle sm:block">
-                The image will be analyzed for 3D objects after submission
+                {imageFiles.length} {imageFiles.length === 1 ? "image" : "images"} attached
               </span>
             </div>
           )}
@@ -971,8 +968,13 @@ export function AgentDock({
             ref={fileInputRef}
             type="file"
             accept={ACCEPTED_IMAGE_TYPES.join(",")}
+            multiple
             className="hidden"
-            onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? []).filter((file) => ACCEPTED_IMAGE_TYPES.includes(file.type));
+              if (files.length > 0) setImageFiles((current) => [...current, ...files]);
+              event.target.value = "";
+            }}
           />
           <Input
             variant="plain"
@@ -980,7 +982,7 @@ export function AgentDock({
             className="w-full"
             aria-label="Generation instructions"
             placeholder={
-              imageFile
+              imageFiles.length > 0
                 ? "Additional details (optional)"
                 : selectedAssets.length > 0
                   ? "Describe what to do with the selected models"
@@ -1040,7 +1042,7 @@ export function AgentDock({
               </Tooltip>
             ) : (
               <LiquidMetalSendButton
-                aria-label={imageFile ? "Analyze image" : "Send instructions"}
+                aria-label={imageFiles.length > 0 ? "Send images" : "Send instructions"}
               />
             )}
           </div>

@@ -11,7 +11,7 @@ import {
 } from "../../shared/ui";
 
 const providers = [
-  { id: "volcengine", label: "Volcano Engine Ark", hint: "GLM-5.3 · Seedream · Seed3D · Hyper3D · Hi3D" },
+  { id: "volcengine", label: "Volcano Engine Ark", hint: "Doubao Seed 2.0 Lite · Seedream · Seed3D · Hyper3D · Hi3D" },
   { id: "tripo3d", label: "Tripo3D", hint: "3D model generation" },
   { id: "worldlabs", label: "World Labs", hint: "Marble scene generation" },
 ] as const;

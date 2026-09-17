@@ -186,11 +186,13 @@ describe("useAgentChat 服务端凭证", () => {
     const h = await mount();
 
     try {
-      h.result.current.send(
-        "分析卧室里的家具",
-        new File(["image bytes"], "bedroom.png", { type: "image/png" }),
-      );
-      await flush();
+      await act(async () => {
+        h.result.current.send(
+          "分析卧室里的家具",
+          [new File(["image bytes"], "bedroom.png", { type: "image/png" })],
+        );
+        await flush();
+      });
 
       expect(streamChat.mock.calls[0]![1]).toEqual([
         {
@@ -212,6 +214,49 @@ describe("useAgentChat 服务端凭证", () => {
     }
   });
 
+  test("多张图片逐张上传，并作为同一条消息按选择顺序发送", async () => {
+    const originalFetch = globalThis.fetch;
+    const uploadedNames: string[] = [];
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const fileName = (JSON.parse(String(init?.body)) as { fileName: string }).fileName;
+      uploadedNames.push(fileName);
+      return Response.json({ path: `projects/proj-a/source/${uploadedNames.length}-${fileName}` });
+    }) as unknown as typeof fetch;
+    const { mount, pushMessage } = harness();
+    const h = await mount();
+
+    try {
+      await act(async () => {
+        h.result.current.send("比较两张图", [
+          new File(["first"], "first.png", { type: "image/png" }),
+          new File(["second"], "second.webp", { type: "image/webp" }),
+        ]);
+        await flush(20);
+      });
+
+      expect(uploadedNames).toEqual(["first.png", "second.webp"]);
+      expect(pushMessage.mock.calls.filter(([message]) => message.role === "user")).toHaveLength(1);
+      expect(pushMessage.mock.calls[0]![0]).toMatchObject({
+        content: "比较两张图",
+        images: [
+          "projects/proj-a/source/1-first.png",
+          "projects/proj-a/source/2-second.webp",
+        ],
+      });
+      expect(streamChat.mock.calls[0]![1]).toEqual([{
+        role: "user",
+        content: [
+          { type: "text", text: "比较两张图" },
+          { type: "image", path: "projects/proj-a/source/1-first.png" },
+          { type: "image", path: "projects/proj-a/source/2-second.webp" },
+        ],
+      }]);
+    } finally {
+      await h.unmount();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("没有用户文本的图片消息只补最小看图指令，不注入附件元数据", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () =>
@@ -221,11 +266,13 @@ describe("useAgentChat 服务端凭证", () => {
     const h = await mount();
 
     try {
-      h.result.current.send(
-        "",
-        new File(["image bytes"], "image.png", { type: "image/png" }),
-      );
-      await flush();
+      await act(async () => {
+        h.result.current.send(
+          "",
+          [new File(["image bytes"], "image.png", { type: "image/png" })],
+        );
+        await flush();
+      });
 
       expect(streamChat.mock.calls[0]![1]).toEqual([
         {
@@ -251,11 +298,13 @@ describe("useAgentChat 服务端凭证", () => {
     let mounted = true;
 
     try {
-      h.result.current.send(
-        "分析这张图",
-        new File(["image bytes"], "scene.png", { type: "image/png" }),
-      );
-      await flush();
+      await act(async () => {
+        h.result.current.send(
+          "分析这张图",
+          [new File(["image bytes"], "scene.png", { type: "image/png" })],
+        );
+        await flush();
+      });
       await h.unmount();
       mounted = false;
 
@@ -266,6 +315,42 @@ describe("useAgentChat 服务端凭证", () => {
       expect(streamChat).not.toHaveBeenCalled();
     } finally {
       if (mounted) await h.unmount();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("多图上传期间阻止第二次发送，停止后不启动 Agent", async () => {
+    const originalFetch = globalThis.fetch;
+    const upload = deferred<Response>();
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return upload.promise;
+    }) as unknown as typeof fetch;
+    const { mount, pushMessage } = harness();
+    const h = await mount();
+
+    try {
+      await act(async () => {
+        h.result.current.send("比较", [
+          new File(["first"], "first.png", { type: "image/png" }),
+          new File(["second"], "second.png", { type: "image/png" }),
+        ]);
+        await flush();
+      });
+      expect(h.result.current.streaming).toBe(true);
+      await act(async () => h.result.current.send("不该并发"));
+      expect(pushMessage).not.toHaveBeenCalled();
+
+      await act(async () => h.result.current.stopStream());
+      expect(signal?.aborted).toBe(true);
+      upload.resolve(Response.json({ path: "projects/proj-a/source/0-first.png" }));
+      await flush(20);
+      expect(pushMessage).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled();
+      expect(h.result.current.streaming).toBe(false);
+    } finally {
+      await h.unmount();
       globalThis.fetch = originalFetch;
     }
   });

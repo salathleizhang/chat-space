@@ -9,10 +9,21 @@ async function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
-export async function uploadSource(projectSlug: string, file: File): Promise<string> {
-  const response = await postJson(`/api/projects/${projectSlug}/sources`, {
-    fileName: file.name,
-    dataBase64: await fileToBase64(file),
+export async function uploadSource(
+  projectSlug: string,
+  file: File,
+  signal?: AbortSignal,
+): Promise<string> {
+  const dataBase64 = await fileToBase64(file);
+  if (signal?.aborted) throw signal.reason;
+  const response = await chatFetch(`/api/projects/${projectSlug}/sources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify({
+      fileName: file.name,
+      dataBase64,
+    }),
   });
   if (!response.ok) {
     throw await chatResponseError(response, `Failed to upload source image (${response.status})`);

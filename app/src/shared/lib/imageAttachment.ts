@@ -7,21 +7,21 @@ const IMAGE_EXTENSION_BY_TYPE: Readonly<Record<string, string>> = {
 };
 
 /** Browser clipboard images may have no extension, but the upload endpoint needs one. */
-export function imageFileFromClipboard(data: DataTransfer): File | null {
-  const imageItem = Array.from(data.items).find(
-    (item) => item.kind === "file" && ACCEPTED_IMAGE_TYPES.includes(item.type),
-  );
-  const file =
-    imageItem?.getAsFile() ??
-    Array.from(data.files).find((candidate) => ACCEPTED_IMAGE_TYPES.includes(candidate.type));
-  if (!file) return null;
-  if (/\.(?:png|jpe?g|webp)$/i.test(file.name)) return file;
-
-  const mimeType = file.type || imageItem?.type || "";
-  const extension = IMAGE_EXTENSION_BY_TYPE[mimeType];
-  if (!extension) return null;
-  return new File([file], `pasted-image.${extension}`, {
-    type: mimeType,
-    lastModified: file.lastModified,
+export function imageFilesFromClipboard(data: DataTransfer): File[] {
+  const itemFiles = Array.from(data.items)
+    .filter((item) => item.kind === "file" && ACCEPTED_IMAGE_TYPES.includes(item.type))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+  const files = itemFiles.length > 0 ? itemFiles : Array.from(data.files);
+  return files.flatMap((file) => {
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) return [];
+    if (/\.(?:png|jpe?g|webp)$/i.test(file.name)) return [file];
+    const extension = IMAGE_EXTENSION_BY_TYPE[file.type];
+    return extension
+      ? [new File([file], `pasted-image.${extension}`, {
+          type: file.type,
+          lastModified: file.lastModified,
+        })]
+      : [];
   });
 }

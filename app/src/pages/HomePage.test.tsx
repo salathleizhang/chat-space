@@ -21,7 +21,7 @@ afterEach(async () => {
   globalThis.fetch = originalFetch;
 });
 
-test("首页选择图片后可直接创建项目，并把附件交给工作台", async () => {
+test("首页选择多张图片后可直接创建项目，并把全部附件交给工作台", async () => {
   let createdName: string | undefined;
   globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
     createdName = JSON.parse(String(init?.body)).name as string;
@@ -50,16 +50,19 @@ test("首页选择图片后可直接创建项目，并把附件交给工作台",
   });
 
   const image = new File(["image bytes"], "storybook.png", { type: "image/png" });
+  const secondImage = new File(["other bytes"], "detail.webp", { type: "image/webp" });
   const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
-  Object.defineProperty(picker, "files", { configurable: true, value: [image] });
+  expect(picker.multiple).toBe(true);
+  Object.defineProperty(picker, "files", { configurable: true, value: [image, secondImage] });
   await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
-  expect(container.querySelector('button[aria-label="Create project and analyze image"]')).not.toBeNull();
+  expect(container.querySelectorAll('button[aria-label^="Remove image "]')).toHaveLength(2);
+  expect(container.querySelector('button[aria-label="Create project and send images"]')).not.toBeNull();
 
   await act(async () => {
     container?.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
 
   expect(createdName).toBe("storybook");
-  expect(destinationState).toEqual({ initialImageFile: image });
+  expect(destinationState).toEqual({ initialImageFiles: [image, secondImage] });
   expect(container.textContent).toContain("Project workspace");
 });

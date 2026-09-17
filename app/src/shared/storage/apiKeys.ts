@@ -56,7 +56,7 @@ export interface LlmModelPreset {
 
 export const LLM_MODEL_PRESETS: LlmModelPreset[] = [
   { value: "", label: "Automatically select agent model", baseUrl: "" },
-  { value: "glm-5.3", label: "GLM-5.3", provider: "volcengine" },
+  { value: "doubao-seed-2-0-lite-260215", label: "Doubao Seed 2.0 Lite", provider: "volcengine" },
   { value: "deepseek-v4-1-flash-260910", label: "DeepSeek V4.1 Flash", provider: "volcengine" },
 ];
 

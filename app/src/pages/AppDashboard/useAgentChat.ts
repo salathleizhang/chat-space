@@ -184,6 +184,9 @@ export function useAgentChat({
    */
   const streamingRef = useRef(false);
   const [streaming, setStreaming] = useState(false);
+  const uploadingRef = useRef(false);
+  const [uploading, setUploading] = useState(false);
+  const uploadAbortRef = useRef<AbortController | null>(null);
   const markStreaming = (value: boolean) => {
     streamingRef.current = value;
     setStreaming(value);
@@ -201,6 +204,14 @@ export function useAgentChat({
    * 知道错了的过程里，比允许并发更糟。
    */
   const stopStream = () => {
+    if (uploadAbortRef.current) {
+      uploadAbortRef.current.abort();
+      uploadAbortRef.current = null;
+      uploadingRef.current = false;
+      setUploading(false);
+      setActivity({ state: "idle", message: "Upload stopped" });
+      return;
+    }
     if (!abortRef.current) return;
     abortRef.current.abort();
     abortRef.current = null;
@@ -228,6 +239,9 @@ export function useAgentChat({
     activeRef.current = true;
     return () => {
       activeRef.current = false;
+      uploadAbortRef.current?.abort();
+      uploadAbortRef.current = null;
+      uploadingRef.current = false;
       abortRef.current?.abort();
       abortRef.current = null;
       activeAssistantIdRef.current = null;
@@ -241,31 +255,42 @@ export function useAgentChat({
 
   /** 普通图片消息：上传落盘 → 带真实图片部件交给多模态 agent；不预设参考图意图。 */
   const startImageMessage = async (
-    file: File,
+    files: File[],
     note: string,
     assets?: ChatAssetAttachment[],
+    controller?: AbortController,
   ) => {
     try {
-      setActivity({ state: "working", message: `Uploading ${file.name}` });
-      const imagePath = await uploadSource(projectSlug, file);
-      if (!activeRef.current) return;
+      const imagePaths: string[] = [];
+      for (const file of files) {
+        if (!activeRef.current || controller?.signal.aborted) return;
+        setActivity({ state: "working", message: `Uploading ${file.name} (${imagePaths.length + 1}/${files.length})` });
+        imagePaths.push(await uploadSource(projectSlug, file, controller?.signal));
+      }
+      if (!activeRef.current || controller?.signal.aborted) return;
 
-      const instruction = note || "Please review this image.";
+      const instruction = note || (files.length === 1 ? "Please review this image." : "Please review these images.");
       const userMessage: ChatMessage = {
         id: nextId(),
         role: "user",
         content: instruction,
-        images: [imagePath],
+        images: imagePaths,
         ...(assets && assets.length > 0 ? { assets } : {}),
       };
       const history = toOutgoingHistory([...messagesRef.current, userMessage]);
       pushMessage(userMessage);
       startStream(history);
     } catch (err) {
-      if (!activeRef.current) return;
+      if (!activeRef.current || controller?.signal.aborted) return;
       const message = err instanceof Error ? err.message : String(err);
       setActivity({ state: "attention", message });
       pushAssistant(`⚠️ ${message}`);
+    } finally {
+      if (activeRef.current && uploadAbortRef.current === controller) {
+        uploadAbortRef.current = null;
+        uploadingRef.current = false;
+        setUploading(false);
+      }
     }
   };
 
@@ -732,14 +757,18 @@ export function useAgentChat({
 
   const send = (
     text: string,
-    imageFile?: File,
+    imageFiles?: File[],
     assets?: ChatAssetAttachment[],
   ) => {
     // 提前拦一道：拦在这里才不会推入一条注定得不到回复的用户消息
     // （startStream 里那道是真正的不变量，两者不重复，职责不同）
-    if (streamingRef.current) return;
-    if (imageFile) {
-      void startImageMessage(imageFile, text, assets);
+    if (streamingRef.current || uploadingRef.current) return;
+    if (imageFiles && imageFiles.length > 0) {
+      const controller = new AbortController();
+      uploadAbortRef.current = controller;
+      uploadingRef.current = true;
+      setUploading(true);
+      void startImageMessage(imageFiles, text, assets, controller);
       return;
     }
     const userMessage: ChatMessage = {
@@ -776,6 +805,6 @@ export function useAgentChat({
     handleInspectionCaptured,
     send,
     stopStream,
-    streaming,
+    streaming: streaming || uploading,
   };
 }
