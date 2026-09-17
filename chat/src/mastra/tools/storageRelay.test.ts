@@ -8,7 +8,7 @@ import { LocalFileStorage, writeJson } from "../../services/assetStorage";
 import { createProject } from "./projectTools";
 import { resolveModelPublicUrl } from "./storageRelay";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-relay-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-relay-test-"));
 const storage = new LocalFileStorage(root);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
 

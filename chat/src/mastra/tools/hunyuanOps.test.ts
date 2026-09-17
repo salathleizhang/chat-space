@@ -15,7 +15,7 @@ import {
 } from "./hunyuanOps";
 import { createProject } from "./projectTools";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-hunyuan-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-hunyuan-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const OBJ_BYTES = new Uint8Array([0x23, 0x20, 0x6f, 0x62]);

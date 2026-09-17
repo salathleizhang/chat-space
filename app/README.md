@@ -1,6 +1,6 @@
 # app
 
-Gabo 的 Vite + React + R3F 客户端。
+Chatspace 的 Vite + React + R3F 客户端。
 
 ```bash
 bun run dev

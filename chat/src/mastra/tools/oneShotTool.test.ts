@@ -24,7 +24,7 @@ import {
   runRunOneShot,
 } from "./oneShotTool";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-oneshot-tool-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-oneshot-tool-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const realFetch = globalThis.fetch;

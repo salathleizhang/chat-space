@@ -206,7 +206,7 @@ export function buildFlatShadedGlb(positionsMm: Float32Array, name: string): Uin
   const binLength = alignTo4(positionBytes.length) + alignTo4(normalBytes.length);
 
   const gltf = {
-    asset: { version: "2.0", generator: `gabo ${CAD_ENGINE}` },
+    asset: { version: "2.0", generator: `chatspace ${CAD_ENGINE}` },
     scene: 0,
     scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0, name }],

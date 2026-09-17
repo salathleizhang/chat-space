@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "gabo-lite",
+      "name": "chatspace",
     },
     "app": {
       "name": "app",

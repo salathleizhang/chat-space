@@ -39,7 +39,7 @@ async function buildSampleGlb(): Promise<Uint8Array> {
   return new NodeIO().writeBinary(doc);
 }
 
-const root = await mkdtemp(join(tmpdir(), "gabo-convert-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-convert-test-"));
 const storage = new LocalFileStorage(root);
 const glbBytes = await buildSampleGlb();
 await storage.writeBytes("projects/demo/assets/crate/0-crate.glb", glbBytes);

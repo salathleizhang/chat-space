@@ -11,7 +11,7 @@ import { createProject } from "./projectTools";
 import { runSeed3dImageTo3d } from "./seed3dOps";
 import { landSeed3dOutputBytes } from "./seed3dOutput";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-seed3d-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-seed3d-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);

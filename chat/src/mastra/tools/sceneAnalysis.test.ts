@@ -21,7 +21,7 @@ import {
 } from "./projectTools";
 import { runAnalyzeCurrentScene } from "./sceneAnalysis";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-scene-analysis-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-scene-analysis-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",

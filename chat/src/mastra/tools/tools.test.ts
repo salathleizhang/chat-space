@@ -26,7 +26,7 @@ import {
   writeSceneTransforms,
 } from "./projectTools";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-tools-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-tools-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 

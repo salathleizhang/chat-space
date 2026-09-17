@@ -162,7 +162,7 @@ export function useTaskPolling({
           const model = (task.result as { model?: string } | undefined)?.model;
           const files = (task.result as { files?: string[] } | undefined)?.files;
           const messageId = pushAssistant(
-            `✅ ${task.subject} 完成${model ? `：${model}` : files ? `：${files.length + 1} 个文件` : ""}（已落盘 ~/Gabo）`,
+            `✅ ${task.subject} 完成${model ? `：${model}` : files ? `：${files.length + 1} 个文件` : ""}（已保存到本机工程目录）`,
           );
           if (task.workflowId === "3d") {
             const modelPath = modelPathFromTaskResult(task.result);

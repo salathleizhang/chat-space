@@ -8,7 +8,7 @@ import { LocalFileStorage, readJson, writeJson } from "../../services/assetStora
 import { runArk3dImageTo3d } from "./ark3dOps";
 import { createProject } from "./projectTools";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-ark3d-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-ark3d-test-"));
 const storage = new LocalFileStorage(root);
 const source = `${projectSourceDir("ark-models")}/0-reference.png`;
 const imageUrl = "https://ark-project.tos-cn-beijing.volces.com/reference.png";

@@ -50,7 +50,7 @@ export function supportsLiquidGlass(): boolean {
   const isFirefox = /firefox/i.test(ua);
   if (isSafari || isFirefox) return (supported = false);
   supported =
-    CSS.supports("backdrop-filter", "url(#gabo-liquid-probe)") ||
-    CSS.supports("-webkit-backdrop-filter", "url(#gabo-liquid-probe)");
+    CSS.supports("backdrop-filter", "url(#chatspace-liquid-probe)") ||
+    CSS.supports("-webkit-backdrop-filter", "url(#chatspace-liquid-probe)");
   return supported;
 }

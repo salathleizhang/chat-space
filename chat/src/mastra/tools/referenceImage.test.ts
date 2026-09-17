@@ -26,7 +26,7 @@ import {
   runReferenceImageGeneration,
 } from "./referenceImage";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-refimage-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-refimage-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const PNG_B64 = Buffer.from(PNG_BYTES).toString("base64");

@@ -28,9 +28,9 @@ export function createCreatorAgent(
   options: { enableAnalyzeReference?: boolean } = {},
 ) {
   return new Agent({
-    id: "gabo-creator",
-    name: "Gabo 3D Creator",
-    description: "Gabo 的 3D 创作 agent：本地 CAD、火山方舟 3D 模型、Tripo3D 与 World Labs 场景",
+    id: "chatspace-creator",
+    name: "Chatspace 3D Creator",
+    description: "Chatspace 的 3D 创作 agent：本地 CAD、火山方舟 3D 模型、Tripo3D 与 World Labs 场景",
     instructions: CREATOR_INSTRUCTIONS,
     tools: {
       "update-plan": updatePlanTool,

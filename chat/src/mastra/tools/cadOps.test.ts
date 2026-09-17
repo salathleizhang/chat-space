@@ -14,7 +14,7 @@ import {
 } from "./cadOps";
 import { createProject } from "./projectTools";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-cad-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-cad-test-"));
 const storage = new LocalFileStorage(root);
 
 /** 10mm 立方体：体积与包围盒可精确断言 */

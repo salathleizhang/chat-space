@@ -7,7 +7,7 @@ import { projectFile } from "../common/libraryPaths";
 import { ProjectSchema, RequestSidecarSchema } from "../dto/library";
 import { LocalFileStorage, readJson, writeJson } from "./assetStorage";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-storage-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-storage-test-"));
 const storage = new LocalFileStorage(root);
 
 afterAll(() => rm(root, { recursive: true, force: true }));

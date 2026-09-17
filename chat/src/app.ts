@@ -17,14 +17,14 @@ export function createApp(): Hono {
   app.use("*", async (c, next) => {
     const origin = c.req.header("Origin");
     if (origin && !config.cors.isAllowedOrigin(origin)) {
-      return c.json({ error: { message: "不允许此网页访问本机 Gabo 服务" } }, 403);
+      return c.json({ error: { message: "不允许此网页访问本机 Chatspace 服务" } }, 403);
     }
     await next();
   });
   app.use("*", corsMiddleware);
   app.onError(errorHandler);
 
-  app.get("/health", (c) => c.json({ ok: true, service: "gabo-chat" }));
+  app.get("/health", (c) => c.json({ ok: true, service: "chatspace-chat" }));
   app.route("/capabilities", capabilityRoutes);
   app.route("/chat", chatRoutes);
   app.route("/projects", projectRoutes);

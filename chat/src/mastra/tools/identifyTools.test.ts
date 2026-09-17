@@ -8,7 +8,7 @@ import { LocalFileStorage, writeJson } from "../../services/assetStorage";
 import { resolveIdentifyCandidates } from "./identifyTools";
 import { createProject } from "./projectTools";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-identify-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-identify-test-"));
 const storage = new LocalFileStorage(root);
 
 beforeAll(async () => {

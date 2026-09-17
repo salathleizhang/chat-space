@@ -64,8 +64,8 @@ const llmSceneAnalyzer: CurrentSceneAnalyzer = async ({
   llm,
 }) => {
   const agent = new Agent({
-    id: "gabo-current-scene-analyst",
-    name: "Gabo Current Scene Analyst",
+    id: "chatspace-current-scene-analyst",
+    name: "Chatspace Current Scene Analyst",
     instructions: CURRENT_SCENE_ANALYSIS_INSTRUCTIONS,
     model: {
       providerId: "byok-openai-compatible",

@@ -18,6 +18,8 @@ describe("server-only provider migration", () => {
     expect(localStorage.getItem("gabo.apiKeys")).toBeNull();
     expect(localStorage.getItem("gabo.apiKeys:v1")).toBeNull();
     expect(loadLlmSettings().model).toBe("glm-5.3");
+    expect(localStorage.getItem("gabo.llmSettings:v1")).toBeNull();
+    expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toEqual({ model: "glm-5.3" });
   });
 
   test("旧版不支持的模型与供应商偏好不会继续选中", () => {
@@ -40,7 +42,7 @@ describe("server-only provider migration", () => {
       baseUrl: "",
       model: "deepseek-v4-1-flash-260910",
     });
-    expect(JSON.parse(localStorage.getItem("gabo.llmSettings:v1")!)).toEqual({
+    expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toEqual({
       provider: "volcengine",
       baseUrl: "",
       model: "deepseek-v4-1-flash-260910",
@@ -50,5 +52,13 @@ describe("server-only provider migration", () => {
   test.each(["hyper3d-volc", "hi3d-volc"])("保留火山方舟 3D 模型偏好：%s", (provider) => {
     localStorage.setItem("gabo.threeDProviderSettings:v1", JSON.stringify({ provider }));
     expect(loadThreeDProviderSettings().provider).toBe(provider);
+    expect(JSON.parse(localStorage.getItem("chatspace.threeDProviderSettings:v1")!)).toEqual({ provider });
+  });
+
+  test("图片模型偏好从旧键迁移到 Chatspace", () => {
+    localStorage.setItem("gabo.imageGenerateModelSettings:v1", JSON.stringify({ model: "seedream" }));
+    expect(loadImageGenerateModelSettings().model).toBe("seedream");
+    expect(localStorage.getItem("gabo.imageGenerateModelSettings:v1")).toBeNull();
+    expect(JSON.parse(localStorage.getItem("chatspace.imageGenerateModelSettings:v1")!)).toEqual({ model: "seedream" });
   });
 });

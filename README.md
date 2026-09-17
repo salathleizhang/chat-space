@@ -1,8 +1,8 @@
-# Gabo Lite
+# Chatspace
 
-以本机 Gabo 的界面与交互为基线，保留真实本地工程文件的精简版本。网页由 Cloudflare Pages 托管；本机 Bun 服务负责 `~/Gabo` 工程目录、Agent 和生成任务。
+以原版界面与交互为基线，保留真实本地工程文件。网页由 Cloudflare Pages 托管；本机 Bun 服务负责工程目录、Agent 和生成任务。
 
-界面基线来自本机 Gabo commit `7a701ee8db050f33b767b8f1490738cb543c3679`。工作台与交互沿用原版；设置弹窗改为显示本机供应商配置状态，不再向网页索取 API key。
+界面基线来自原项目 commit `7a701ee8db050f33b767b8f1490738cb543c3679`。工作台与交互沿用原版；设置弹窗改为显示本机供应商配置状态，不再向网页索取 API key。
 
 ## 本地开发
 
@@ -13,7 +13,7 @@ bun install
 bun run dev
 ```
 
-将 `chat/.env.example` 复制为 `chat/.env`，在本机填写需要启用的平台密钥。打开 `http://localhost:5173/app`。网页开发服务器在 5173，数据服务仅监听 `127.0.0.1:3901`。`GABO_LIBRARY_DIR` 可调整工程目录。
+将 `chat/.env.example` 复制为 `chat/.env`，在本机填写需要启用的平台密钥。打开 `http://localhost:5173/app`。网页开发服务器在 5173，数据服务仅监听 `127.0.0.1:3901`。`CHATSPACE_LIBRARY_DIR` 可调整工程目录。
 
 | 本机变量 | 用途 |
 | --- | --- |
@@ -36,7 +36,7 @@ bun run build
 bun run start
 ```
 
-打开 `http://127.0.0.1:3901/app`。这个端口同时提供网页和 `/api`；工程文件仍保存在 `~/Gabo`。可用 `CHAT_PORT` 更换端口，本地正式网页会自动连接同一端口。修改前端代码后需重新构建。
+打开 `http://127.0.0.1:3901/app`。这个端口同时提供网页和 `/api`。新安装默认将工程文件保存在 `~/Chatspace`；如果旧版工程目录已存在且新目录不存在，会继续读取旧目录。可用 `CHATSPACE_LIBRARY_DIR` 指定目录。`CHAT_PORT` 可更换端口，本地正式网页会自动连接同一端口。修改前端代码后需重新构建。
 
 ## Cloudflare Pages
 
@@ -49,8 +49,8 @@ Pages 只发布 `app` 的 Vite 构建产物；本机服务仍需在用户电脑�
 | 输出目录 | `app/dist` |
 | 环境变量 | `BUN_VERSION=1.3.14`、`SKIP_DEPENDENCY_INSTALL=1` |
 
-Pages 对没有根级 `404.html` 的 SPA 默认回退到 `index.html`，因此 `/app/:projectSlug` 可直接打开。设置稳定的 Pages 自定义域名后，将该完整 origin 加入本机服务的 `GABO_WEB_ORIGINS`，例如 `https://gabo.example.com`。浏览器首次访问本机服务时可能要求本地网络权限。
+Pages 对没有根级 `404.html` 的 SPA 默认回退到 `index.html`，因此 `/app/:projectSlug` 可直接打开。设置稳定的 Pages 自定义域名后，将该完整 origin 加入本机服务的 `CHATSPACE_WEB_ORIGINS`，例如 `https://chatspace.example.com`。浏览器首次访问本机服务时可能要求本地网络权限。
 
-工程和会话仍位于本机 `~/Gabo`。网页向本机服务直连，Cloudflare 不接收项目 API 请求；调用第三方生成供应商时，任务输入会发送给相应供应商。Cloudflare 的实际部署及联通性验证按当前开发安排暂缓。
+工程和会话仍位于本机工程目录。网页向本机服务直连，Cloudflare 不接收项目 API 请求；调用第三方生成供应商时，任务输入会发送给相应供应商。Cloudflare 的实际部署及联通性验证按当前开发安排暂缓。
 
 协议依据：[火山 Seedream 图片编辑](https://www.volcengine.com/docs/82379/1829186)、[火山影眸 Hyper3D](https://docs.volcengine.com/docs/82379/2279947?lang=zh)、[火山数美 Hi3D](https://docs.volcengine.com/docs/82379/2307070?lang=zh)、[Tripo3D API](https://platform.tripo3d.ai/docs/quick-start)、[World Labs API](https://docs.worldlabs.ai/api)。

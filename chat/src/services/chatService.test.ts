@@ -16,7 +16,7 @@ import {
 } from "./chatService";
 import { LocalFileStorage, writeJson } from "./assetStorage";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-chat-context-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-chat-context-test-"));
 const storage = new LocalFileStorage(root);
 afterAll(() => rm(root, { recursive: true, force: true }));
 

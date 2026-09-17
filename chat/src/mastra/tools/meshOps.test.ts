@@ -14,7 +14,7 @@ import { runMeshOperation } from "./meshOps";
 import { latestAssetModel } from "./projectTools";
 import { createProject } from "./projectTools";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-meshops-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-meshops-test-"));
 const storage = new LocalFileStorage(root);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
 

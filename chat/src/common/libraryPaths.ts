@@ -2,7 +2,7 @@
  * 资产库目录约定（docs/image-blast-mastra.md §7 决策 2/4）。
  * 顶层从上游 `worlds/<slug>/` 泛化为项目结构，"世界"是资产类型之一：
  *
- * ~/Gabo/
+ * ~/Chatspace/
  *   projects/<project-slug>/
  *     project.json                 项目信封
  *     analysis.json                场景级合并分析

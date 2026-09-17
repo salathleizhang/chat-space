@@ -8,7 +8,7 @@ import { latestAssetModel, requireProject } from "./projectTools";
 import { requireCurrentProject } from "./requestContext";
 
 /**
- * 视觉自检能力（免费，CADAM 自检循环的 Gabo 变体）：agent 服务端没有渲染能力，
+ * 视觉自检能力（免费，CADAM 自检循环的 Chatspace 变体）：agent 服务端没有渲染能力，
  * 截图由 app/ 视口完成——inspect-asset 只发信号（经 SSE tool 事件带 args 驱动
  * app 开小窗四视角截图），检查图经 POST inspection 端点落盘后，由 app 以
  * **带图用户消息**回传（OpenAI 兼容协议的 tool 消息装不了图，这是唯一通道）。

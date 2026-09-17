@@ -8,7 +8,7 @@ import { LocalFileStorage, readJson } from "../../services/assetStorage";
 import { createProject, requireProject } from "./projectTools";
 import { runSkyboxGeneration } from "./skyboxGen";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-skybox-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-skybox-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const HDR_BYTES = new Uint8Array([0x23, 0x3f, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4e, 0x43, 0x45]);

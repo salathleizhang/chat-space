@@ -1,6 +1,6 @@
 /**
  * 三平台真实调用冒烟脚本。仅在 SMOKE_PAID=1 时提交付费任务。
- * 产物写入临时目录，不触碰用户的 ~/Gabo 工程。
+ * 产物写入临时目录，不触碰用户的 ~/Chatspace 工程。
  */
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,7 +26,7 @@ if (!paid) {
   process.exit(0);
 }
 
-const root = await mkdtemp(join(tmpdir(), "gabo-smoke-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-smoke-"));
 const storage = new LocalFileStorage(root);
 await createProject(storage, { name: "冒烟", slug: "smoke" });
 console.log(`产物目录：${root}`);

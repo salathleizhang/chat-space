@@ -1,5 +1,5 @@
 {
-  "name": "gabo-lite",
+  "name": "chatspace",
   "private": true,
   "workspaces": ["app", "chat"],
   "overrides": {

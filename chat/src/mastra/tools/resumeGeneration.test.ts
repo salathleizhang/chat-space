@@ -13,7 +13,7 @@ import {
 import { createProject } from "./projectTools";
 import { listResumableSidecars, resumeGeneration } from "./resumeGeneration";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-resume-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-resume-test-"));
 const storage = new LocalFileStorage(root);
 const BYTES = new Uint8Array([1, 2, 3, 4]);
 const SEED_GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);

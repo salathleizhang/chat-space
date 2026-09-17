@@ -1,13 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { createAllowedOriginChecker, createServerCredentialInjector } from "./index";
+import { createAllowedOriginChecker, createServerCredentialInjector, defaultLibraryRoot } from "./index";
+
+test("已有工程目录优先保留，新安装使用 Chatspace 目录", () => {
+  const home = "/test-home";
+  expect(defaultLibraryRoot(home, () => false)).toBe("/test-home/Chatspace");
+  expect(defaultLibraryRoot(home, (path) => String(path).endsWith("/Gabo"))).toBe("/test-home/Gabo");
+  expect(defaultLibraryRoot(home, () => true)).toBe("/test-home/Chatspace");
+});
 
 test("线上来源仅按完整 origin 放行", () => {
-  const allowed = createAllowedOriginChecker("https://gabo.example.com, https://preview.gabo.pages.dev");
+  const allowed = createAllowedOriginChecker("https://chatspace.example.com, https://preview.chatspace.pages.dev");
   expect(allowed("http://localhost:5173")).toBe(true);
-  expect(allowed("https://gabo.example.com")).toBe(true);
-  expect(allowed("https://preview.gabo.pages.dev")).toBe(true);
-  expect(allowed("https://gabo.example.com.evil.test")).toBe(false);
-  expect(allowed("https://other.gabo.pages.dev")).toBe(false);
+  expect(allowed("https://chatspace.example.com")).toBe(true);
+  expect(allowed("https://preview.chatspace.pages.dev")).toBe(true);
+  expect(allowed("https://chatspace.example.com.evil.test")).toBe(false);
+  expect(allowed("https://other.chatspace.pages.dev")).toBe(false);
 });
 
 describe("server credentials", () => {

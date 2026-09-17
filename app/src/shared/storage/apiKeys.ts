@@ -2,17 +2,19 @@
 export const LLM_PROVIDER_IDS = ["volcengine"] as const;
 export type LlmProviderId = (typeof LLM_PROVIDER_IDS)[number];
 
-const LLM_SETTINGS_KEY = "gabo.llmSettings:v1";
-const THREE_D_SETTINGS_KEY = "gabo.threeDProviderSettings:v1";
-const IMAGE_SETTINGS_KEY = "gabo.imageGenerateModelSettings:v1";
+const LLM_SETTINGS_KEY = "chatspace.llmSettings:v1";
+const THREE_D_SETTINGS_KEY = "chatspace.threeDProviderSettings:v1";
+const IMAGE_SETTINGS_KEY = "chatspace.imageGenerateModelSettings:v1";
 
 function readObject(key: string): Record<string, unknown> | null {
   try {
-    const raw = localStorage.getItem(key);
+    const legacyKey = key.replace(/^chatspace\./, "gabo.");
+    const current = localStorage.getItem(key);
+    const raw = current ?? localStorage.getItem(legacyKey);
     const value: unknown = raw ? JSON.parse(raw) : null;
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    if (current === null && writeObject(key, value)) localStorage.removeItem(legacyKey);
+    return value as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -32,6 +34,8 @@ export function clearLegacyApiKeys(): void {
   try {
     localStorage.removeItem("gabo.apiKeys");
     localStorage.removeItem("gabo.apiKeys:v1");
+    localStorage.removeItem("chatspace.apiKeys");
+    localStorage.removeItem("chatspace.apiKeys:v1");
   } catch {
     // 禁用 localStorage 时无需影响页面启动。
   }

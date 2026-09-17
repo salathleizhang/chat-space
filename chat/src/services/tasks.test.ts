@@ -29,7 +29,7 @@ import {
 } from "./assetStorage";
 import { clearTasks, listTasks, resolve3dObjects, start3dBatch } from "./tasks";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-generation-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-generation-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { z } from "zod";
 
 export const LLM_PROVIDER_IDS = ["volcengine"] as const;
@@ -7,6 +8,8 @@ export const DEEPSEEK_FLASH_SELECTION = "deepseek-v4-1-flash-260910";
 
 const EnvSchema = z.object({
   CHAT_PORT: z.coerce.number().int().positive().default(3901),
+  CHATSPACE_LIBRARY_DIR: z.string().min(1).optional(),
+  CHATSPACE_WEB_ORIGINS: z.string().optional(),
   GABO_LIBRARY_DIR: z.string().min(1).optional(),
   GABO_WEB_ORIGINS: z.string().optional(),
   VOLC_KEY: z.string().min(1).optional(),
@@ -20,6 +23,13 @@ const EnvSchema = z.object({
 });
 
 const env = EnvSchema.parse(process.env);
+
+/** 已有工程继续使用旧目录；新安装默认写入 Chatspace。 */
+export function defaultLibraryRoot(home = homedir(), exists = existsSync): string {
+  const current = join(home, "Chatspace");
+  const previous = join(home, "Gabo");
+  return !exists(current) && exists(previous) ? previous : current;
+}
 
 /** 生产站点只接受完整 origin，不放行其他 pages.dev 页面。 */
 export function createAllowedOriginChecker(configuredOrigins?: string) {
@@ -49,8 +59,8 @@ export const configuredEnvLlmProviders = env.VOLC_KEY ? ["volcengine"] : [];
 
 export const config = {
   port: env.CHAT_PORT,
-  library: { root: env.GABO_LIBRARY_DIR ?? join(homedir(), "Gabo") },
-  cors: { isAllowedOrigin: createAllowedOriginChecker(env.GABO_WEB_ORIGINS) },
+  library: { root: env.CHATSPACE_LIBRARY_DIR ?? env.GABO_LIBRARY_DIR ?? defaultLibraryRoot() },
+  cors: { isAllowedOrigin: createAllowedOriginChecker(env.CHATSPACE_WEB_ORIGINS || env.GABO_WEB_ORIGINS) },
   llm: {
     defaultBaseUrl: env.VOLC_LLM_BASE_URL,
     defaultModel: env.VOLC_LLM_MODEL,

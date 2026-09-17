@@ -828,7 +828,7 @@ describe("AgentDock LLM 能力筛选", () => {
     ) as HTMLButtonElement;
     await act(async () => deepseek.click());
     expect(modelSelect.textContent).toContain("DeepSeek V4.1 Flash");
-    expect(JSON.parse(localStorage.getItem("gabo.llmSettings:v1")!)).toMatchObject({
+    expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toMatchObject({
       model: "deepseek-v4-1-flash-260910",
     });
   });
@@ -869,7 +869,7 @@ describe("AgentDock 图片生成模型选择", () => {
     ) as HTMLButtonElement;
     await act(async () => seedream.click());
 
-    expect(JSON.parse(localStorage.getItem("gabo.imageGenerateModelSettings:v1")!)).toEqual({
+    expect(JSON.parse(localStorage.getItem("chatspace.imageGenerateModelSettings:v1")!)).toEqual({
       model: "seedream",
     });
   });

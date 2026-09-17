@@ -7,7 +7,7 @@ import type { Hono } from "hono";
 import { createApp } from "../app";
 import { LocalFileStorage, setAssetStorage } from "../services/assetStorage";
 
-const root = await mkdtemp(join(tmpdir(), "gabo-library-test-"));
+const root = await mkdtemp(join(tmpdir(), "chatspace-library-test-"));
 const storage = new LocalFileStorage(root);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 0x01, 0x02]);
 let app: Hono;
