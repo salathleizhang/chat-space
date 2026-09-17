@@ -1,7 +1,7 @@
 import { CubeFocusIcon } from "@phosphor-icons/react/CubeFocus";
 import { FolderSimplePlusIcon } from "@phosphor-icons/react/FolderSimplePlus";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { preloadAppDashboard } from "../app/router";
 import {
   createProject,
@@ -136,6 +136,7 @@ function ProjectFolderLogo({
 
 function CreateProjectDialog() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +158,7 @@ function CreateProjectDialog() {
 
   return (
     <Dialog
+      openOnMount={searchParams.get("create") === "1"}
       trigger={(open) => (
         <Button
           variant="primary"

@@ -13,7 +13,7 @@ bun install
 bun run dev
 ```
 
-将 `chat/.env.example` 复制为 `chat/.env`，在本机填写需要启用的平台密钥。打开 `http://localhost:5173/app`。网页开发服务器在 5173，数据服务仅监听 `127.0.0.1:3901`。`CHATSPACE_LIBRARY_DIR` 可调整工程目录。
+将 `chat/.env.example` 复制为 `chat/.env`，在本机填写需要启用的平台密钥。打开 `http://localhost:5173/` 进入首页；`/app` 是项目列表。网页开发服务器在 5173，数据服务仅监听 `127.0.0.1:3901`。`CHATSPACE_LIBRARY_DIR` 可调整工程目录。
 
 | 本机变量 | 用途 |
 | --- | --- |
@@ -36,7 +36,7 @@ bun run build
 bun run start
 ```
 
-打开 `http://127.0.0.1:3901/app`。这个端口同时提供网页和 `/api`。新安装默认将工程文件保存在 `~/ChatSpace`；如果旧版工程目录已存在且新目录不存在，会继续读取旧目录。可用 `CHATSPACE_LIBRARY_DIR` 指定目录。`CHAT_PORT` 可更换端口，本地正式网页会自动连接同一端口。修改前端代码后需重新构建。
+打开 `http://127.0.0.1:3901/`。这个端口同时提供网页和 `/api`。首页输入项目名称可直接创建项目；右上角按钮进入 `/app` 并打开创建弹窗。工程文件默认保存在 `~/ChatSpace`；可用 `CHATSPACE_LIBRARY_DIR` 指定目录。`CHAT_PORT` 可更换端口，本地正式网页会自动连接同一端口。修改前端代码后需重新构建。
 
 ## Cloudflare Pages
 

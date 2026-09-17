@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 interface DialogProps {
   /** 触发器：收到 open 回调，自行渲染按钮 */
@@ -6,13 +6,18 @@ interface DialogProps {
   /** 内容：收到 close 回调，自行渲染底部按钮 */
   children: (close: () => void) => ReactNode;
   className?: string;
+  openOnMount?: boolean;
 }
 
 /** 基于原生 <dialog>：焦点陷阱、Esc 关闭、顶层渲染由浏览器提供，点击遮罩关闭 */
-export function Dialog({ trigger, children, className = "" }: DialogProps) {
+export function Dialog({ trigger, children, className = "", openOnMount = false }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const open = () => ref.current?.showModal();
   const close = () => ref.current?.close();
+
+  useEffect(() => {
+    if (openOnMount && ref.current && !ref.current.open) ref.current.showModal();
+  }, [openOnMount]);
 
   return (
     <>

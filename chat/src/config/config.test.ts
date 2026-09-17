@@ -1,12 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createAllowedOriginChecker, createServerCredentialInjector, defaultLibraryRoot } from "./index";
 
-test("已有工程目录优先保留，新安装使用 ChatSpace 目录", () => {
-  const home = "/test-home";
-  expect(defaultLibraryRoot(home, () => false)).toBe("/test-home/ChatSpace");
-  expect(defaultLibraryRoot(home, (path) => String(path).endsWith("/Chatspace"))).toBe("/test-home/Chatspace");
-  expect(defaultLibraryRoot(home, (path) => String(path).endsWith("/Gabo"))).toBe("/test-home/Gabo");
-  expect(defaultLibraryRoot(home, () => true)).toBe("/test-home/ChatSpace");
+test("默认工程目录为 ChatSpace", () => {
+  expect(defaultLibraryRoot("/test-home")).toBe("/test-home/ChatSpace");
 });
 
 test("线上来源仅按完整 origin 放行", () => {

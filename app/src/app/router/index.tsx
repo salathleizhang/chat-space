@@ -14,6 +14,13 @@ export const preloadAppDashboard = () => import("../../pages/AppDashboard");
 /** 路由级代码分割：Three.js/Spark 只随单项目工作台加载，入口页保持轻量 */
 export const router = createBrowserRouter([
   {
+    path: "/",
+    hydrateFallbackElement,
+    lazy: async () => ({
+      Component: (await import("../../pages/HomePage")).HomePage,
+    }),
+  },
+  {
     path: "/app",
     hydrateFallbackElement,
     lazy: async () => ({
@@ -27,9 +34,9 @@ export const router = createBrowserRouter([
       Component: (await preloadAppDashboard()).AppDashboard,
     }),
   },
-  /** 根路径与未匹配路径一律落回项目入口 */
+  /** 未匹配路径回到首页 */
   {
     path: "*",
-    element: <Navigate to="/app" replace />,
+    element: <Navigate to="/" replace />,
   },
 ]);
