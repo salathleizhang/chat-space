@@ -22,10 +22,11 @@ import {
 } from "../../dto/library";
 import { extractMeshyFileUrls } from "../../models/meshy";
 import {
+  createTripoImageToModelTask,
+  createTripoImportModelTask,
   createTripoSegmentTask,
-  createTripoTask,
   createTripoV3Task,
-  uploadTripoImage,
+  uploadTripoFile,
   uploadTripoModelViaSts,
   waitForTripoTask,
   type TripoCallOptions,
@@ -157,7 +158,7 @@ export async function runTripoImageTo3d(
     index,
     slug: params.assetSlug,
     provider: TRIPO_PROVIDER,
-    model: "image_to_model",
+    model: "v3/generation/image-to-model",
     params: { image },
     status: "queued",
     outputs: [],
@@ -172,16 +173,12 @@ export async function runTripoImageTo3d(
   await saveSidecar();
 
   try {
-    const ext = image.split(".").pop()!.toLowerCase();
-    const fileToken = await uploadTripoImage(
+    const fileToken = await uploadTripoFile(
       image.split("/").pop()!,
       await storage.readBytes(image),
       callOptions,
     );
-    const taskId = await createTripoTask(
-      { type: "image_to_model", file: { type: ext, file_token: fileToken } },
-      callOptions,
-    );
+    const taskId = await createTripoImageToModelTask(fileToken, callOptions);
     sidecar.providerTaskId = taskId;
     sidecar.status = "running";
     await saveSidecar();
@@ -259,7 +256,7 @@ export async function importAssetModelToTripo(
     index,
     slug: assetSlug,
     provider: TRIPO_PROVIDER,
-    model: "import_model",
+    model: "v3/models/import",
     params: { input_model: modelPath },
     status: "queued",
     outputs: [],
@@ -274,15 +271,12 @@ export async function importAssetModelToTripo(
   await saveSidecar();
 
   try {
-    const object = await uploadTripoModelViaSts(
+    const fileToken = await uploadTripoModelViaSts(
       ext,
       await storage.readBytes(modelPath),
       callOptions,
     );
-    const taskId = await createTripoTask(
-      { type: "import_model", file: { type: ext, object } },
-      callOptions,
-    );
+    const taskId = await createTripoImportModelTask(fileToken, callOptions);
     sidecar.providerTaskId = taskId;
     sidecar.status = "running";
     await saveSidecar();
@@ -357,7 +351,7 @@ export async function runTripoSegmentation(
     sidecar.status = "running";
     await saveSidecar();
 
-    const data = await waitForTripoTask(taskId, { ...callOptions, v3: true });
+    const data = await waitForTripoTask(taskId, callOptions);
     const files = await landTripoOutputs(
       storage,
       dir,
@@ -381,7 +375,7 @@ export async function runTripoSegmentation(
 export function startTripo3dBatch(
   projectSlug: string,
   objects: GenerationObject[],
-  options: { tripo3dApiKey: string },
+  options: { tripo3dApiKey: string; imageModel?: string },
 ) {
   return objects.map((object) =>
     startCustomTask(
@@ -394,7 +388,7 @@ export function startTripo3dBatch(
           (target) => runTripoImageTo3d(
             target,
             { projectSlug, assetSlug: object.slug, image: object.sourceImages[0] },
-            { apiKey: options.tripo3dApiKey },
+            { apiKey: options.tripo3dApiKey, imageModel: options.imageModel },
           ),
         ),
       {
@@ -486,7 +480,7 @@ export async function runTripoTexture(
     {
       projectSlug: params.projectSlug,
       assetSlug: params.assetSlug,
-      path: "/v3/models/texture",
+      path: "/models/texture",
       body: {
         input: originalTaskId,
         ...(params.prompt ? { texture_prompt: { text: params.prompt } } : {}),
@@ -524,7 +518,7 @@ export async function runTripoRig(
     {
       projectSlug: params.projectSlug,
       assetSlug: params.assetSlug,
-      path: "/v3/animations/rig",
+      path: "/animations/rig",
       body: {
         input: originalTaskId,
         out_format: "glb",
@@ -581,7 +575,7 @@ async function runTripoV3Job(
     sidecar.providerTaskId = taskId;
     sidecar.status = "running";
     await saveSidecar();
-    const data = await waitForTripoTask(taskId, { ...callOptions, v3: true });
+    const data = await waitForTripoTask(taskId, callOptions);
     const files = await landTripoOutputs(
       storage,
       dir,

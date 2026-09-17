@@ -15,13 +15,16 @@ bun run dev
 
 将 `chat/.env.example` 复制为 `chat/.env`，在本机填写需要启用的平台密钥。打开 `http://localhost:5173/` 进入首页；`/app` 是项目列表。网页开发服务器在 5173，数据服务仅监听 `127.0.0.1:3901`。`CHATSPACE_LIBRARY_DIR` 可调整工程目录。
 
+修改 `chat/.env`（包括 `VOLC_LLM_MODEL` 等模型 ID）后必须重启本机服务：`bun run dev` 的热重载只重载代码，不会重新读取环境变量；否则进程会继续用旧配置调用模型。
+
 | 本机变量 | 用途 |
 | --- | --- |
-| `VOLC_KEY` | 火山方舟 GLM-5.3 / DeepSeek V4.1 Flash 对话、Seedream 图片，以及 Seed3D、Hyper3D、Hi3D 模型 |
+| `VOLC_KEY` | 火山方舟 Doubao Seed 2.0 Lite / DeepSeek V4.1 Flash 对话、Seedream 图片，以及 Seed3D、Hyper3D、Hi3D 模型 |
 | `TRIPO_KEY` | Tripo3D 模型生成与分割 |
+| `TRIPO_IMAGE_MODEL` | Tripo3D 图生 3D 的几何模型 ID，默认 `v3.1-20260211`（v3 接口必填） |
 | `WORLDLABS_KEY` | World Labs Marble 场景 |
 
-对话模型可在 Agent 输入框的下拉菜单中选择 GLM-5.3 或 DeepSeek V4.1 Flash，默认仍使用 GLM-5.3。两者共用本机的 `VOLC_KEY` 和火山方舟地址 `https://ark.cn-beijing.volces.com/api/v3`。如果你的接入点使用不同的地址或模型 ID，可在本机设置 `VOLC_LLM_BASE_URL`、`VOLC_LLM_MODEL` 与 `VOLC_DEEPSEEK_MODEL`；DeepSeek V4.1 Flash 默认 ID 为 `deepseek-v4-1-flash-260910`。火山影眸 Hyper3D、数美 Hi3D 的默认模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
+对话模型可在 Agent 输入框的下拉菜单中选择 Doubao Seed 2.0 Lite 或 DeepSeek V4.1 Flash，默认使用 Doubao Seed 2.0 Lite。两者共用本机的 `VOLC_KEY` 和火山方舟地址 `https://ark.cn-beijing.volces.com/api/v3`。如果你的接入点使用不同的地址或模型 ID，可在本机设置 `VOLC_LLM_BASE_URL`、`VOLC_LLM_MODEL` 与 `VOLC_DEEPSEEK_MODEL`；DeepSeek V4.1 Flash 默认 ID 为 `deepseek-v4-1-flash-260910`。火山影眸 Hyper3D、数美 Hi3D 的默认模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
 
 运行检查：
 

@@ -21,7 +21,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 假 Tripo：上传 → file_token；STS + S3 直传；v2/v3 任务 → task_id → success + CDN */
+/** 假 Tripo：v3 上传 → file_token；STS + S3 直传；v3 能力端点 → task_id → success + CDN */
 function makeFakeTripoFetch() {
   const calls: { url: string; body?: unknown }[] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -29,11 +29,7 @@ function makeFakeTripoFetch() {
     if (url.startsWith("https://cdn.fake/")) {
       return new Response(GLB_BYTES.buffer.slice(0), { status: 200 });
     }
-    if (url.endsWith("/upload/file")) {
-      calls.push({ url });
-      return jsonResponse({ code: 0, data: { file_token: "ft-1" } });
-    }
-    if (url.endsWith("/upload/sts/token")) {
+    if (url.endsWith("/files/upload-credentials")) {
       calls.push({ url });
       return jsonResponse({
         code: 0,
@@ -44,18 +40,31 @@ function makeFakeTripoFetch() {
           session_token: "st",
           resource_bucket: "tripo-data",
           resource_uri: "up/model.glb",
+          file_token: "ft-2",
         },
       });
+    }
+    if (url.endsWith("/files")) {
+      calls.push({ url });
+      return jsonResponse({ code: 0, data: { file_token: "ft-1" } });
     }
     if (url.startsWith("https://s3.fake/") && init?.method === "PUT") {
       calls.push({ url });
       return new Response(null, { status: 200 });
     }
-    if (url.endsWith("/v3/mesh/segment")) {
+    if (url.endsWith("/generation/image-to-model")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "gen-1" } });
+    }
+    if (url.endsWith("/models/import")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "imp-1" } });
+    }
+    if (url.endsWith("/mesh/segment")) {
       calls.push({ url, body: JSON.parse(String(init?.body)) });
       return jsonResponse({ code: 0, data: { task_id: "seg-1" } });
     }
-    if (url.includes("/v3/tasks/")) {
+    if (url.includes("/v3/tasks/seg-1")) {
       return jsonResponse({
         code: 0,
         data: {
@@ -69,11 +78,7 @@ function makeFakeTripoFetch() {
         },
       });
     }
-    if (url.endsWith("/task") && init?.method === "POST") {
-      calls.push({ url, body: JSON.parse(String(init.body)) });
-      return jsonResponse({ code: 0, data: { task_id: "gen-1" } });
-    }
-    if (url.includes("/task/")) {
+    if (url.includes("/v3/tasks/")) {
       return jsonResponse({
         code: 0,
         data: {
@@ -106,11 +111,14 @@ describe("runTripoImageTo3d", () => {
       { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
     );
 
-    const createCall = calls.find((c) => c.url.endsWith("/task"));
-    expect((createCall?.body as { type: string }).type).toBe("image_to_model");
-    expect(
-      (createCall?.body as { file: { file_token: string } }).file.file_token,
-    ).toBe("ft-1");
+    // 上传走 v3 POST /files（旧的 /upload/file 已下线）
+    const uploadCall = calls.find((c) => c.url.endsWith("/v3/files"));
+    expect(uploadCall).toBeDefined();
+    expect(calls.some((c) => c.url.includes("/upload/file"))).toBe(false);
+
+    const createCall = calls.find((c) => c.url.endsWith("/generation/image-to-model"));
+    expect((createCall?.body as { input: string }).input).toBe("ft-1");
+    expect((createCall?.body as { model: string }).model).toBe("v3.1-20260211");
 
     const dir = assetDir("tp", "crate");
     expect(result.tripoTaskId).toBe("gen-1");
@@ -140,8 +148,7 @@ describe("runTripoSegmentation", () => {
       { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
     );
 
-    const segCall = calls.find((c) => c.url.endsWith("/v3/mesh/segment"));
-    expect((segCall?.body as { input: string }).input).toBe("gen-1");
+    const segCall = calls.find((c) => c.url.endsWith("/v3/mesh/segment"));    expect((segCall?.body as { input: string }).input).toBe("gen-1");
     expect(result.files).toHaveLength(2);
     for (const file of result.files) {
       expect(await storage.exists(file)).toBe(true);
@@ -164,15 +171,11 @@ describe("runTripoSegmentation", () => {
       { projectSlug: "tp", assetSlug: "imported" },
       { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
     );
-    // 走了 STS 直传 + import_model
-    expect(calls.some((c) => c.url.endsWith("/upload/sts/token"))).toBe(true);
+    // 走了 v3 STS 换发 + S3 直传 + /models/import
+    expect(calls.some((c) => c.url.endsWith("/files/upload-credentials"))).toBe(true);
     expect(calls.some((c) => c.url.startsWith("https://s3.fake/"))).toBe(true);
-    const importCall = calls.find(
-      (c) => (c.body as { type?: string } | undefined)?.type === "import_model",
-    );
-    expect(
-      (importCall?.body as { file: { object: { bucket: string } } }).file.object.bucket,
-    ).toBe("tripo-data");
+    const importCall = calls.find((c) => c.url.endsWith("/models/import"));
+    expect((importCall?.body as { input: string }).input).toBe("ft-2");
     expect(result.files.length).toBeGreaterThan(0);
   });
 

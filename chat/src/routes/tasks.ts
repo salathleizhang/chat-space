@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { withServerCredentials } from "../config";
+import { config, withServerCredentials } from "../config";
 import {
   Start3dBatchRequestSchema,
   StartWorldTaskRequestSchema,
@@ -28,7 +28,10 @@ taskRoutes.post("/3d", async (c) => {
   const req = Start3dBatchRequestSchema.parse(withServerCredentials(await c.req.json()));
   const objects = await resolve3dObjects(req.projectSlug, req.assetSlugs);
   const tasks = req.provider === "tripo-direct"
-    ? startTripo3dBatch(req.projectSlug, objects, { tripo3dApiKey: req.tripo3dApiKey! })
+    ? startTripo3dBatch(req.projectSlug, objects, {
+      tripo3dApiKey: req.tripo3dApiKey!,
+      imageModel: config.tripo.imageModel,
+    })
     : req.provider === "hyper3d-volc" || req.provider === "hi3d-volc"
       ? startArk3dBatch(req.provider, req.projectSlug, objects, {
         apiKey: req.volcengineApiKey!,
@@ -92,6 +95,7 @@ taskRoutes.post("/:taskId/retry", async (c) => {
     provider === "tripo-direct"
       ? startTripo3dBatch(req.projectSlug, [object], {
           tripo3dApiKey: req.tripo3dApiKey ?? "",
+          imageModel: config.tripo.imageModel,
         })
       : provider === "hyper3d-volc" || provider === "hi3d-volc"
         ? startArk3dBatch(provider, req.projectSlug, [object], {

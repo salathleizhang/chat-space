@@ -2,22 +2,29 @@ import { createHash, createHmac } from "node:crypto";
 import { ChatServiceError } from "../common/errors";
 
 /**
- * Tripo3D 直连客户端（Bearer tsk_ key；REST 细节经官方 Python SDK 源码核实 2026-07）。
- * v2：POST /task 建任务（{ data: { task_id } }）→ GET /task/:id 轮询
- * （data.status: queued / running / success / failed / cancelled / banned / expired）。
- * v3（分割等新能力）：POST openapi.tripo3d.ai/v3/mesh/segment → GET /v3/tasks/:id。
- * 图片经 POST /upload/file（multipart，file_token）；模型文件导入需 STS 直传 S3（待接）。
- * 后处理任务只收 original_model_task_id —— 链式：先有 Tripo 生成任务才能后处理。
+ * Tripo3D 直连客户端（Bearer tsk_ key；v3 REST 细节经官方文档核实 2026-09）。
+ * v3（openapi.tripo3d.ai/v3）把 v2 的通用 POST /task 拆成能力端点：
+ * - 上传文件：POST /files（multipart）→ data.file_token；大文件可先用
+ *   POST /files/upload-credentials 换 STS 凭证，SigV4 直传 S3 后同样得到 file_token。
+ * - 生成：POST /generation/image-to-model（{ input: file_token, model }）。
+ * - 后处理：POST /models/import、/models/texture、/mesh/segment、/animations/rig …。
+ * - 轮询：GET /tasks/:id（data.status: queued / running / success / failed /
+ *   cancelled / banned / expired）。
+ * v2 的 POST /v2/openapi/upload/file 已下线（404 code 9404），不要再用。
  */
 
-const V2_BASE = "https://api.tripo3d.ai/v2/openapi";
-const V3_BASE = "https://openapi.tripo3d.ai";
+const V3_BASE = "https://openapi.tripo3d.ai/v3";
+
+/** 图生 3D 默认几何模型（官方 v3.1，最新最佳质量）；可用 TRIPO_IMAGE_MODEL 覆盖。 */
+export const DEFAULT_TRIPO_IMAGE_MODEL = "v3.1-20260211";
 
 export interface TripoCallOptions {
   apiKey: string;
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /** 图生 3D 的几何模型版本；缺省用 DEFAULT_TRIPO_IMAGE_MODEL */
+  imageModel?: string;
   onStatus?: (status: string) => void | Promise<void>;
 }
 
@@ -33,8 +40,8 @@ function dataOf(payload: Record<string, unknown>): Record<string, unknown> {
   return (payload.data ?? {}) as Record<string, unknown>;
 }
 
-/** 上传图片（multipart）→ file_token；仅支持图片，模型文件须走 STS 直传（待接） */
-export async function uploadTripoImage(
+/** 上传参考图（multipart）→ file_token */
+export async function uploadTripoFile(
   fileName: string,
   bytes: Uint8Array,
   options: TripoCallOptions,
@@ -42,7 +49,7 @@ export async function uploadTripoImage(
   const fetchFn = options.fetchFn ?? fetch;
   const form = new FormData();
   form.append("file", new Blob([bytes]), fileName);
-  const response = await fetchFn(`${V2_BASE}/upload/file`, {
+  const response = await fetchFn(`${V3_BASE}/files`, {
     method: "POST",
     headers: authHeader(options.apiKey),
     body: form,
@@ -62,32 +69,27 @@ export async function uploadTripoImage(
   return token;
 }
 
-export async function createTripoTask(
-  body: Record<string, unknown>,
+/** 图生 3D：file_token 由 uploadTripoFile 得到 */
+export function createTripoImageToModelTask(
+  fileToken: string,
   options: TripoCallOptions,
 ): Promise<string> {
-  const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${V2_BASE}/task`, {
-    method: "POST",
-    headers: { ...authHeader(options.apiKey), "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = await jsonOrEmpty(response);
-  if (!response.ok) {
-    throw new ChatServiceError(
-      `Tripo 提交失败（${response.status}）：${JSON.stringify(payload).slice(0, 300)}`,
-      502,
-      "tripo_submit_failed",
-    );
-  }
-  const taskId = dataOf(payload).task_id;
-  if (typeof taskId !== "string" || !taskId) {
-    throw new ChatServiceError("Tripo 提交响应缺少 task_id", 502, "tripo_submit_failed");
-  }
-  return taskId;
+  return createTripoV3Task(
+    "/generation/image-to-model",
+    { input: fileToken, model: options.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL },
+    options,
+  );
 }
 
-/** v3 系任务（分割 / 新版 texture / 新版 rig 等独立端点） */
+/** 把上传好的模型文件登记成 Tripo 任务（后续分割/贴图等后处理的链头） */
+export function createTripoImportModelTask(
+  fileToken: string,
+  options: TripoCallOptions,
+): Promise<string> {
+  return createTripoV3Task("/models/import", { input: fileToken }, options);
+}
+
+/** v3 系任务（生成 / 后处理 / 导入等能力端点） */
 export async function createTripoV3Task(
   path: string,
   body: Record<string, unknown>,
@@ -120,13 +122,13 @@ export function createTripoSegmentTask(
   options: TripoCallOptions,
 ): Promise<string> {
   return createTripoV3Task(
-    "/v3/mesh/segment",
+    "/mesh/segment",
     { model: "v2.0-20260430", input: originalTaskId },
     options,
   );
 }
 
-// ---------- 模型文件导入：STS 换发 + SigV4 直传 S3（Python SDK 的 boto3 路径等价实现） ----------
+// ---------- 大文件导入：STS 换发 + SigV4 直传 S3（官方 /files/upload-credentials 路径） ----------
 
 const S3_SIGNED_HEADERS = "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
 
@@ -138,7 +140,13 @@ function hmac(key: Buffer | string, data: string): Buffer {
   return createHmac("sha256", key).update(data).digest();
 }
 
-/** AWS SigV4 的 S3 PUT（path-style；region 未在 STS 响应中给出，按 boto3 缺省 us-east-1） */
+/** STS 只给 s3_host，区域要从主机名里读（如 s3.us-west-2.amazonaws.com → us-west-2） */
+export function regionFromS3Host(s3Host: string): string {
+  const match = /^s3[.-]([a-z0-9-]+)\.amazonaws\.com$/i.exec(s3Host);
+  return match?.[1] ?? "us-east-1";
+}
+
+/** AWS SigV4 的 S3 PUT（path-style） */
 export async function sigV4PutObject(
   s3Host: string,
   bucket: string,
@@ -146,8 +154,8 @@ export async function sigV4PutObject(
   bytes: Uint8Array,
   creds: { accessKey: string; secretKey: string; sessionToken: string },
   fetchFn: typeof fetch = fetch,
+  region = regionFromS3Host(s3Host),
 ): Promise<void> {
-  const region = "us-east-1";
   const amzDate = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   const dateStamp = amzDate.slice(0, 8);
   const payloadHash = sha256Hex(bytes);
@@ -201,14 +209,14 @@ export async function sigV4PutObject(
   }
 }
 
-/** 上传模型文件（STS 直传）→ 任务 file 对象里的 { bucket, key } */
+/** 上传模型文件（STS 直传，任意大小）→ 可直接当 input 的 file_token */
 export async function uploadTripoModelViaSts(
   format: string,
   bytes: Uint8Array,
   options: TripoCallOptions,
-): Promise<{ bucket: string; key: string }> {
+): Promise<string> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${V2_BASE}/upload/sts/token`, {
+  const response = await fetchFn(`${V3_BASE}/files/upload-credentials`, {
     method: "POST",
     headers: { ...authHeader(options.apiKey), "Content-Type": "application/json" },
     body: JSON.stringify({ format }),
@@ -240,20 +248,24 @@ export async function uploadTripoModelViaSts(
     },
     fetchFn,
   );
-  return { bucket: data.resource_bucket as string, key: data.resource_uri as string };
+  const fileToken = data.file_token;
+  if (typeof fileToken !== "string" || !fileToken) {
+    throw new ChatServiceError("Tripo STS 响应缺少 file_token", 502, "tripo_upload_failed");
+  }
+  return fileToken;
 }
 
 const TERMINAL_FAILURES = new Set(["failed", "cancelled", "banned", "expired"]);
 
-/** 轮询直至 success，返回任务 data；终态失败/超时抛错 */
+/** 轮询 v3 任务直至 success，返回任务 data；终态失败/超时抛错 */
 export async function waitForTripoTask(
   taskId: string,
-  options: TripoCallOptions & { v3?: boolean },
+  options: TripoCallOptions,
 ): Promise<Record<string, unknown>> {
   const fetchFn = options.fetchFn ?? fetch;
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
-  const url = options.v3 ? `${V3_BASE}/v3/tasks/${taskId}` : `${V2_BASE}/task/${taskId}`;
+  const url = `${V3_BASE}/tasks/${taskId}`;
 
   for (;;) {
     const response = await fetchFn(url, { headers: authHeader(options.apiKey) });

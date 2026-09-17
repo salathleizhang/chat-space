@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { DEFAULT_TRIPO_IMAGE_MODEL } from "../models/tripo";
 
 export const LLM_PROVIDER_IDS = ["volcengine"] as const;
+export const DOUBAO_LITE_SELECTION = "doubao-seed-2-0-lite-260215";
 export const DEEPSEEK_FLASH_SELECTION = "deepseek-v4-1-flash-260910";
 
 const EnvSchema = z.object({
@@ -11,9 +13,10 @@ const EnvSchema = z.object({
   CHATSPACE_WEB_ORIGINS: z.string().optional(),
   VOLC_KEY: z.string().min(1).optional(),
   TRIPO_KEY: z.string().min(1).optional(),
+  TRIPO_IMAGE_MODEL: z.string().min(1).default(DEFAULT_TRIPO_IMAGE_MODEL),
   WORLDLABS_KEY: z.string().min(1).optional(),
   VOLC_LLM_BASE_URL: z.url().default("https://ark.cn-beijing.volces.com/api/v3"),
-  VOLC_LLM_MODEL: z.string().min(1).default("glm-5.3"),
+  VOLC_LLM_MODEL: z.string().min(1).default(DOUBAO_LITE_SELECTION),
   VOLC_DEEPSEEK_MODEL: z.string().min(1).default(DEEPSEEK_FLASH_SELECTION),
   VOLC_HYPER3D_MODEL: z.string().min(1).default("hyper3d-gen2-260112"),
   VOLC_HI3D_MODEL: z.string().min(1).default("hitem3d-2-0-251223"),
@@ -64,6 +67,9 @@ export const config = {
   ark3d: {
     hyper3dModel: env.VOLC_HYPER3D_MODEL,
     hi3dModel: env.VOLC_HI3D_MODEL,
+  },
+  tripo: {
+    imageModel: env.TRIPO_IMAGE_MODEL,
   },
 } as const;
 

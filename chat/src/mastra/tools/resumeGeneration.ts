@@ -357,7 +357,6 @@ export async function resumeGeneration(
         apiKey: keys.tripo3dApiKey,
         fetchFn: keys.fetchFn,
         pollIntervalMs: keys.pollIntervalMs,
-        v3: sidecar.model.includes("v3/"),
       });
       await landScannedUrls(data.output ?? data);
     } else if (sidecar.provider === "hunyuan") {
