@@ -23,7 +23,7 @@ describe("server credentials", () => {
     },
     {
       baseUrl: "https://ark.example/api/v3",
-      model: "glm-5.3",
+      model: "doubao-seed-2-0-lite-260215",
       deepseekModel: "deepseek-v4-1-flash-260910",
     },
   );
@@ -49,7 +49,7 @@ describe("server credentials", () => {
         apiKey: "local-volc",
         provider: "volcengine",
         baseUrl: "https://ark.example/api/v3",
-        model: "glm-5.3",
+        model: "doubao-seed-2-0-lite-260215",
       },
     });
   });
@@ -72,7 +72,7 @@ describe("server credentials", () => {
   test("缺少本机配置时不接受浏览器补交密钥", () => {
     const empty = createServerCredentialInjector({}, {
       baseUrl: "https://ark.example/api/v3",
-      model: "glm-5.3",
+      model: "doubao-seed-2-0-lite-260215",
       deepseekModel: "deepseek-v4-1-flash-260910",
     });
     expect(empty({ worldLabsApiKey: "browser-world", llm: { apiKey: "browser-llm" } })).toEqual({
@@ -80,7 +80,7 @@ describe("server credentials", () => {
         apiKey: "",
         provider: "volcengine",
         baseUrl: "https://ark.example/api/v3",
-        model: "glm-5.3",
+        model: "doubao-seed-2-0-lite-260215",
       },
     });
   });

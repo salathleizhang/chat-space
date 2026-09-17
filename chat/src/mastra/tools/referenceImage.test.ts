@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import {
   assetIdentityFile,
   projectAnalysisFile,
@@ -21,6 +22,7 @@ import {
   composeReferenceImageEditPrompt,
   composeReferenceImagePrompt,
   GenerateReferenceImagesInputSchema,
+  GenerateReferenceImagesToolSchema,
   runGenerateReferenceImages,
   runReferenceImageEdit,
   runReferenceImageGeneration,
@@ -166,6 +168,26 @@ describe("GenerateReferenceImagesInputSchema", () => {
         prompt: "isolate the chair",
       }),
     ).toMatchObject({ mode: "edit", model: "seedream" });
+  });
+
+  test("工具入参是扁平 object，edit 分支仍由 union 校验", () => {
+    const json = z.toJSONSchema(GenerateReferenceImagesToolSchema, { io: "input" }) as {
+      type?: string;
+      anyOf?: unknown;
+    };
+    expect(json.type).toBe("object");
+    expect(json.anyOf).toBeUndefined();
+
+    const flat = GenerateReferenceImagesToolSchema.parse({
+      mode: "edit",
+      assetSlug: "chair",
+      prompt: "isolate the chair",
+    });
+    expect(GenerateReferenceImagesInputSchema.parse(flat)).toMatchObject({
+      mode: "edit",
+      assetSlug: "chair",
+      model: "seedream",
+    });
   });
 });
 
@@ -491,6 +513,38 @@ describe("runReferenceImageGeneration", () => {
         { fetchFn: failFetch },
       ),
     ).rejects.toThrow("图片生成失败");
+  });
+
+  /**
+   * 回归：模型会在一轮里并发发起多张参考图，而不指定 assetSlug 时 slug 固定为
+   * `ref`。旧实现是"列目录 → 取最大 +1"，三个并发调用算出同一个索引、写同一个
+   * 文件，后写的静默盖掉先写的，用户只看到一张图。
+   */
+  test("并发文生图各自占用独立索引，不再互相覆盖", async () => {
+    await createProject(storage, { name: "并发参考图", slug: "parallel-refs" });
+    const results = await Promise.all(
+      ["橘白猫", "黑猫", "布偶猫"].map((prompt) =>
+        runReferenceImageGeneration(
+          storage,
+          { projectSlug: "parallel-refs", prompt, channel: "volcengine" },
+          { volcengineApiKey: "vk" },
+          { fetchFn: fakeFetch },
+        ),
+      ),
+    );
+
+    const images = results.map((result) => result.images[0]!);
+    expect(new Set(images).size).toBe(3);
+    for (const image of images) expect(await storage.exists(image)).toBe(true);
+    // 侧写也要各占一份，否则续跑/修复会读到别人的请求参数
+    expect(new Set(results.map((result) => result.sidecar)).size).toBe(3);
+    for (const result of results) {
+      const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+      expect(sidecar.status).toBe("succeeded");
+      expect(sidecar.outputs).toEqual([
+        { path: result.images[0]!, providerUrl: undefined },
+      ]);
+    }
   });
 });
 

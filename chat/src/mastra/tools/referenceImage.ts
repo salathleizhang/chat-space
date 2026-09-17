@@ -4,7 +4,7 @@ import { ChatServiceError, toErrorMessage } from "../../common/errors";
 import {
   formatIndexedName,
   formatRequestSidecarName,
-  nextIndex,
+  reserveIndex,
 } from "../../common/indexedFiles";
 import {
   assetIdentityFile,
@@ -244,12 +244,10 @@ export async function runReferenceImageGeneration(
 
   const sourceDir = projectSourceDir(params.projectSlug);
   const slug = params.assetSlug ? `${params.assetSlug}-ref` : "ref";
-  const index = nextIndex(await storage.list(sourceDir));
-  const sidecarPath = `${sourceDir}/${formatRequestSidecarName(index, slug)}`;
 
   const now = () => new Date().toISOString();
   const effectivePrompt = composeReferenceImagePrompt(params.prompt, params.canvas);
-  const sidecar: RequestSidecar = {
+  const sidecarFor = (index: number): RequestSidecar => ({
     schemaVersion: 1,
     index,
     slug,
@@ -269,7 +267,17 @@ export async function runReferenceImageGeneration(
     outputs: [],
     createdAt: now(),
     updatedAt: now(),
-  };
+  });
+  /*
+    一轮对话里模型会并发发起多张参考图，而不指定 assetSlug 时 slug 固定是 `ref`。
+    必须原子占索引，否则这些调用会算出同一个文件名互相覆盖（2026-09 三张图只剩
+    一张就是这个原因）；占位内容直接用 queued 侧写，中途崩掉也不会留下半成品。
+  */
+  const index = await reserveIndex(storage, sourceDir, slug, (candidate) =>
+    JSON.stringify(sidecarFor(candidate), null, 2),
+  );
+  const sidecarPath = `${sourceDir}/${formatRequestSidecarName(index, slug)}`;
+  const sidecar = sidecarFor(index);
   const saveSidecar = () =>
     writeJson(storage, sidecarPath, RequestSidecarSchema, {
       ...sidecar,
@@ -406,12 +414,10 @@ export async function runReferenceImageEdit(
   const route = routeImageEditChannel(params.model, keys, params.channel);
   const sourceDir = projectSourceDir(params.projectSlug);
   const slug = `${params.assetSlug}-ref`;
-  const index = nextIndex(await storage.list(sourceDir));
-  const sidecarPath = `${sourceDir}/${formatRequestSidecarName(index, slug)}`;
 
   const now = () => new Date().toISOString();
   const effectivePrompt = composeReferenceImageEditPrompt(params.prompt);
-  const sidecar: RequestSidecar = {
+  const sidecarFor = (index: number): RequestSidecar => ({
     schemaVersion: 1,
     index,
     slug,
@@ -428,7 +434,13 @@ export async function runReferenceImageEdit(
     outputs: [],
     createdAt: now(),
     updatedAt: now(),
-  };
+  });
+  // 同一个资产并发编辑也要各占一个索引，理由同文生图
+  const index = await reserveIndex(storage, sourceDir, slug, (candidate) =>
+    JSON.stringify(sidecarFor(candidate), null, 2),
+  );
+  const sidecarPath = `${sourceDir}/${formatRequestSidecarName(index, slug)}`;
+  const sidecar = sidecarFor(index);
   const saveSidecar = () =>
     writeJson(storage, sidecarPath, RequestSidecarSchema, { ...sidecar, updatedAt: now() });
   await saveSidecar();
@@ -512,6 +524,27 @@ export type GenerateReferenceImagesInput = z.input<
   typeof GenerateReferenceImagesInputSchema
 >;
 
+/**
+ * 工具对模型暴露的入参必须是顶层 `type: object`。上面的 union 会被序列化成
+ * `{ anyOf: [...] }`，火山方舟的 DeepSeek 接入点会直接拒绝整轮请求：
+ * `tools.N.function.parameters must be a JSON Schema of type object`
+ * （Doubao 接入点恰好容忍 anyOf，所以只有切到 DeepSeek 才暴露）。
+ * 因此工具层把 generate/edit 合并成一个扁平对象；分支必填约束仍由上面的
+ * union 在执行层校验，模型看到的字段与两种模式的实际入参保持一致。
+ */
+export const GenerateReferenceImagesToolSchema = z.object({
+  mode: z.enum(["generate", "edit"]).default("generate"),
+  prompt: z.string().min(1),
+  model: z.enum(IMAGE_GENERATE_MODEL_IDS).default("seedream"),
+  channel: z.enum(IMAGE_CHANNELS).optional(),
+  /** mode=generate 时可选绑定目标；mode=edit 时必填。 */
+  assetSlug: SlugSchema.optional(),
+  assetName: z.string().min(1).optional(),
+  assetIntent: z.string().min(1).optional(),
+  count: z.number().int().min(1).max(4).default(1),
+  canvas: z.enum(REFERENCE_IMAGE_CANVASES).default("landscape"),
+});
+
 /** generate/edit 两种模式归一成同一返回形状，方便 SSE 统一展示新参考图。 */
 export async function runGenerateReferenceImages(
   storage: AssetStorage,
@@ -549,12 +582,12 @@ export const generateReferenceImagesTool = createTool({
   id: "generate-reference-images",
   description:
     "生成 3D 用的单物体参考图（付费操作——调用前须经用户同意）。mode=generate 是文生图，默认火山 Seedream；要继续生成 3D 时必须传 assetSlug，并可传 assetName/assetIntent：图片成功后会自动登记待发布生成目标并绑定图片，紧接着用同一 assetSlug 调 start-3d-batch。mode=edit 使用火山 Seedream 图生图，要求已存在的 assetSlug，读取现有 sourceImages 隔离物体或修改外观。工具层强制完整入镜、四周留白、无遮挡。",
-  inputSchema: GenerateReferenceImagesInputSchema,
+  inputSchema: GenerateReferenceImagesToolSchema,
   execute: async (input, context) =>
     runGenerateReferenceImages(
       getAssetStorage(),
       requireCurrentProject(context),
-      input,
+      GenerateReferenceImagesInputSchema.parse(input),
       providerKeysFromContext(context),
     ),
 });

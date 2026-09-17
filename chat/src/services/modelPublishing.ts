@@ -54,6 +54,9 @@ class StagedAssetStorage implements AssetStorage {
   }
   list(path: string) { return this.base.list(this.map(path)); }
   exists(path: string) { return this.base.exists(this.map(path)); }
+  createExclusive(path: string, content: string) {
+    return this.base.createExclusive(this.map(path), content);
+  }
   remove(path: string) { return this.base.remove(this.map(path)); }
   move(sourcePath: string, targetPath: string) {
     if (!this.base.move) throw new Error("当前存储不支持原子发布");

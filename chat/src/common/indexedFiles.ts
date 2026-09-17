@@ -58,3 +58,38 @@ export function nextIndex(fileNames: string[]): number {
   }
   return max + 1;
 }
+
+/** reserveIndex 只需要这两件事，用结构化类型写，避免 common 反向依赖 services 层。 */
+export interface IndexReservationStore {
+  list(dirPath: string): Promise<string[]>;
+  createExclusive(path: string, content: string): Promise<boolean>;
+}
+
+/**
+ * 原子占用下一个索引。`nextIndex` 是"列目录 → 取最大 + 1"，两个同时在跑的调用
+ * 会算出同一个索引、写同一个文件名，后写的静默盖掉先写的（2026-09 三张并发参考图
+ * 只落盘一张就是这么来的）。
+ *
+ * 这里改成用侧写文件名做排他占位：扩展名要等供应商返回才知道，侧写名与扩展名无关，
+ * 所以它既能先占住索引，又天然满足 nextIndex 的解析规则。撞名就顺延到下一个索引。
+ *
+ * 占位内容由调用方给出，而且必须是一份合法侧写：占位和随后的正式落盘之间进程如果
+ * 挂掉，磁盘上留下的就是这份内容。写空文件的话，repair-assets 这类会读侧写的路径
+ * 就会在一个半成品上抛错。
+ */
+export async function reserveIndex(
+  store: IndexReservationStore,
+  dirPath: string,
+  slug: string,
+  reserveContent: (index: number) => string,
+): Promise<number> {
+  let index = nextIndex(await store.list(dirPath));
+  for (;;) {
+    const reserved = await store.createExclusive(
+      `${dirPath}/${formatRequestSidecarName(index, slug)}`,
+      reserveContent(index),
+    );
+    if (reserved) return index;
+    index += 1;
+  }
+}

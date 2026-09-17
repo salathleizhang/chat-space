@@ -28,6 +28,11 @@ export interface AssetStorage {
   /** 列目录直接子项名（含隐藏侧写文件），目录不存在返回空数组 */
   list(dirPath: string): Promise<string[]>;
   exists(path: string): Promise<boolean>;
+  /**
+   * 只在目标不存在时创建并写入 content，返回是否由本次调用创建成功。并发下抢占
+   * 同一个名字必须靠这个原子操作，`exists` + 写入之间的窗口挡不住两个同时在跑的调用。
+   */
+  createExclusive(path: string, content: string): Promise<boolean>;
   remove(path: string): Promise<void>;
   /** 本地同库发布用原子移动；云存储可用提交标记实现而不提供此能力。 */
   move?(sourcePath: string, targetPath: string): Promise<void>;
@@ -91,6 +96,18 @@ export class LocalFileStorage implements AssetStorage {
     const disk = this.toDiskPath(path);
     await mkdir(dirname(disk), { recursive: true });
     await writeFile(disk, bytes);
+  }
+
+  async createExclusive(path: string, content: string): Promise<boolean> {
+    const disk = this.toDiskPath(path);
+    await mkdir(dirname(disk), { recursive: true });
+    try {
+      await writeFile(disk, content, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw err;
+    }
   }
 
   async list(dirPath: string): Promise<string[]> {
