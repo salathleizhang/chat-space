@@ -14,7 +14,7 @@ export async function fetchEnvLlmProviders(): Promise<LlmProviderId[] | null> {
     const response = await fetch(`${CHAT_BASE_URL}/api/capabilities`);
     if (!response.ok) {
       if (response.status >= 500) {
-        console.warn(`chat 能力接口返回 ${response.status}，已降级为「无 env 厂商」`);
+        console.warn(`Chat capabilities endpoint returned ${response.status}; no environment providers available`);
       }
       return null;
     }
@@ -26,7 +26,7 @@ export async function fetchEnvLlmProviders(): Promise<LlmProviderId[] | null> {
         (LLM_PROVIDER_IDS as readonly string[]).includes(value),
     );
   } catch (err) {
-    console.warn("chat 能力接口不可达，已降级为「无 env 厂商」", err);
+    console.warn("Chat capabilities endpoint is unreachable; no environment providers available", err);
     return null;
   }
 }

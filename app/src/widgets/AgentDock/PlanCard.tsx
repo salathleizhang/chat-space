@@ -34,7 +34,7 @@ export function PlanCard({ plan }: { plan: ProjectPlan }) {
         className="flex items-start justify-between gap-4"
       >
         <span className="min-w-0 text-sm font-semibold leading-5 text-ink-strong">
-          {plan.title ?? "执行计划"}
+          {plan.title ?? "Execution plan"}
         </span>
         <Badge className="mt-px shrink-0 text-[10px]">
           {done}/{plan.steps.length}

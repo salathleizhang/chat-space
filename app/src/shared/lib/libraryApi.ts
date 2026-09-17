@@ -86,7 +86,7 @@ export function libraryUrl(logicalPath: string): string {
 export async function fetchProjects(): Promise<ProjectSummary[]> {
   const response = await chatFetch("/api/projects");
   if (!response.ok) {
-    throw await chatResponseError(response, `读取项目列表失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to load projects (${response.status})`);
   }
   return ((await response.json()) as { projects: ProjectSummary[] }).projects;
 }
@@ -99,7 +99,7 @@ export async function createProject(name: string): Promise<ProjectSummary> {
     body: JSON.stringify({ name, slug }),
   });
   if (!response.ok) {
-    throw await chatResponseError(response, `创建项目失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to create project (${response.status})`);
   }
   return ((await response.json()) as { project: ProjectSummary }).project;
 }
@@ -108,7 +108,7 @@ export async function fetchProjectState(slug: string): Promise<ProjectState | nu
   const response = await chatFetch(`/api/projects/${slug}/state`);
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw await chatResponseError(response, `读取项目失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to load project (${response.status})`);
   }
   return (await response.json()) as ProjectState;
 }
@@ -125,7 +125,7 @@ export async function activateEnvironmentAsset(
     body: JSON.stringify({ kind, assetSlug }),
   });
   if (!response.ok) {
-    throw await chatResponseError(response, `切换环境资产失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to switch environment asset (${response.status})`);
   }
   return ((await response.json()) as { project: ProjectSummary }).project;
 }
@@ -312,7 +312,7 @@ export async function uploadInspection(
     },
   );
   if (!response.ok) {
-    throw await chatResponseError(response, `上传检查图失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to upload inspection image (${response.status})`);
   }
   return ((await response.json()) as { path: string }).path;
 }
@@ -333,7 +333,7 @@ export async function uploadThumbnail(
     },
   );
   if (!response.ok) {
-    throw await chatResponseError(response, `上传缩略图失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to upload thumbnail (${response.status})`);
   }
   return ((await response.json()) as { path: string }).path;
 }
@@ -359,7 +359,7 @@ export async function uploadModel(
     body: JSON.stringify({ fileName: primary.name, dataBase64, auxFiles: aux }),
   });
   if (!response.ok) {
-    throw await chatResponseError(response, `导入模型失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to import model (${response.status})`);
   }
   return (await response.json()) as { assetSlug: string; path: string };
 }
@@ -374,7 +374,7 @@ export async function deleteAsset(
     { method: "DELETE" },
   );
   if (!response.ok) {
-    throw await chatResponseError(response, `删除资产失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to delete asset (${response.status})`);
   }
 }
 
@@ -392,7 +392,7 @@ export async function saveSceneTransforms(
     body: JSON.stringify({ transforms }),
   });
   if (!response.ok) {
-    throw await chatResponseError(response, `保存场景摆放失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to save scene placement (${response.status})`);
   }
 }
 
@@ -419,7 +419,7 @@ export async function exportAssetsBatch(
     body: JSON.stringify({ sources, format }),
   });
   if (!response.ok) {
-    throw await chatResponseError(response, `批量导出失败（${response.status}）`);
+    throw await chatResponseError(response, `Batch export failed (${response.status})`);
   }
   const disposition = response.headers.get("content-disposition") ?? "";
   const match = /filename="([^"]+)"/.exec(disposition);

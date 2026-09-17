@@ -48,7 +48,7 @@ describe("streamChat", () => {
 
     expect(callbacks.onDone).not.toHaveBeenCalled();
     expect(callbacks.onError).toHaveBeenCalledWith(
-      "与本地 chat 服务的连接意外中断，请重试。",
+      "The connection to the local Chat service was interrupted. Please try again.",
     );
   });
 

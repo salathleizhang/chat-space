@@ -128,11 +128,11 @@ describe("useSessionPersistence", () => {
     await flush();
 
     expect(p.messages[0]?.activities?.[0]).toMatchObject({
-      label: "执行已中断",
+      label: "Execution interrupted",
       status: "failed",
     });
     expect(p.messages[0]?.agentStatus).toEqual({
-      label: "执行已中断",
+      label: "Execution interrupted",
       status: "failed",
     });
     await h.unmount();

@@ -11,7 +11,7 @@ import type { ProjectPlan } from "../../shared/lib/libraryApi";
 import type { ChatMessage } from "../../widgets/AgentDock";
 
 function sessionErrorMessage(prefix: string, err: unknown) {
-  return `${prefix}：${err instanceof Error ? err.message : String(err)}`;
+  return `${prefix}: ${err instanceof Error ? err.message : String(err)}`;
 }
 
 function restoredMessages(session: StoredSession): ChatMessage[] {
@@ -19,11 +19,11 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
     ...message,
     agentStatus:
       message.agentStatus?.status === "running"
-        ? { label: "执行已中断", status: "failed" as const }
+        ? { label: "Execution interrupted", status: "failed" as const }
         : message.agentStatus,
     activities: message.activities?.map((item) =>
       item.status === "running"
-        ? { ...item, label: "执行已中断", status: "failed" as const }
+        ? { ...item, label: "Execution interrupted", status: "failed" as const }
         : item,
     ),
   }));
@@ -42,7 +42,7 @@ function storedMessages(messages: ChatMessage[]) {
 }
 
 function sessionTitle(messages: ChatMessage[]) {
-  return messages.find((message) => message.role === "user")?.content.slice(0, 40) || "新会话";
+  return messages.find((message) => message.role === "user")?.content.slice(0, 40) || "New conversation";
 }
 
 /** 恢复当前项目最近会话 + 防抖落盘（决策 8：会话落盘在 chat 侧，换浏览器不丢） */
@@ -105,7 +105,7 @@ export function useSessionPersistence(
       // 历史读取失败不能永久关住自动保存；用户仍可开始一条新会话，但必须看见故障。
       sessionRestoredRef.current = true;
       if (liveMessagesRef.current.length === 0) setSessionPlan(null);
-      setSessionsError(sessionErrorMessage("恢复会话失败", err));
+      setSessionsError(sessionErrorMessage("Failed to restore conversation", err));
     });
 
     return () => {
@@ -127,7 +127,7 @@ export function useSessionPersistence(
       }
     } catch (err) {
       if (mountedRef.current && requestSeq === sessionListSeqRef.current) {
-        setSessionsError(sessionErrorMessage("读取会话列表失败", err));
+        setSessionsError(sessionErrorMessage("Failed to load conversations", err));
       }
     } finally {
       if (mountedRef.current && requestSeq === sessionListSeqRef.current) {
@@ -151,7 +151,7 @@ export function useSessionPersistence(
         sessionPlan,
       ).catch((err: unknown) => {
         if (mountedRef.current) {
-          setSessionsError(sessionErrorMessage("自动保存会话失败", err));
+          setSessionsError(sessionErrorMessage("Failed to autosave conversation", err));
         }
       });
     };
@@ -188,7 +188,7 @@ export function useSessionPersistence(
     } catch (err) {
       if (mountedRef.current && requestSeq === sessionLoadSeqRef.current) {
         sessionRestoredRef.current = true;
-        setSessionsError(sessionErrorMessage("新建会话前保存失败", err));
+        setSessionsError(sessionErrorMessage("Failed to save before creating a conversation", err));
       }
       return false;
     }
@@ -234,13 +234,13 @@ export function useSessionPersistence(
       } catch (err) {
         if (!mountedRef.current || requestSeq !== sessionLoadSeqRef.current) return false;
         sessionRestoredRef.current = true;
-        setSessionsError(sessionErrorMessage("切换会话失败", err));
+        setSessionsError(sessionErrorMessage("Failed to switch conversations", err));
         return false;
       }
       if (!mountedRef.current || requestSeq !== sessionLoadSeqRef.current) return false;
       if (!session || (session.projectSlug && session.projectSlug !== projectSlug)) {
         sessionRestoredRef.current = true;
-        setSessionsError("无法加载这条会话");
+        setSessionsError("Could not load this conversation");
         return false;
       }
       // 用户在切换的 save/fetch 窗口内抢发了消息：放弃覆盖，新消息继续属于当前会话

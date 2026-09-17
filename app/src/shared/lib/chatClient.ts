@@ -89,7 +89,7 @@ export async function streamChat(
       const body = (await response.json().catch(() => null)) as {
         error?: { message?: string };
       } | null;
-      handlers.onError(body?.error?.message ?? `chat 服务返回 ${response.status}`);
+      handlers.onError(body?.error?.message ?? `Chat service returned ${response.status}`);
       return;
     }
 
@@ -161,7 +161,7 @@ export async function streamChat(
     }
 
     if (!signal?.aborted) {
-      handlers.onError("与本地 chat 服务的连接意外中断，请重试。");
+      handlers.onError("The connection to the local Chat service was interrupted. Please try again.");
     }
   } catch (err) {
     // 中止是调用方主动做的，不是故障：fetch 与 reader.read() 都会抛 AbortError，

@@ -10,7 +10,7 @@ export function useChatMessages() {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [activity, setActivity] = useState<AgentActivity>({
     state: "idle",
-    message: "等待你的指令",
+    message: "Waiting for your instructions",
   });
   /**
    * 最新消息列表的同步读取通道：`send` / 自检回传都要在推入新消息**之前**拿到当前
@@ -39,8 +39,8 @@ export function useChatMessages() {
         content,
         ...(images && images.length > 0 ? { images } : {}),
         agentStatus: content.startsWith("⚠️")
-          ? { label: "执行失败", status: "failed" }
-          : { label: "已完成", status: "completed" },
+          ? { label: "Execution failed", status: "failed" }
+          : { label: "Completed", status: "completed" },
       });
       // 后台 3D 任务会在缩略图稍后渲染完成时回填同一条消息。
       return id;

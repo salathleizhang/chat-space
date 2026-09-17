@@ -41,7 +41,7 @@ export function GeneratedMessageImages({ paths }: GeneratedMessageImagesProps) {
               <button
                 key={path}
                 type="button"
-                aria-label={`预览生成图片 ${fileName}`}
+                aria-label={`Preview generated image ${fileName}`}
                 aria-haspopup="dialog"
                 onClick={() => setSelected(path)}
                 className="block max-w-full shrink-0 overflow-hidden rounded-media transition-transform duration-150 ease-spring motion-safe:active:scale-[0.96]"
@@ -66,7 +66,7 @@ export function GeneratedMessageImages({ paths }: GeneratedMessageImagesProps) {
             className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/70 p-6"
             role="dialog"
             aria-modal="true"
-            aria-label={`预览生成图片 ${selectedName}`}
+            aria-label={`Preview generated image ${selectedName}`}
             onClick={(event) => {
               if (event.target === event.currentTarget) setSelected(null);
             }}
@@ -76,20 +76,20 @@ export function GeneratedMessageImages({ paths }: GeneratedMessageImagesProps) {
                 <span className="min-w-0 truncate text-sm font-medium text-ink-strong">
                   {selectedName}
                 </span>
-                <Tooltip content="关闭" side="bottom">
+                <Tooltip content="Close" side="bottom">
                   <Button
                     variant="ghost"
                     shape="square"
                     size="sm"
                     icon={XIcon}
-                    aria-label="关闭生成图片预览"
+                    aria-label="Close generated image preview"
                     onClick={() => setSelected(null)}
                   />
                 </Tooltip>
               </div>
               <img
                 src={libraryUrl(selected)}
-                alt={selectedName ?? "生成图片"}
+                alt={selectedName ?? "Generated image"}
                 className="min-h-0 max-h-[76vh] max-w-[86vw] rounded-inset bg-field object-contain"
               />
             </Panel>

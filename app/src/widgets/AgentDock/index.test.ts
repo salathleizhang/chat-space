@@ -160,8 +160,8 @@ describe("AgentDock 提交闸门", () => {
     await act(async () => input.dispatchEvent(pasteEvent));
 
     expect(pasteEvent.defaultPrevented).toBe(true);
-    expect(container.querySelector('button[aria-label="移除图片"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="分析图片"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Remove image"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Analyze image"]')).not.toBeNull();
 
     await pressEnter(container);
     expect(onSend).toHaveBeenCalledTimes(1);
@@ -174,7 +174,7 @@ describe("AgentDock 提交闸门", () => {
     const { container, onSend } = await render({ selectedAssets: [CHAIR] });
 
     expect(container.textContent).toContain("休闲椅");
-    const attachment = container.querySelector('[aria-label="已选模型附件"]');
+    const attachment = container.querySelector('[aria-label="Selected model attachments"]');
     expect(attachment).not.toBeNull();
     const chip = attachment!.querySelector("[data-asset-attachment]")!;
     expect(chip.classList.contains("rounded-full")).toBe(true);
@@ -207,7 +207,7 @@ describe("AgentDock 提交闸门", () => {
     });
 
     const remove = container.querySelector(
-      'button[aria-label="移除模型 休闲椅"]',
+      'button[aria-label="Remove model 休闲椅"]',
     ) as HTMLButtonElement;
     await act(async () => remove.click());
 
@@ -222,7 +222,7 @@ describe("AgentDock 停止按钮", () => {
       activity: { state: "working", message: "Agent 正在思考" },
     });
 
-    const stop = container.querySelector('button[aria-label="停止生成"]') as HTMLButtonElement;
+    const stop = container.querySelector('button[aria-label="Stop generation"]') as HTMLButtonElement;
     expect(stop).not.toBeNull();
     // 不能是 submit，否则点它反而会触发表单提交
     expect(stop.getAttribute("type")).toBe("button");
@@ -248,7 +248,7 @@ describe("AgentDock 停止按钮", () => {
 
   test("非 streaming 时是发送按钮，没有停止入口", async () => {
     const { container } = await render();
-    expect(container.querySelector('button[aria-label="停止生成"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Stop generation"]')).toBeNull();
     const send = container.querySelector('button[type="submit"]') as HTMLButtonElement;
     expect(send).not.toBeNull();
     expect(send.closest(".liquid-metal-send-button")).not.toBeNull();
@@ -296,10 +296,10 @@ describe("AgentDock 会话菜单", () => {
       sessions: SESSIONS,
       onSelectSession: async () => true,
     });
-    expect(container.querySelector('button[aria-label="会话"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Conversations"]')).toBeNull();
 
     const expand = container.querySelector(
-      'button[aria-label="展开 Agent"]',
+      'button[aria-label="Expand agent"]',
     ) as HTMLButtonElement;
     await act(async () => expand.click());
 
@@ -307,7 +307,7 @@ describe("AgentDock 会话菜单", () => {
     const dockPanel = container.querySelector("[data-agent-dock-panel]")!;
     const control = container.querySelector("[data-agent-session-control]")!;
     const button = control.querySelector(
-      'button[aria-label="会话"]',
+      'button[aria-label="Conversations"]',
     ) as HTMLButtonElement;
 
     expect(control.classList.contains("absolute")).toBe(true);
@@ -322,17 +322,17 @@ describe("AgentDock 会话菜单", () => {
     expect(button.classList.contains("border-line")).toBe(true);
     await act(async () => button.click());
 
-    const menu = document.body.querySelector('[role="menu"][aria-label="会话列表"]')!;
+    const menu = document.body.querySelector('[role="menu"][aria-label="Conversation list"]')!;
     expect(menu).not.toBeNull();
     expect(menu.classList.contains("rounded-surface")).toBe(true);
     expect(menu.classList.contains("rounded-inset!")).toBe(false);
-    expect(menu.textContent).toContain("新建会话");
+    expect(menu.textContent).toContain("New conversation");
     expect(menu.textContent).toContain("生成一把椅子");
     expect(menu.textContent).toContain("制作机械狗");
     expect(onOpenSessions).toHaveBeenCalledTimes(1);
 
     const create = Array.from(menu.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("新建会话"),
+      item.textContent?.includes("New conversation"),
     ) as HTMLButtonElement;
     expect(menu.classList.contains("bg-surface-raised")).toBe(true);
     expect(menu.classList.contains("shadow-lg")).toBe(true);
@@ -359,22 +359,22 @@ describe("AgentDock 会话菜单", () => {
     });
     await act(async () =>
       (empty.container.querySelector(
-        'button[aria-label="展开 Agent"]',
+        'button[aria-label="Expand agent"]',
       ) as HTMLButtonElement).click(),
     );
     await act(async () =>
       (empty.container.querySelector(
-        'button[aria-label="会话"]',
+        'button[aria-label="Conversations"]',
       ) as HTMLButtonElement).click(),
     );
     expect(
       (Array.from(document.body.querySelectorAll('[role="menu"] button')).find((item) =>
-        item.textContent?.includes("新建会话"),
+        item.textContent?.includes("New conversation"),
       ) as HTMLButtonElement).disabled,
     ).toBe(true);
 
     await act(async () =>
-      (empty.container.querySelector('button[aria-label="会话"]') as HTMLButtonElement).click(),
+      (empty.container.querySelector('button[aria-label="Conversations"]') as HTMLButtonElement).click(),
     );
 
     const streaming = await render({
@@ -385,17 +385,17 @@ describe("AgentDock 会话菜单", () => {
     });
     await act(async () =>
       (streaming.container.querySelector(
-        'button[aria-label="展开 Agent"]',
+        'button[aria-label="Expand agent"]',
       ) as HTMLButtonElement).click(),
     );
     await act(async () =>
       (streaming.container.querySelector(
-        'button[aria-label="会话"]',
+        'button[aria-label="Conversations"]',
       ) as HTMLButtonElement).click(),
     );
     expect(
       (Array.from(document.body.querySelectorAll('[role="menu"] button')).find((item) =>
-        item.textContent?.includes("新建会话"),
+        item.textContent?.includes("New conversation"),
       ) as HTMLButtonElement).disabled,
     ).toBe(true);
   });
@@ -410,10 +410,10 @@ describe("AgentDock 会话菜单", () => {
       onSelectSession,
     });
     await act(async () =>
-      (container.querySelector('button[aria-label="展开 Agent"]') as HTMLButtonElement).click(),
+      (container.querySelector('button[aria-label="Expand agent"]') as HTMLButtonElement).click(),
     );
     await act(async () =>
-      (container.querySelector('button[aria-label="会话"]') as HTMLButtonElement).click(),
+      (container.querySelector('button[aria-label="Conversations"]') as HTMLButtonElement).click(),
     );
     const old = Array.from(document.body.querySelectorAll('[role="menu"] button')).find((item) =>
       item.textContent?.includes("制作机械狗"),
@@ -421,7 +421,7 @@ describe("AgentDock 会话菜单", () => {
     await act(async () => old.click());
 
     expect(onSelectSession).toHaveBeenCalledWith("s-old");
-    expect(document.body.querySelector('[role="menu"][aria-label="会话列表"]')).toBeNull();
+    expect(document.body.querySelector('[role="menu"][aria-label="Conversation list"]')).toBeNull();
   });
 });
 
@@ -444,7 +444,7 @@ describe("AgentDock 会话计划", () => {
     });
     await act(async () =>
       (container.querySelector(
-        'button[aria-label="展开 Agent"]',
+        'button[aria-label="Expand agent"]',
       ) as HTMLButtonElement).click(),
     );
 
@@ -486,7 +486,7 @@ describe("AgentDock 状态行", () => {
     });
     await act(async () =>
       (container.querySelector(
-        'button[aria-label="展开 Agent"]',
+        'button[aria-label="Expand agent"]',
       ) as HTMLButtonElement).click(),
     );
 
@@ -518,7 +518,7 @@ describe("AgentDock 状态行", () => {
 
     await act(async () =>
       (dialog.querySelector(
-        'button[aria-label="关闭生成图片预览"]',
+        'button[aria-label="Close generated image preview"]',
       ) as HTMLButtonElement).click(),
     );
     expect(document.querySelector("[data-generated-image-preview]")).toBeNull();
@@ -543,7 +543,7 @@ describe("AgentDock 状态行", () => {
     });
     await act(async () =>
       (container.querySelector(
-        'button[aria-label="展开 Agent"]',
+        'button[aria-label="Expand agent"]',
       ) as HTMLButtonElement).click(),
     );
 
@@ -580,7 +580,7 @@ describe("AgentDock 状态行", () => {
 
     await act(async () =>
       (uploadedDialog.querySelector(
-        'button[aria-label="关闭上传图片预览"]',
+        'button[aria-label="Close uploaded image preview"]',
       ) as HTMLButtonElement).click(),
     );
     expect(document.querySelector("[data-uploaded-image-preview]")).toBeNull();
@@ -629,7 +629,7 @@ describe("AgentDock 状态行", () => {
         },
       ],
     });
-    const expand = container.querySelector('button[aria-label="展开 Agent"]') as HTMLButtonElement;
+    const expand = container.querySelector('button[aria-label="Expand agent"]') as HTMLButtonElement;
     await act(async () => expand.click());
 
     expect(container.querySelector("[data-agent-status]")).toBeNull();
@@ -690,7 +690,7 @@ describe("AgentDock 状态行", () => {
         },
       ],
     });
-    const expand = container.querySelector('button[aria-label="展开 Agent"]') as HTMLButtonElement;
+    const expand = container.querySelector('button[aria-label="Expand agent"]') as HTMLButtonElement;
     await act(async () => expand.click());
 
     expect(container.querySelectorAll("[data-agent-timeline-node]")).toHaveLength(4);
@@ -713,7 +713,7 @@ describe("AgentDock 状态行", () => {
         },
       ],
     });
-    const expand = container.querySelector('button[aria-label="展开 Agent"]') as HTMLButtonElement;
+    const expand = container.querySelector('button[aria-label="Expand agent"]') as HTMLButtonElement;
     await act(async () => expand.click());
 
     const node = container.querySelector('[data-agent-text-node="running"]')!;
@@ -747,7 +747,7 @@ describe("AgentDock 状态行", () => {
         },
       ],
     });
-    const expand = container.querySelector('button[aria-label="展开 Agent"]') as HTMLButtonElement;
+    const expand = container.querySelector('button[aria-label="Expand agent"]') as HTMLButtonElement;
     await act(async () => expand.click());
 
     const node = container.querySelector('[data-agent-message-activity="failed"]')!;
@@ -783,7 +783,7 @@ describe("AgentDock 状态行", () => {
         },
       ],
     });
-    const expand = container.querySelector('button[aria-label="展开 Agent"]') as HTMLButtonElement;
+    const expand = container.querySelector('button[aria-label="Expand agent"]') as HTMLButtonElement;
     await act(async () => expand.click());
 
     expect(container.querySelector("[data-agent-status]")).toBeNull();
@@ -814,7 +814,7 @@ describe("AgentDock LLM 能力筛选", () => {
     });
 
     const modelSelect = container.querySelector(
-      'button[aria-label="选择对话模型"]',
+      'button[aria-label="Choose chat model"]',
     ) as HTMLButtonElement;
     await act(async () => modelSelect.click());
 
@@ -844,7 +844,7 @@ describe("AgentDock LLM 能力筛选", () => {
     });
 
     const modelSelect = container.querySelector(
-      'button[aria-label="选择对话模型"]',
+      'button[aria-label="Choose chat model"]',
     ) as HTMLButtonElement;
     await act(async () => modelSelect.click());
 
@@ -857,11 +857,11 @@ describe("AgentDock 图片生成模型选择", () => {
   test("显示图片模型菜单并持久化选择", async () => {
     const { container } = await render();
     const imageModelSelect = container.querySelector(
-      'button[aria-label="选择图片生成模型"]',
+      'button[aria-label="Choose image generation model"]',
     ) as HTMLButtonElement;
 
     expect(imageModelSelect).not.toBeNull();
-    expect(imageModelSelect.textContent).toContain("自动选择图片模型");
+    expect(imageModelSelect.textContent).toContain("Automatically select image model");
 
     await act(async () => imageModelSelect.click());
     const seedream = Array.from(document.body.querySelectorAll("button")).find(

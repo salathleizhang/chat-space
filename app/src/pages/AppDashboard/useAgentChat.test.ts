@@ -231,7 +231,7 @@ describe("useAgentChat 服务端凭证", () => {
         {
           role: "user",
           content: [
-            { type: "text", text: "请查看这张图片。" },
+            { type: "text", text: "Please review this image." },
             { type: "image", path: "projects/proj-a/source/0-image.png" },
           ],
         },
@@ -352,7 +352,7 @@ describe("useAgentChat 并发不变量", () => {
     expect(streamChat.mock.calls[1]![1]).toEqual([
       expect.objectContaining({
         role: "user",
-        content: expect.stringContaining("【后台任务已结束】"),
+        content: expect.stringContaining("[Background tasks finished]"),
       }),
     ]);
     await h.unmount();
@@ -427,7 +427,7 @@ describe("useAgentChat 并发不变量", () => {
     expect(afterTool.activities?.at(-1)).toMatchObject({
       id: "tool-1",
       contentOffset: 0,
-      label: "正在生成参考图",
+      label: "Generating reference images",
       status: "running",
     });
 
@@ -435,7 +435,7 @@ describe("useAgentChat 并发不变量", () => {
     const afterResult = updateMessage.mock.calls.at(-1)![1](afterTool);
     expect(afterResult.activities?.at(-1)).toMatchObject({
       id: "tool-1",
-      label: "已生成参考图",
+      label: "Completed: generating reference images",
       status: "completed",
     });
 
@@ -481,7 +481,7 @@ describe("useAgentChat 并发不变量", () => {
     const afterTool = updateMessage.mock.calls.at(-1)![1](assistant);
     expect(afterTool.activities?.at(-1)).toMatchObject({
       toolName: "generate-reference-images",
-      label: "正在生成参考图",
+      label: "Generating reference images",
       status: "running",
     });
 
@@ -490,7 +490,7 @@ describe("useAgentChat 并发不变量", () => {
     );
     const afterResult = updateMessage.mock.calls.at(-1)![1](afterTool);
     expect(afterResult.activities?.at(-1)).toMatchObject({
-      label: "已生成参考图",
+      label: "Completed: generating reference images",
       status: "completed",
     });
 
@@ -539,7 +539,7 @@ describe("useAgentChat 并发不变量", () => {
 
     const afterError = updateMessage.mock.calls.at(-1)![1](assistant);
     expect(afterError.agentStatus).toEqual({
-      label: "正在思考",
+      label: "Thinking",
       status: "running",
     });
     expect(afterError.activities).toEqual([
@@ -547,7 +547,7 @@ describe("useAgentChat 并发不变量", () => {
         id: "tool-failed",
         toolName: "build-cad-model",
         contentOffset: intro.length,
-        label: "构建 CAD 模型失败",
+        label: "Failed: building CAD model",
         status: "failed",
       }),
     ]);

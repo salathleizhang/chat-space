@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { taskSubjectLabel } from "../../shared/lib/taskText";
 import {
   streamChat,
   type LlmRequestConfig,
@@ -57,35 +58,35 @@ const IMAGE_OUTPUT_TOOLS = new Set([
 ]);
 
 const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
-  "update-plan": "正在更新计划",
-  "generate-reference-images": "正在生成参考图",
-  "edit-reference-image": "正在修改参考图",
-  "analyze-scene": "正在分析当前场景",
-  analyzeSceneTool: "正在分析当前场景",
-  "analyze-reference": "正在分析参考图",
-  analyzeReferenceTool: "正在分析参考图",
-  "confirm-reference-assets": "正在确认参考图资产",
-  confirmReferenceAssetsTool: "正在确认参考图资产",
-  "generate-plate": "正在生成场景底图",
-  "run-one-shot": "正在生成完整场景",
-  "start-3d-batch": "正在启动 3D 生成",
-  "start-world-task": "正在生成 3D 世界",
-  "start-skybox-task": "正在生成天空盒",
-  "generate-texture": "正在生成贴图",
-  retopologize: "正在重拓扑",
-  "rig-model": "正在绑定骨骼",
-  "generate-animation": "正在生成动画",
-  "segment-parts": "正在拆分模型",
-  "generate-character": "正在生成角色",
-  "unwrap-uv": "正在展开 UV",
-  "build-cad-model": "正在构建 CAD 模型",
-  "get-cad-source": "正在读取 CAD 源码",
-  "inspect-asset": "正在检查资产",
-  "identify-asset": "正在确认资产身份",
-  "list-generation-tasks": "正在读取生成进度",
-  "resume-generation": "正在继续生成",
-  "repair-assets": "正在修复资产",
-  "fal-wildcard-search": "正在调用扩展能力",
+  "update-plan": "Updating plan",
+  "generate-reference-images": "Generating reference images",
+  "edit-reference-image": "Editing reference image",
+  "analyze-scene": "Analyzing current scene",
+  analyzeSceneTool: "Analyzing current scene",
+  "analyze-reference": "Analyzing reference image",
+  analyzeReferenceTool: "Analyzing reference image",
+  "confirm-reference-assets": "Confirming reference assets",
+  confirmReferenceAssetsTool: "Confirming reference assets",
+  "generate-plate": "Generating scene base image",
+  "run-one-shot": "Generating complete scene",
+  "start-3d-batch": "Starting 3D generation",
+  "start-world-task": "Generating 3D world",
+  "start-skybox-task": "Generating skybox",
+  "generate-texture": "Generating textures",
+  retopologize: "Retopologizing model",
+  "rig-model": "Rigging model",
+  "generate-animation": "Generating animation",
+  "segment-parts": "Segmenting model",
+  "generate-character": "Generating character",
+  "unwrap-uv": "Unwrapping UVs",
+  "build-cad-model": "Building CAD model",
+  "get-cad-source": "Reading CAD source",
+  "inspect-asset": "Inspecting asset",
+  "identify-asset": "Identifying asset",
+  "list-generation-tasks": "Checking generation progress",
+  "resume-generation": "Resuming generation",
+  "repair-assets": "Repairing assets",
+  "fal-wildcard-search": "Using extended capability",
 };
 
 /**
@@ -104,17 +105,17 @@ function canonicalToolName(name: string) {
 
 /** 把内部工具 id 翻译成创作动作；新工具在映射补齐前仍有清楚的兜底状态。 */
 function toolActivityMessage(name: string) {
-  return TOOL_ACTIVITY_MESSAGES[name] ?? `正在调用 ${name} 工具`;
+  return TOOL_ACTIVITY_MESSAGES[name] ?? `Running ${name} tool`;
 }
 
 function completedToolActivityMessage(name: string) {
   const running = toolActivityMessage(name);
-  return running.startsWith("正在") ? `已${running.slice(2)}` : `${running}已完成`;
+  return `Completed: ${running.charAt(0).toLowerCase()}${running.slice(1)}`;
 }
 
 function failedToolActivityMessage(name: string) {
   const running = toolActivityMessage(name);
-  return running.startsWith("正在") ? `${running.slice(2)}失败` : `${running}失败`;
+  return `Failed: ${running.charAt(0).toLowerCase()}${running.slice(1)}`;
 }
 
 interface UseAgentChatOptions {
@@ -209,15 +210,15 @@ export function useAgentChat({
     if (assistantId) {
       updateMessage(assistantId, (message) => ({
         ...message,
-        agentStatus: { label: "已停止", status: "failed" },
+        agentStatus: { label: "Stopped", status: "failed" },
         activities: message.activities?.map((item) =>
           item.status === "running"
-            ? { ...item, label: "已停止", status: "failed" as const }
+            ? { ...item, label: "Stopped", status: "failed" as const }
             : item,
         ),
       }));
     }
-    setActivity({ state: "idle", message: "已停止本轮生成" });
+    setActivity({ state: "idle", message: "Generation stopped" });
   };
 
   /**
@@ -245,11 +246,11 @@ export function useAgentChat({
     assets?: ChatAssetAttachment[],
   ) => {
     try {
-      setActivity({ state: "working", message: `正在上传 ${file.name}` });
+      setActivity({ state: "working", message: `Uploading ${file.name}` });
       const imagePath = await uploadSource(projectSlug, file);
       if (!activeRef.current) return;
 
-      const instruction = note || "请查看这张图片。";
+      const instruction = note || "Please review this image.";
       const userMessage: ChatMessage = {
         id: nextId(),
         role: "user",
@@ -310,14 +311,14 @@ export function useAgentChat({
       assets = await fetchLibraryAssets(projectSlug);
     } catch (err) {
       if (activeRef.current) {
-        pushAssistant(`⚠️ 自检失败：${err instanceof Error ? err.message : String(err)}`);
+        pushAssistant(`⚠️ Inspection failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       return;
     }
     if (!activeRef.current) return;
     const asset = assets.find((a) => a.assetSlug === assetSlug);
     if (!asset?.modelPath) {
-      pushAssistant(`⚠️ 自检失败：资产「${assetSlug}」没有可渲染的模型产物。`);
+      pushAssistant(`⚠️ Inspection failed: asset "${assetSlug}" has no renderable model output.`);
       return;
     }
     const id =
@@ -333,7 +334,7 @@ export function useAgentChat({
       setPreview((p) => (p ? { ...p, inspection: null } : p));
       if (!current) return;
       if (!pngBase64) {
-        pushAssistant("⚠️ 自检截图失败：模型未能在小窗中完成渲染。");
+        pushAssistant("⚠️ Inspection screenshot failed: the model did not render in the preview.");
         return;
       }
       void uploadInspection(
@@ -350,7 +351,7 @@ export function useAgentChat({
         .catch((err) => {
           if (!activeRef.current) return;
           pushAssistant(
-            `⚠️ 检查图上传失败：${err instanceof Error ? err.message : String(err)}`,
+            `⚠️ Failed to upload inspection image: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
     },
@@ -370,7 +371,7 @@ export function useAgentChat({
     const userMessage: ChatMessage = {
       id: nextId(),
       role: "user",
-      content: `【自检截图】${pending.assetSlug} 的四视角检查图（左上 ISO / 右上 FRONT / 左下 RIGHT / 右下 TOP），请逐视角检查。`,
+      content: `[Inspection screenshots] ${pending.assetSlug}: four views (top left: ISO, top right: FRONT, bottom left: RIGHT, bottom right: TOP). Check each view.`,
       images: [pending.path],
     };
     const history = toOutgoingHistory([...messagesRef.current, userMessage]);
@@ -390,7 +391,7 @@ export function useAgentChat({
       assets = await fetchLibraryAssets(projectSlug);
     } catch (err) {
       if (activeRef.current) {
-        pushAssistant(`⚠️ 身份识别失败：${err instanceof Error ? err.message : String(err)}`);
+        pushAssistant(`⚠️ Asset identification failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       return;
     }
@@ -401,7 +402,7 @@ export function useAgentChat({
       .map((slug) => bySlug.get(slug))
       .filter((a): a is LibraryAsset => Boolean(a && a.sourceImages.length > 0));
     if (found.length === 0) {
-      pushAssistant("⚠️ 身份识别失败：候选资产都没有参考图。");
+      pushAssistant("⚠️ Asset identification failed: no candidate assets have reference images.");
       return;
     }
     pendingIdentifyRef.current = found.map((a) => ({
@@ -420,7 +421,7 @@ export function useAgentChat({
     const userMessage: ChatMessage = {
       id: nextId(),
       role: "user",
-      content: `【候选资产参考图】按顺序对应：${pending.map((p) => p.assetSlug).join("、")}，请对照参考图确认身份。`,
+      content: `[Candidate asset reference images] In order: ${pending.map((p) => p.assetSlug).join(", ")}. Confirm each identity against its reference image.`,
       images: pending.map((p) => p.path),
     };
     const history = toOutgoingHistory([...messagesRef.current, userMessage]);
@@ -440,13 +441,13 @@ export function useAgentChat({
       id: nextId(),
       role: "user",
       content: [
-        "【后台任务已结束】",
+        "[Background tasks finished]",
         ...tasks.map((task) =>
           task.status === "succeeded"
-            ? `- ${task.subject}：成功`
-            : `- ${task.subject}：失败（${task.error ?? "未知错误"}）`,
+            ? `- ${taskSubjectLabel(task.subject)}: succeeded`
+            : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
         ),
-        "请从当前计划的下一未完成步骤继续；不要重新创建或改写计划结构。",
+        "Continue from the next incomplete step in the current plan; do not recreate or change the plan structure.",
       ].join("\n"),
     };
     const history = toOutgoingHistory([...messagesRef.current, userMessage]);
@@ -477,7 +478,7 @@ export function useAgentChat({
       拒绝时明说，不静默——调用方可能已经把用户消息推进列表了。
     */
     if (streamingRef.current) {
-      pushAssistant("⚠️ 上一轮还在进行中。请等它结束，或点停止按钮中断后再发。");
+      pushAssistant("⚠️ The previous request is still running. Wait for it to finish or stop it before sending another.");
       return;
     }
     const llm = llmConfig();
@@ -492,10 +493,10 @@ export function useAgentChat({
       id: assistantId,
       role: "assistant",
       content: "",
-      agentStatus: { label: "正在思考", status: "running" },
+      agentStatus: { label: "Thinking", status: "running" },
     });
     activeAssistantIdRef.current = assistantId;
-    setActivity({ state: "working", message: "正在思考" });
+    setActivity({ state: "working", message: "Thinking" });
     markStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -510,10 +511,10 @@ export function useAgentChat({
           streamedContent += delta;
           if (!replying) {
             replying = true;
-            setActivity({ state: "working", message: "正在回复" });
+            setActivity({ state: "working", message: "Responding" });
             updateMessage(assistantId, (message) => ({
               ...message,
-              agentStatus: { label: "正在回复", status: "running" },
+              agentStatus: { label: "Responding", status: "running" },
             }));
           }
           appendTo(assistantId, (content) => content + delta);
@@ -560,7 +561,7 @@ export function useAgentChat({
               ...(nextImages && nextImages.length > 0
                 ? { images: [...(message.images ?? []), ...nextImages] }
                 : {}),
-              agentStatus: { label: "正在思考", status: "running" },
+              agentStatus: { label: "Thinking", status: "running" },
               activities: message.activities?.map((item) =>
                 (toolCallId ? item.id === toolCallId : item.toolName === name) &&
                 item.status === "running"
@@ -573,7 +574,7 @@ export function useAgentChat({
               ),
             };
           });
-          setActivity({ state: "working", message: "正在思考" });
+          setActivity({ state: "working", message: "Thinking" });
           if (name === "update-plan" && updatedPlan) {
             sessionPlanRef.current = updatedPlan;
             onPlanUpdated?.(updatedPlan);
@@ -593,8 +594,8 @@ export function useAgentChat({
               updateMessage(assistantId, (message) => ({
                 ...message,
                 agentStatus: backgroundTaskFailed
-                  ? { label: "后台任务失败", status: "failed" }
-                  : { label: "后台任务已结束", status: "completed" },
+                  ? { label: "Background task failed", status: "failed" }
+                  : { label: "Background task finished", status: "completed" },
               }));
               queueTaskSettlement(settlement);
             });
@@ -604,7 +605,7 @@ export function useAgentChat({
           name = canonicalToolName(name);
           const failureLabel = failedToolActivityMessage(name);
           const label = errorMessage
-            ? `${failureLabel}：${errorMessage}`
+            ? `${failureLabel}: ${errorMessage}`
             : failureLabel;
           updateMessage(assistantId, (message) => {
             let matched = false;
@@ -629,11 +630,11 @@ export function useAgentChat({
             }
             return {
               ...message,
-              agentStatus: { label: "正在思考", status: "running" },
+              agentStatus: { label: "Thinking", status: "running" },
               activities,
             };
           });
-          setActivity({ state: "working", message: "正在思考" });
+          setActivity({ state: "working", message: "Thinking" });
         },
         onError: (message) => {
           abortRef.current = null;
@@ -642,10 +643,10 @@ export function useAgentChat({
           setActivity({ state: "attention", message });
           updateMessage(assistantId, (assistant) => ({
             ...assistant,
-            agentStatus: { label: "执行失败", status: "failed" },
+            agentStatus: { label: "Execution failed", status: "failed" },
             activities: assistant.activities?.map((item) =>
               item.status === "running"
-                ? { ...item, label: "执行失败", status: "failed" as const }
+                ? { ...item, label: "Execution failed", status: "failed" as const }
                 : item,
             ),
           }));
@@ -676,10 +677,10 @@ export function useAgentChat({
             return {
               ...message,
               agentStatus: hasFailedStep || backgroundTaskFailed
-                ? { label: "部分步骤失败", status: "failed" }
+                ? { label: "Some steps failed", status: "failed" }
                 : pendingBackgroundBatches > 0
-                  ? { label: "后台任务进行中", status: "running" }
-                : { label: "已完成", status: "completed" },
+                  ? { label: "Background tasks running", status: "running" }
+                : { label: "Completed", status: "completed" },
               activities,
             };
           });
@@ -689,12 +690,12 @@ export function useAgentChat({
                   state: "working",
                   message:
                     pendingModelCount > 1
-                      ? `正在并行生成 ${pendingModelCount} 个模型`
+                      ? `Generating ${pendingModelCount} models`
                       : pendingModelCount === 1
-                        ? "正在生成 1 个模型"
-                        : "后台任务进行中",
+                        ? "Generating one model"
+                        : "Background tasks running",
                 }
-              : { state: "idle", message: "Agent 已完成回复" },
+              : { state: "idle", message: "Agent finished responding" },
           );
           // agent 可能更新了计划或产出了资产：刷新派生状态
           bumpRefresh();

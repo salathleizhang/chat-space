@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LibraryAsset } from "../../shared/lib/libraryApi";
+import { taskSubjectLabel } from "../../shared/lib/taskText";
 import {
   listTasks,
   type GenerationTask,
@@ -131,11 +132,11 @@ export function useTaskPolling({
         const retryDelay = Math.min(4_000 * 2 ** (failureCount - 1), 30_000);
         const reason = err instanceof Error ? err.message : String(err);
         if (failureCount === 1) {
-          pushAssistant(`⚠️ 后台任务状态暂时无法读取：${reason}。将自动重试。`);
+          pushAssistant(`⚠️ Could not read background task status: ${reason}. Retrying automatically.`);
         }
         setActivity({
           state: "working",
-          message: `后台任务状态读取失败，${Math.round(retryDelay / 1000)} 秒后重试`,
+          message: `Failed to read background task status; retrying in ${Math.round(retryDelay / 1000)} seconds`,
         });
         timerRef.current = setTimeout(() => void tick(), retryDelay);
         return;
@@ -162,7 +163,7 @@ export function useTaskPolling({
           const model = (task.result as { model?: string } | undefined)?.model;
           const files = (task.result as { files?: string[] } | undefined)?.files;
           const messageId = pushAssistant(
-            `✅ ${task.subject} 完成${model ? `：${model}` : files ? `：${files.length + 1} 个文件` : ""}（已保存到本机工程目录）`,
+            `✅ ${taskSubjectLabel(task.subject)} completed${model ? `: ${model}` : files ? `: ${files.length + 1} files` : ""} (saved to the local project folder)`,
           );
           if (task.workflowId === "3d") {
             const modelPath = modelPathFromTaskResult(task.result);
@@ -181,7 +182,7 @@ export function useTaskPolling({
             }
           }
         } else {
-          pushAssistant(`❌ ${task.subject} 失败：${task.error ?? "未知错误"}`);
+          pushAssistant(`❌ ${taskSubjectLabel(task.subject)} failed: ${task.error ?? "Unknown error"}`);
         }
       }
       const callbacks: Array<() => void> = [];
@@ -209,13 +210,13 @@ export function useTaskPolling({
           message:
             runningTasks.length === 1
               ? runningModelTasks.length === 1
-                ? `正在生成模型：${runningTasks[0]!.subject.replace(/^3D 生成(?:（[^）]+）)?：/, "")}`
-                : `正在执行：${runningTasks[0]!.subject}`
+                ? `Generating model: ${taskSubjectLabel(runningTasks[0]!.subject).replace(/^3D generation(?: \([^)]*\))?: /, "")}`
+                : `Running: ${taskSubjectLabel(runningTasks[0]!.subject)}`
               : runningTasks.length > 1 && runningModelTasks.length === runningTasks.length
-                ? `正在并行生成 ${runningTasks.length} 个模型`
+                ? `Generating ${runningTasks.length} models`
                 : runningTasks.length > 1
-                  ? `正在并行执行 ${runningTasks.length} 个生成任务`
-                : "正在等待后台任务",
+                  ? `Running ${runningTasks.length} generation tasks`
+                : "Waiting for background tasks",
         });
         timerRef.current = setTimeout(() => void tick(), TASK_POLL_INTERVAL_MS);
       } else {
@@ -224,8 +225,8 @@ export function useTaskPolling({
           state: failedCount > 0 ? "attention" : "idle",
           message:
             failedCount > 0
-              ? `生成结束，${failedCount} 个任务失败`
-              : "生成任务已全部完成",
+              ? `Generation finished; ${failedCount} tasks failed`
+              : "All generation tasks completed",
         });
         pollingRef.current = false;
       }

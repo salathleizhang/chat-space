@@ -154,7 +154,7 @@ interface AgentDockProps {
   plan?: ProjectPlan | null;
 }
 
-const SESSION_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+const SESSION_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "numeric",
   day: "numeric",
   hour: "2-digit",
@@ -220,7 +220,7 @@ function SessionMenu({
   }, [open]);
 
   const firstUser = messages.find((message) => message.role === "user");
-  const localTitle = firstUser?.content.slice(0, 40) || "新会话";
+  const localTitle = firstUser?.content.slice(0, 40) || "New conversation";
   const activeSaved = sessions.find((session) => session.id === activeSessionId);
   const items = sessions.map((session) =>
     session.id === activeSessionId
@@ -249,12 +249,12 @@ function SessionMenu({
 
   return (
     <div ref={anchorRef} className="inline-flex">
-      <Tooltip content="会话" side="left">
+      <Tooltip content="Conversations" side="left">
         <Button
           variant="secondary"
           shape="circle"
           size="lg"
-          aria-label="会话"
+          aria-label="Conversations"
           aria-haspopup="menu"
           aria-expanded={open}
           data-selected={open ? "true" : undefined}
@@ -270,7 +270,7 @@ function SessionMenu({
           <div
             ref={menuRef}
             role="menu"
-            aria-label="会话列表"
+            aria-label="Conversation list"
             style={{ left: position.left, top: position.top }}
             className="fixed z-50 flex w-72 origin-top-right flex-col gap-1 rounded-surface border border-line bg-surface-raised p-2 shadow-lg backdrop-blur-md transition-[opacity,transform] duration-150 ease-spring starting:opacity-0 starting:scale-95 motion-reduce:starting:scale-100"
           >
@@ -293,11 +293,11 @@ function SessionMenu({
               }}
             >
               <PlusIcon size={14} weight="regular" />
-              <span className="font-medium">新建会话</span>
+              <span className="font-medium">New conversation</span>
             </button>
             <div className="agent-dock-scrollbar flex max-h-60 flex-col gap-1 overflow-y-auto">
               {loading && items.length === 0 ? (
-                <p className="px-3 py-4 text-xs text-ink-subtle">正在读取会话…</p>
+                <p className="px-3 py-4 text-xs text-ink-subtle">Loading conversations…</p>
               ) : (
                 items.map((session) => {
                   const current = session.id === activeSessionId;
@@ -331,10 +331,10 @@ function SessionMenu({
                           {session.title}
                         </span>
                         <span className="mt-0.5 block truncate text-[10px] text-ink-faint">
-                          {session.messageCount} 条消息
+                          {session.messageCount} messages
                           {session.updatedAt
                             ? ` · ${SESSION_TIME_FORMATTER.format(new Date(session.updatedAt))}`
-                            : " · 当前"}
+                            : " · Current"}
                         </span>
                       </span>
                     </button>
@@ -385,7 +385,7 @@ function AssetAttachmentChip({
           shape="circle"
           size="xs"
           icon={XIcon}
-          aria-label={`移除模型 ${asset.name}`}
+          aria-label={`Remove model ${asset.name}`}
           onClick={onRemove}
         />
       )}
@@ -460,8 +460,8 @@ const MessageHistory = memo(function MessageHistory({
             status: "running",
           }
         : toolActivities.some((item) => item.status === "failed")
-          ? { label: "执行失败", status: "failed" }
-          : { label: "已完成", status: "completed" }
+          ? { label: "Execution failed", status: "failed" }
+          : { label: "Completed", status: "completed" }
       : undefined;
     const turnStatus: AgentMessageStatus | undefined =
       messageIndex === lastAssistantIndex && activity.state === "working"
@@ -872,14 +872,14 @@ export function AgentDock({
         )}
         {isDragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] bg-fill-active text-sm text-ink">
-            松开以上传图片
+            Drop to upload image
           </div>
         )}
         <div className="relative flex items-center">
           <button
             type="button"
             className="group flex w-full items-center justify-center py-2.5"
-            aria-label={expanded ? "收起 Agent" : "展开 Agent"}
+            aria-label={expanded ? "Collapse agent" : "Expand agent"}
             aria-expanded={expanded}
             aria-controls="agent-dock-history"
             onClick={() => setExpanded((value) => !value)}
@@ -908,7 +908,7 @@ export function AgentDock({
             {plan && plan.steps.some((s) => s.status === "in_progress") && (
               <div className="ml-auto shrink-0">
                 <Badge>
-                  计划 {plan.steps.filter((s) => s.status === "completed").length}/
+                  Plan {plan.steps.filter((s) => s.status === "completed").length}/
                   {plan.steps.length}
                 </Badge>
               </div>
@@ -952,7 +952,7 @@ export function AgentDock({
           {selectedAssets.length > 0 && (
             <div
               className="max-w-full overflow-x-auto"
-              aria-label="已选模型附件"
+              aria-label="Selected model attachments"
             >
               <div className="flex w-max gap-1.5">
                 {selectedAssets.map((asset) => (
@@ -984,7 +984,7 @@ export function AgentDock({
                   shape="circle"
                   size="xs"
                   icon={XIcon}
-                  aria-label="移除图片"
+                  aria-label="Remove image"
                   className="absolute -top-1.5 -right-1.5"
                   onClick={() => {
                     setImageFile(null);
@@ -993,7 +993,7 @@ export function AgentDock({
                 />
               </div>
               <span className="hidden truncate text-[11px] text-ink-subtle sm:block">
-                提交后将分析此图并抽取可生成的 3D 对象
+                The image will be analyzed for 3D objects after submission
               </span>
             </div>
           )}
@@ -1008,13 +1008,13 @@ export function AgentDock({
             variant="plain"
             size="lg"
             className="w-full"
-            aria-label="生成指令"
+            aria-label="Generation instructions"
             placeholder={
               imageFile
-                ? "补充说明（可选）"
+                ? "Additional details (optional)"
                 : selectedAssets.length > 0
-                  ? "描述如何处理已选模型"
-                  : "描述你要生成或修改的模型"
+                  ? "Describe what to do with the selected models"
+                  : "Describe a model to generate or edit"
             }
             value={text}
             onChange={(event) => setText(event.target.value)}
@@ -1024,13 +1024,13 @@ export function AgentDock({
             className={`flex items-center justify-between gap-2 ${expanded ? "-mx-2 -mb-2" : ""}`}
           >
             <div className="flex min-w-0 items-center gap-2">
-              <Tooltip content="上传图片，从一张图开始生成">
+              <Tooltip content="Upload an image to start creating">
                 <Button
                   variant="secondary"
                   shape="circle"
                   size="lg"
                   icon={PlusIcon}
-                  aria-label="上传图片"
+                  aria-label="Upload image"
                   className="control-edge-lit border border-line hover:border-ink-faint"
                   onClick={() => fileInputRef.current?.click()}
                 />
@@ -1039,19 +1039,19 @@ export function AgentDock({
                 value={visibleModel}
                 options={modelOptions}
                 onChange={handleModelChange}
-                aria-label="选择对话模型"
+                aria-label="Choose chat model"
               />
               <Select
                 value={threeDProvider}
                 options={THREE_D_PROVIDER_PRESETS}
                 onChange={handleThreeDProviderChange}
-                aria-label="选择 3D 生成供应商"
+                aria-label="Choose 3D generation provider"
               />
               <Select
                 value={imageGenerateModel}
                 options={IMAGE_GENERATE_MODEL_PRESETS}
                 onChange={handleImageGenerateModelChange}
-                aria-label="选择图片生成模型"
+                aria-label="Choose image generation model"
               />
             </div>
             {/*
@@ -1060,17 +1060,17 @@ export function AgentDock({
               错了的过程里，比允许并发更糟。
             */}
             {streaming ? (
-              <Tooltip content="停止本轮生成">
+              <Tooltip content="Stop this generation">
                 <LiquidMetalSendButton
                   intent="stop"
                   type="button"
-                  aria-label="停止生成"
+                  aria-label="Stop generation"
                   onClick={onStop}
                 />
               </Tooltip>
             ) : (
               <LiquidMetalSendButton
-                aria-label={imageFile ? "分析图片" : "发送指令"}
+                aria-label={imageFile ? "Analyze image" : "Send instructions"}
               />
             )}
           </div>

@@ -7,6 +7,7 @@ import { UploadSimpleIcon } from "@phosphor-icons/react/UploadSimple";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { triggerBlobDownload } from "../../shared/lib/download";
+import { taskSubjectLabel } from "../../shared/lib/taskText";
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_FORMATS,
@@ -97,7 +98,7 @@ function AssetHoverCard({
           (active ? (
             <span className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-subtle">
               <CheckCircleIcon size={15} weight="fill" />
-              使用中
+              Active
             </span>
           ) : (
             <Button
@@ -106,12 +107,12 @@ function AssetHoverCard({
               disabled={activating}
               onClick={onActivate}
             >
-              {activating ? "启用中…" : "启用"}
+              {activating ? "Activating…" : "Activate"}
             </Button>
           ))}
       </div>
       {asset.assetSlug === DEFAULT_SKYBOX_SLUG && (
-        <span className="text-xs text-ink-subtle">内置默认环境，不占用资产目录</span>
+        <span className="text-xs text-ink-subtle">Built-in default environment; no asset folder used</span>
       )}
       <AssetTextureStrip asset={asset} />
     </div>
@@ -133,7 +134,7 @@ function defaultSkyboxAsset(projectSlug: string): LibraryAsset {
     id: `${projectSlug}/${DEFAULT_SKYBOX_SLUG}`,
     projectSlug,
     assetSlug: DEFAULT_SKYBOX_SLUG,
-    name: "默认天空盒",
+    name: "Default skybox",
     kind: "skybox",
     modelPath: null,
     modelExt: null,
@@ -154,25 +155,25 @@ function assetSubtitle(asset: LibraryAsset) {
     const ext = asset.hdrPath?.split(".").pop() ?? "exr";
     return `${ext.toUpperCase()} · skybox`;
   }
-  const head = asset.modelExt ? asset.modelExt.toUpperCase() : "无可渲染产物";
-  const parts = asset.modelPaths.length > 1 ? ` · ${asset.modelPaths.length} 个部件` : "";
+  const head = asset.modelExt ? asset.modelExt.toUpperCase() : "No renderable output";
+  const parts = asset.modelPaths.length > 1 ? ` · ${asset.modelPaths.length} parts` : "";
   return `${head} · ${asset.kind}${parts}`;
 }
 
 const TASK_STATUS_LABEL: Record<GenerationTask["status"], string> = {
-  running: "运行中",
-  succeeded: "已完成",
-  failed: "失败",
+  running: "Running",
+  succeeded: "Completed",
+  failed: "Failed",
 };
 
 const TASK_PHASE_LABEL: Record<NonNullable<GenerationTask["phase"]>, string> = {
-  queued: "排队中",
-  generating: "生成中",
-  downloading: "下载中",
-  validating: "校验中",
-  publishing: "发布中",
-  completed: "已完成",
-  failed: "失败",
+  queued: "Queued",
+  generating: "Generating",
+  downloading: "Downloading",
+  validating: "Validating",
+  publishing: "Publishing",
+  completed: "Completed",
+  failed: "Failed",
 };
 
 export const ModelList = memo(function ModelList({
@@ -378,13 +379,13 @@ export const ModelList = memo(function ModelList({
           <span className="text-[11px] whitespace-nowrap text-ink-subtle">{count}</span>
           {section === "assets" && (
             <div ref={exportButtonRef}>
-              <Tooltip content={exportableSelected.length === 0 ? "先选中要导出的模型" : "导出"}>
+              <Tooltip content={exportableSelected.length === 0 ? "Select models to export first" : "Export"}>
                 <Button
                   variant={exportMenuOpen ? "secondary" : "ghost"}
                   shape="square"
                   size="sm"
                   icon={UploadSimpleIcon}
-                  aria-label="导出"
+                  aria-label="Export"
                   disabled={exportableSelected.length === 0}
                   onClick={toggleExportMenu}
                 />
@@ -392,13 +393,13 @@ export const ModelList = memo(function ModelList({
             </div>
           )}
           {section === "assets" && (
-            <Tooltip content="导入本地模型">
+            <Tooltip content="Import local model">
               <Button
                 variant="ghost"
                 shape="square"
                 size="sm"
                 icon={DownloadSimpleIcon}
-                aria-label="导入本地模型"
+                aria-label="Import local model"
                 onClick={() => fileInputRef.current?.click()}
               />
             </Tooltip>
@@ -420,7 +421,7 @@ export const ModelList = memo(function ModelList({
               className="fixed z-50 flex origin-top-left flex-col gap-1 rounded-surface border border-line bg-surface-raised p-2 shadow-lg backdrop-blur-md transition-[opacity,transform] duration-150 ease-spring starting:opacity-0 starting:scale-95 motion-reduce:starting:scale-100"
             >
               <span className="px-4 pt-2 pb-1 text-xs text-ink-subtle">
-                已选 {exportableSelected.length} 个
+                Selected: {exportableSelected.length}
               </span>
               {EXPORT_FORMAT_OPTIONS.map((option) => (
                 <button
@@ -430,7 +431,7 @@ export const ModelList = memo(function ModelList({
                   onClick={() => handleBatchExport(option.value as ExportFormat)}
                   className="flex h-[54px] w-full items-center truncate rounded-inset px-4 text-left text-sm text-ink transition-transform duration-150 ease-spring hover:bg-fill motion-safe:active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
                 >
-                  {exporting ? "导出中…" : option.label}
+                  {exporting ? "Exporting…" : option.label}
                 </button>
               ))}
             </div>
@@ -456,7 +457,7 @@ export const ModelList = memo(function ModelList({
                 }
                 className="flex h-[54px] w-full items-center justify-between gap-2 truncate rounded-inset px-4 text-left text-sm text-ink transition-transform duration-150 ease-spring hover:bg-fill motion-safe:active:scale-[0.97]"
               >
-                导出
+                Export
                 <CaretRightIcon
                   size={14}
                   weight="regular"
@@ -475,7 +476,7 @@ export const ModelList = memo(function ModelList({
                       onClick={() => handleContextExport(option.value as ExportFormat)}
                       className="flex h-[54px] w-full items-center truncate rounded-inset px-4 text-left text-sm text-ink transition-transform duration-150 ease-spring hover:bg-fill motion-safe:active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
                     >
-                      {exporting ? "导出中…" : option.label}
+                      {exporting ? "Exporting…" : option.label}
                     </button>
                   ))}
                 </div>
@@ -489,7 +490,7 @@ export const ModelList = memo(function ModelList({
                 className="flex h-[54px] w-full items-center gap-2 truncate rounded-inset px-4 text-left text-sm text-ink transition-transform duration-150 ease-spring hover:bg-fill motion-safe:active:scale-[0.97]"
               >
                 <EyeIcon size={16} weight="regular" />
-                预览
+                Preview
               </button>
               {/* 删除不可撤销：第一下只把这一行换成确认态，第二下才真删 */}
               <button
@@ -509,7 +510,7 @@ export const ModelList = memo(function ModelList({
                 }`}
               >
                 <TrashIcon size={16} weight="regular" />
-                {deleting ? "删除中…" : contextMenu.confirmDelete ? "确认删除" : "删除"}
+                {deleting ? "Deleting…" : contextMenu.confirmDelete ? "Confirm delete" : "Delete"}
               </button>
             </div>
           </>,
@@ -545,8 +546,8 @@ export const ModelList = memo(function ModelList({
             : skyboxAssets.length + regularAssets.length + worldAssets.length === 0) && (
           <span className="px-3 py-2 text-xs text-ink-subtle">
             {section === "scenes"
-              ? "还没有场景。上传一张图并生成干净底板后，可创建可探索世界。"
-              : "还没有模型资产。上传一张图或直接描述想要的模型开始生成。"}
+              ? "No scenes yet. Upload an image and generate a clean base to create an explorable world."
+              : "No model assets yet. Upload an image or describe the model you want to create."}
           </span>
         )}
 
@@ -632,7 +633,7 @@ export const ModelList = memo(function ModelList({
                         {assetSubtitle(asset)}
                       </span>
                     </span>
-                    {isEnvironmentActive && <Badge className="shrink-0">使用中</Badge>}
+                    {isEnvironmentActive && <Badge className="shrink-0">Active</Badge>}
                   </button>
                 </Tooltip>
               </div>
@@ -662,7 +663,7 @@ export const ModelList = memo(function ModelList({
 
         {section === "tasks" && tasks.length === 0 && (
           <span className="px-3 py-2 text-xs text-ink-subtle">
-            当前没有生成任务。
+            No generation tasks yet.
           </span>
         )}
         {section === "tasks" &&
@@ -672,7 +673,7 @@ export const ModelList = memo(function ModelList({
               className="flex items-center justify-between gap-2 rounded-control px-3 py-2 hover:bg-fill"
             >
               <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="truncate text-xs text-ink">{task.subject}</span>
+                <span className="truncate text-xs text-ink">{taskSubjectLabel(task.subject)}</span>
                 <span className="truncate text-[11px] text-ink-subtle">
                   {task.phase ? TASK_PHASE_LABEL[task.phase] : TASK_STATUS_LABEL[task.status]}
                   {task.status === "failed" && task.error ? ` · ${task.error}` : ""}
@@ -685,7 +686,7 @@ export const ModelList = memo(function ModelList({
                   disabled={retryingId !== null}
                   onClick={() => void handleRetryTask(task)}
                 >
-                  {retryingId === task.id ? "重试中…" : "重试"}
+                  {retryingId === task.id ? "Retrying…" : "Retry"}
                 </Button>
               ) : (
                 <Badge>{TASK_STATUS_LABEL[task.status]}</Badge>

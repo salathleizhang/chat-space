@@ -65,7 +65,7 @@ describe("useTaskPolling", () => {
 
     expect(setActivity).toHaveBeenCalledWith({
       state: "working",
-      message: "正在执行：贴图生成：chair",
+      message: "Running: Texture generation: chair",
     });
     await h.unmount();
   });
@@ -158,7 +158,7 @@ describe("useTaskPolling", () => {
     expect(pushAssistant.mock.calls[0]![0]).toContain("chat 服务不可达");
     expect(setActivity).toHaveBeenCalledWith({
       state: "working",
-      message: "后台任务状态读取失败，4 秒后重试",
+      message: "Failed to read background task status; retrying in 4 seconds",
     });
     await h.unmount();
   });

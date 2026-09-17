@@ -15,7 +15,7 @@ export async function uploadSource(projectSlug: string, file: File): Promise<str
     dataBase64: await fileToBase64(file),
   });
   if (!response.ok) {
-    throw await chatResponseError(response, `上传源图失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to upload source image (${response.status})`);
   }
   return ((await response.json()) as { path: string }).path;
 }
@@ -45,7 +45,7 @@ export interface GenerationTask {
 async function postJsonOrThrow<T>(path: string, body: unknown): Promise<T> {
   const response = await postJson(path, body);
   if (!response.ok) {
-    throw await chatResponseError(response, `chat 服务返回 ${response.status}`);
+    throw await chatResponseError(response, `Chat service returned ${response.status}`);
   }
   return (await response.json()) as T;
 }
@@ -54,7 +54,7 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
   const query = projectSlug ? `?project=${encodeURIComponent(projectSlug)}` : "";
   const response = await chatFetch(`/api/tasks${query}`);
   if (!response.ok) {
-    throw await chatResponseError(response, `读取生成任务失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to load generation tasks (${response.status})`);
   }
   return ((await response.json()) as { tasks: GenerationTask[] }).tasks;
 }

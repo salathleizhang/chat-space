@@ -76,7 +76,7 @@ export async function saveSession(
         body,
       });
       if (!response.ok) {
-        throw await chatResponseError(response, `保存会话失败（${response.status}）`);
+        throw await chatResponseError(response, `Failed to save conversation (${response.status})`);
       }
     });
   saveTails.set(id, request);
@@ -97,7 +97,7 @@ export async function fetchSessions(projectSlug: string): Promise<SessionSummary
     `/api/sessions?project=${encodeURIComponent(projectSlug)}`,
   );
   if (!listResponse.ok) {
-    throw await chatResponseError(listResponse, `读取会话列表失败（${listResponse.status}）`);
+    throw await chatResponseError(listResponse, `Failed to load conversations (${listResponse.status})`);
   }
   return ((await listResponse.json()) as { sessions: SessionSummary[] }).sessions;
 }
@@ -108,7 +108,7 @@ export async function fetchSession(id: string): Promise<StoredSession | null> {
   const response = await chatFetch(`/api/sessions/${id}`);
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw await chatResponseError(response, `读取会话失败（${response.status}）`);
+    throw await chatResponseError(response, `Failed to load conversation (${response.status})`);
   }
   return ((await response.json()) as { session: StoredSession }).session;
 }
