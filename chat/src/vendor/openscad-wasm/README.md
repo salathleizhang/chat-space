@@ -8,4 +8,4 @@ CAD 硬表面参数化模型（SCAD → STL）。
 - 上游源码：https://github.com/openscad/openscad
 - 许可证：GNU General Public License v2 或（由你选择）任何更高版本
 
-注意：随发行版分发本二进制会使 GPL 对组合作品生效，Chatspace 定 LICENSE 时须把这一点纳入考量。
+注意：随发行版分发本二进制会使 GPL 对组合作品生效，ChatSpace 定 LICENSE 时须把这一点纳入考量。

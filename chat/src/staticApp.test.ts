@@ -12,7 +12,7 @@ describe("local app server", () => {
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), "chatspace-static-test-"));
     await mkdir(join(root, "assets"));
-    await writeFile(join(root, "index.html"), "<html>Chatspace</html>");
+    await writeFile(join(root, "index.html"), "<html>ChatSpace</html>");
     await writeFile(join(root, "assets", "app.js"), "export const ready = true;");
     fetchLocal = createLocalFetch((request) => {
       apiRequests.push(new URL(request.url).pathname);
@@ -28,7 +28,7 @@ describe("local app server", () => {
     for (const path of ["/", "/app", "/app/example-project"]) {
       const response = await fetchLocal(new Request(`http://127.0.0.1:3901${path}`));
       expect(response.status).toBe(200);
-      expect(await response.text()).toBe("<html>Chatspace</html>");
+      expect(await response.text()).toBe("<html>ChatSpace</html>");
       expect(response.headers.get("Cache-Control")).toBe("no-cache");
     }
   });

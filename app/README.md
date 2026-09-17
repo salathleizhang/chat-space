@@ -1,6 +1,6 @@
 # app
 
-Chatspace 的 Vite + React + R3F 客户端。
+ChatSpace 的 Vite + React + R3F 客户端。
 
 ```bash
 bun run dev

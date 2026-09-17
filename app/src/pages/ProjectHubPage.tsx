@@ -236,7 +236,7 @@ export function ProjectHubPage() {
         >
           <div className="flex items-center gap-2">
             <CubeFocusIcon size={24} weight="duotone" className="text-ink-strong" />
-            <span className="text-sm font-medium text-ink-strong">Chatspace</span>
+            <span className="text-sm font-medium text-ink-strong">ChatSpace</span>
           </div>
           <div className="flex items-center gap-2">
             <CreateProjectDialog />

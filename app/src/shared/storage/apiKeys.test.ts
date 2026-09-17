@@ -55,7 +55,7 @@ describe("server-only provider migration", () => {
     expect(JSON.parse(localStorage.getItem("chatspace.threeDProviderSettings:v1")!)).toEqual({ provider });
   });
 
-  test("图片模型偏好从旧键迁移到 Chatspace", () => {
+  test("图片模型偏好从旧键迁移到 ChatSpace", () => {
     localStorage.setItem("gabo.imageGenerateModelSettings:v1", JSON.stringify({ model: "seedream" }));
     expect(loadImageGenerateModelSettings().model).toBe("seedream");
     expect(localStorage.getItem("gabo.imageGenerateModelSettings:v1")).toBeNull();

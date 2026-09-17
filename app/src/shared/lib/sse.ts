@@ -13,7 +13,7 @@ export const CHAT_BASE_URL =
 /** 把 fetch 层异常翻译成用户可读提示；chat 服务未启动时浏览器抛的是无信息量的 "Failed to fetch" */
 export function toFriendlyErrorMessage(err: unknown): string {
   return err instanceof Error && err.message === "Failed to fetch"
-    ? "无法连接本机 Chatspace 服务，请确认已运行 bun run start 或 bun run dev:local"
+    ? "无法连接本机 ChatSpace 服务，请确认已运行 bun run start 或 bun run dev:local"
     : err instanceof Error
       ? err.message
       : String(err);

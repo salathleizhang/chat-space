@@ -1,4 +1,4 @@
-# Chatspace
+# ChatSpace
 
 以原版界面与交互为基线，保留真实本地工程文件。网页由 Cloudflare Pages 托管；本机 Bun 服务负责工程目录、Agent 和生成任务。
 
@@ -36,7 +36,7 @@ bun run build
 bun run start
 ```
 
-打开 `http://127.0.0.1:3901/app`。这个端口同时提供网页和 `/api`。新安装默认将工程文件保存在 `~/Chatspace`；如果旧版工程目录已存在且新目录不存在，会继续读取旧目录。可用 `CHATSPACE_LIBRARY_DIR` 指定目录。`CHAT_PORT` 可更换端口，本地正式网页会自动连接同一端口。修改前端代码后需重新构建。
+打开 `http://127.0.0.1:3901/app`。这个端口同时提供网页和 `/api`。新安装默认将工程文件保存在 `~/ChatSpace`；如果旧版工程目录已存在且新目录不存在，会继续读取旧目录。可用 `CHATSPACE_LIBRARY_DIR` 指定目录。`CHAT_PORT` 可更换端口，本地正式网页会自动连接同一端口。修改前端代码后需重新构建。
 
 ## Cloudflare Pages
 

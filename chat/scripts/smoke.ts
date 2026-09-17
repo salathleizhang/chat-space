@@ -1,6 +1,6 @@
 /**
  * 三平台真实调用冒烟脚本。仅在 SMOKE_PAID=1 时提交付费任务。
- * 产物写入临时目录，不触碰用户的 ~/Chatspace 工程。
+ * 产物写入临时目录，不触碰用户的 ~/ChatSpace 工程。
  */
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";

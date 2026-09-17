@@ -9,7 +9,7 @@ const fetch = createLocalFetch(
   fileURLToPath(new URL("../../app/dist", import.meta.url)),
 );
 
-console.log(`[chat] Chatspace listening on http://127.0.0.1:${config.port}/app`);
+console.log(`[chat] ChatSpace listening on http://127.0.0.1:${config.port}/app`);
 
 export default {
   hostname: "127.0.0.1",

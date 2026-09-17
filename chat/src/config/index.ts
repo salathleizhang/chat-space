@@ -24,11 +24,14 @@ const EnvSchema = z.object({
 
 const env = EnvSchema.parse(process.env);
 
-/** 已有工程继续使用旧目录；新安装默认写入 Chatspace。 */
+/** 已有工程继续使用旧目录；新安装默认写入 ChatSpace。 */
 export function defaultLibraryRoot(home = homedir(), exists = existsSync): string {
-  const current = join(home, "Chatspace");
-  const previous = join(home, "Gabo");
-  return !exists(current) && exists(previous) ? previous : current;
+  const current = join(home, "ChatSpace");
+  if (exists(current)) return current;
+  for (const previous of [join(home, "Chatspace"), join(home, "Gabo")]) {
+    if (exists(previous)) return previous;
+  }
+  return current;
 }
 
 /** 生产站点只接受完整 origin，不放行其他 pages.dev 页面。 */

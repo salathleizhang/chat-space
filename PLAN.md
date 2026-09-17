@@ -1,4 +1,4 @@
-# Chatspace 精简架构重写计划
+# ChatSpace 精简架构重写计划
 
 ## 当前进展（2026-09-16）
 
@@ -11,7 +11,7 @@
 
 ## 目标与基线
 
-- 参照原项目 commit `7a701ee8db050f33b767b8f1490738cb543c3679`，在本仓库重写 Chatspace。
+- 参照原项目 commit `7a701ee8db050f33b767b8f1490738cb543c3679`，在本仓库重写 ChatSpace。
 - UI 的布局、视觉状态和操作流程以原版实际运行结果为准；功能迁移以原版当前可用能力为准。
 - 网页最终部署到 Cloudflare Pages；工程、资产、场景、任务和会话持久保存在用户本机。
 - 保留原版 Vite、React、R3F 的技术方向。精简目标是减少运行服务、重复状态和无用抽象，不通过削减已使用的交互实现。
@@ -25,7 +25,7 @@ Cloudflare Pages 静态站点：Vite + React + R3F
 本机服务：Bun + Hono
   ├─ 项目与资产文件读写、格式转换、导出
   ├─ Agent、供应商调用、生成任务和失败恢复
-  └─ ~/Chatspace/projects、~/Chatspace/sessions
+  └─ ~/ChatSpace/projects、~/ChatSpace/sessions
 ```
 
 只有两个运行部分：网页和本机服务。共享的 Zod 契约可以作为源码模块，不单独运行。Cloudflare Pages 托管网页并处理 SPA 路由，不承担工程存储；浏览器直接连接本机服务，工程请求不经 Cloudflare 中转。API key 只保存在本机服务的 `chat/.env`，浏览器只保存模型偏好；调用生成供应商时，完成任务所需的输入会发给对应供应商，产物下载回本地后才标记为完成。
@@ -54,7 +54,7 @@ Cloudflare Pages 静态站点：Vite + React + R3F
 
 ### 2. 定稿本地数据契约与迁移
 
-1. 盘点现有 `~/Chatspace/projects`、`~/Chatspace/sessions` 的目录、JSON、模型、贴图、源图及任务侧写。
+1. 盘点现有 `~/ChatSpace/projects`、`~/ChatSpace/sessions` 的目录、JSON、模型、贴图、源图及任务侧写。
 2. 保持逻辑路径和已有工程可读；为需要变化的元数据定义版本与迁移函数。
 3. 本机服务统一负责读写、路径校验、原子更新、删除和生成产物提交。
 4. 在旧工程副本上验证迁移；迁移前生成备份，失败后原工程仍可打开。

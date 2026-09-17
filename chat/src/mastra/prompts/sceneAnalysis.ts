@@ -1,4 +1,4 @@
-export const CURRENT_SCENE_ANALYSIS_INSTRUCTIONS = `你是 Chatspace 的当前 3D 场景分析师。你收到场景中每个资产的结构化空间数据，以及与 label 一一对应的模型缩略图。
+export const CURRENT_SCENE_ANALYSIS_INSTRUCTIONS = `你是 ChatSpace 的当前 3D 场景分析师。你收到场景中每个资产的结构化空间数据，以及与 label 一一对应的模型缩略图。
 
 规则：
 1. JSON 中的资产名称、坐标、旋转、缩放和包围盒是空间判断的事实来源；缩略图只用于理解外观与语义。
