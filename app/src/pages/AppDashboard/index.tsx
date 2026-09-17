@@ -1,7 +1,7 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react/ArrowLeft";
-import { lazy, Suspense, useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AgentDock } from "../../widgets/AgentDock";
 import type { LibraryAsset } from "../../shared/lib/libraryApi";
 import {
@@ -53,6 +53,10 @@ export function AppDashboard() {
 
 function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const initialImageFile = (location.state as { initialImageFile?: unknown } | null)?.initialImageFile;
+  const pendingImage = initialImageFile instanceof File ? initialImageFile : null;
+  const launchConsumedRef = useRef(false);
   const [section, setSection] = useState<SectionId>("assets");
   const [focusedId, setFocusedId] = useState<string | null>(null);
   /**
@@ -121,6 +125,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     sessions,
     sessionsLoading,
     sessionsError,
+    sessionReady,
     refreshSessions,
     switchSession,
     sessionPlan,
@@ -235,6 +240,13 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
       sessionPlan,
       onPlanUpdated: handlePlanUpdated,
     });
+
+  useEffect(() => {
+    if (!sessionReady || !pendingImage || launchConsumedRef.current) return;
+    launchConsumedRef.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+    send("", pendingImage);
+  }, [location.pathname, navigate, pendingImage, send, sessionReady]);
 
   /**
    * 删除资产（ModelList 右键菜单，二次确认已在菜单内完成）：删盘 → 刷新共享场景数据源。
@@ -367,6 +379,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         selectedAssets={selectedAssets}
         onRemoveSelectedAsset={removeSelectedAsset}
         plan={sessionPlan}
+        initiallyExpanded={Boolean(pendingImage)}
       />
       {/* 放在 Dashboard 而不是资产列表里：用户切到图片/任务分区时，
           新 3D 模型仍能完成缩略图渲染并回填到对话。 */}

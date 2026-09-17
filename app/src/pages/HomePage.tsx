@@ -1,11 +1,14 @@
 import { ArrowRightIcon } from "@phosphor-icons/react/ArrowRight";
 import { CubeFocusIcon } from "@phosphor-icons/react/CubeFocus";
 import { FolderSimplePlusIcon } from "@phosphor-icons/react/FolderSimplePlus";
+import { PlusIcon } from "@phosphor-icons/react/Plus";
 import { SquaresFourIcon } from "@phosphor-icons/react/SquaresFour";
-import { useEffect, useState, type FormEvent } from "react";
+import { XIcon } from "@phosphor-icons/react/X";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { ACCEPTED_IMAGE_TYPES, imageFileFromClipboard } from "../shared/lib/imageAttachment";
 import { createProject } from "../shared/lib/libraryApi";
-import { Button, Input, Panel } from "../shared/ui";
+import { Button, Input, Panel, Tooltip } from "../shared/ui";
 
 const MODEL_ACTIONS = ["Model", "Unwrap", "UV-map", "Texture", "Skin", "Rig"] as const;
 const WORD_DURATION_MS = 2400;
@@ -15,7 +18,22 @@ export function HomePage() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [actionIndex, setActionIndex] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
+
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -42,18 +60,53 @@ export function HomePage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const projectName = name.trim();
+    const projectName =
+      name.trim() ||
+      (imageFile
+        ? imageFile.name.replace(/\.[^.]+$/, "").trim().slice(0, 120) || "Image project"
+        : "");
     if (!projectName || creating) return;
 
     setCreating(true);
     setError(null);
     try {
       const project = await createProject(projectName);
-      navigate(`/app/${project.slug}`);
+      navigate(`/app/${project.slug}`, {
+        state: imageFile ? { initialImageFile: imageFile } : null,
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setCreating(false);
     }
+  }
+
+  function handleDragEnter(event: DragEvent<HTMLDivElement>) {
+    if (creating || !event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragOver(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOver(false);
+    if (creating) return;
+    const file = Array.from(event.dataTransfer.files).find((candidate) =>
+      ACCEPTED_IMAGE_TYPES.includes(candidate.type),
+    );
+    if (file) setImageFile(file);
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
+    const file = imageFileFromClipboard(event.clipboardData);
+    if (!file) return;
+    event.preventDefault();
+    setImageFile(file);
   }
 
   return (
@@ -96,20 +149,84 @@ export function HomePage() {
             </span>
           </h1>
           <p className="mt-3 text-sm text-project-hub-ink-subtle">
-            Name your project to start building in ChatSpace.
+            Name your project or add an image to start building in ChatSpace.
           </p>
 
-          <Panel className="mt-9 w-full px-3 py-2">
+          <Panel
+            className="relative mt-9 w-full px-3 py-2"
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={() => {
+              dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+              if (dragDepthRef.current === 0) setIsDragOver(false);
+            }}
+            onDrop={handleDrop}
+          >
+            {isDragOver && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-fill-active text-sm text-ink">
+                Drop to upload image
+              </div>
+            )}
+            {imageFile && (
+              <div className="flex items-center gap-3 px-2 pb-2 text-left">
+                <div className="relative h-16 w-16 shrink-0">
+                  {imagePreviewUrl && (
+                    <img
+                      src={imagePreviewUrl}
+                      alt=""
+                      className="h-16 w-16 rounded-media object-cover ring-2 ring-ink-strong"
+                    />
+                  )}
+                  <Button
+                    variant="primary"
+                    shape="circle"
+                    size="xs"
+                    icon={XIcon}
+                    aria-label="Remove image"
+                    className="absolute -top-1.5 -right-1.5"
+                    disabled={creating}
+                    onClick={() => {
+                      setImageFile(null);
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                  />
+                </div>
+                <span className="min-w-0 text-xs text-project-hub-ink-subtle">
+                  The image will be analyzed after the project is created.
+                </span>
+              </div>
+            )}
             <form onSubmit={(event) => void submit(event)} className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_IMAGE_TYPES.join(",")}
+                className="hidden"
+                disabled={creating}
+                onChange={(event) => setImageFile(event.target.files?.[0] ?? null)}
+              />
+              <Tooltip content="Upload an image to start creating">
+                <Button
+                  variant="secondary"
+                  shape="circle"
+                  size="lg"
+                  icon={PlusIcon}
+                  aria-label="Upload image"
+                  className="control-edge-lit shrink-0 border border-line hover:border-ink-faint"
+                  disabled={creating}
+                  onClick={() => fileInputRef.current?.click()}
+                />
+              </Tooltip>
               <Input
                 id="home-project-name"
                 variant="plain"
                 size="lg"
                 className="min-w-0 flex-1"
                 aria-label="Project name"
-                placeholder="Name your new project…"
+                placeholder={imageFile ? "Project name (optional)" : "Name your new project…"}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
+                onPaste={handlePaste}
                 autoComplete="off"
                 maxLength={120}
                 disabled={creating}
@@ -121,15 +238,17 @@ export function HomePage() {
                 size="lg"
                 icon={ArrowRightIcon}
                 className="shrink-0"
-                disabled={!name.trim() || creating}
-                aria-label={creating ? "Creating project" : "Create project from name"}
+                disabled={(!name.trim() && !imageFile) || creating}
+                aria-label={creating ? "Creating project" : imageFile ? "Create project and analyze image" : "Create project from name"}
               />
             </form>
           </Panel>
           {error ? (
             <p role="alert" className="mt-3 text-sm text-signal">{error}</p>
           ) : (
-            <p className="mt-3 text-xs text-project-hub-ink-faint">Press Enter to create your project</p>
+            <p className="mt-3 text-xs text-project-hub-ink-faint">
+              {imageFile ? "Press Enter to create your project and analyze the image" : "Press Enter to create your project"}
+            </p>
           )}
         </section>
 

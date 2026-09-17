@@ -58,6 +58,7 @@ export function useSessionPersistence(
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   /** 会话正文恢复/切换的代次；不能与“只刷新菜单摘要”共用，否则打开菜单会取消恢复。 */
   const sessionLoadSeqRef = useRef(0);
   const sessionListSeqRef = useRef(0);
@@ -78,6 +79,7 @@ export function useSessionPersistence(
   useEffect(() => {
     if (!projectSlug) return;
     sessionRestoredRef.current = false;
+    setSessionReady(false);
     const restoreSeq = ++sessionLoadSeqRef.current;
     let cancelled = false;
 
@@ -100,10 +102,12 @@ export function useSessionPersistence(
         setSessionPlan(null);
       }
       sessionRestoredRef.current = true;
+      setSessionReady(true);
     }).catch((err: unknown) => {
       if (cancelled || restoreSeq !== sessionLoadSeqRef.current) return;
       // 历史读取失败不能永久关住自动保存；用户仍可开始一条新会话，但必须看见故障。
       sessionRestoredRef.current = true;
+      setSessionReady(true);
       if (liveMessagesRef.current.length === 0) setSessionPlan(null);
       setSessionsError(sessionErrorMessage("Failed to restore conversation", err));
     });
@@ -268,6 +272,7 @@ export function useSessionPersistence(
     sessions,
     sessionsLoading,
     sessionsError,
+    sessionReady,
     refreshSessions,
     switchSession,
     sessionPlan,

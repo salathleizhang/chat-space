@@ -89,6 +89,20 @@ beforeEach(() => {
 });
 
 describe("useSessionPersistence", () => {
+  test("首页携图进入时等待会话恢复完成再发送", async () => {
+    const latest = deferred<StoredSession | null>();
+    fetchLatestSession.mockImplementationOnce(async () => latest.promise);
+
+    const p = parent();
+    const h = await p.mount("new-from-home");
+    expect(h.result.current.sessionReady).toBe(false);
+
+    latest.resolve(null);
+    await flush();
+    expect(h.result.current.sessionReady).toBe(true);
+    await h.unmount();
+  });
+
   /**
    * 清场只在"确实换了项目"时做。首次进入时 messages 本来就是空的，无条件清空
    * 只会误伤用户在恢复请求返回前抢先发出的第一条消息——chat 服务没起时

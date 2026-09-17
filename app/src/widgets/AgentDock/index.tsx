@@ -20,6 +20,7 @@ import {
   type ProjectPlan,
 } from "../../shared/lib/libraryApi";
 import { fetchEnvLlmProviders } from "../../shared/lib/capabilitiesClient";
+import { ACCEPTED_IMAGE_TYPES, imageFileFromClipboard } from "../../shared/lib/imageAttachment";
 import type { SessionSummary } from "../../shared/lib/sessionsClient";
 import {
   Badge,
@@ -89,40 +90,6 @@ export interface AgentActivity {
   message: string;
 }
 
-const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
-const IMAGE_EXTENSION_BY_TYPE: Readonly<Record<string, string>> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-};
-
-/**
- * 浏览器从网页复制图片时通常把它放在 clipboardData.items，而不是 files；
- * 个别浏览器给这类 File 一个没有扩展名的通用名字，上传接口按文件名识别格式，
- * 因此在这里补齐扩展名后再复用现有图片附件链路。
- */
-function imageFileFromClipboard(data: DataTransfer): File | null {
-  const imageItem = Array.from(data.items).find(
-    (item) =>
-      item.kind === "file" && ACCEPTED_IMAGE_TYPES.includes(item.type),
-  );
-  const file =
-    imageItem?.getAsFile() ??
-    Array.from(data.files).find((candidate) =>
-      ACCEPTED_IMAGE_TYPES.includes(candidate.type),
-    );
-  if (!file) return null;
-  if (/\.(?:png|jpe?g|webp)$/i.test(file.name)) return file;
-
-  const mimeType = file.type || imageItem?.type || "";
-  const extension = IMAGE_EXTENSION_BY_TYPE[mimeType];
-  if (!extension) return null;
-  return new File([file], `pasted-image.${extension}`, {
-    type: mimeType,
-    lastModified: file.lastModified,
-  });
-}
-
 interface AgentDockProps {
   messages: ChatMessage[];
   activity: AgentActivity;
@@ -152,6 +119,8 @@ interface AgentDockProps {
   onRemoveSelectedAsset?: (assetId: string) => void;
   /** 当前会话自己的 Agent 计划快照 */
   plan?: ProjectPlan | null;
+  /** 首页携图创建项目时展开对话，直接显示上传与分析进度。 */
+  initiallyExpanded?: boolean;
 }
 
 const SESSION_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
@@ -675,8 +644,9 @@ export function AgentDock({
   selectedAssets = [],
   onRemoveSelectedAsset,
   plan,
+  initiallyExpanded = false,
 }: AgentDockProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [text, setText] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [model, setModel] = useState(() => loadLlmSettings().model);
