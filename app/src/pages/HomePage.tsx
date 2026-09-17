@@ -2,16 +2,43 @@ import { ArrowRightIcon } from "@phosphor-icons/react/ArrowRight";
 import { CubeFocusIcon } from "@phosphor-icons/react/CubeFocus";
 import { FolderSimplePlusIcon } from "@phosphor-icons/react/FolderSimplePlus";
 import { SquaresFourIcon } from "@phosphor-icons/react/SquaresFour";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { createProject } from "../shared/lib/libraryApi";
 import { Button, Input, Panel } from "../shared/ui";
+
+const MODEL_ACTIONS = ["Model", "Unwrap", "UV-map", "Texture", "Skin", "Rig"] as const;
+const WORD_DURATION_MS = 2400;
 
 export function HomePage() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionIndex, setActionIndex] = useState(0);
+
+  useEffect(() => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let interval: number | undefined;
+    const syncMotionPreference = () => {
+      window.clearInterval(interval);
+      if (reducedMotion.matches) {
+        setActionIndex(0);
+      } else {
+        interval = window.setInterval(
+          () => setActionIndex((index) => (index + 1) % MODEL_ACTIONS.length),
+          WORD_DURATION_MS,
+        );
+      }
+    };
+
+    syncMotionPreference();
+    reducedMotion.addEventListener("change", syncMotionPreference);
+    return () => {
+      window.clearInterval(interval);
+      reducedMotion.removeEventListener("change", syncMotionPreference);
+    };
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,8 +82,23 @@ export function HomePage() {
 
       <main className="animate-chrome-enter mx-auto w-full max-w-5xl px-6 pt-32 pb-16">
         <section className="mx-auto flex max-w-3xl flex-col items-center text-center" aria-labelledby="home-title">
-          <h1 id="home-title" className="text-3xl font-semibold tracking-tight text-project-hub-ink-strong sm:text-4xl">
-            If you can say it, you can model it.
+          <h1
+            id="home-title"
+            aria-label="Say it, Model it"
+            className="text-3xl font-semibold tracking-tight text-project-hub-ink-strong sm:text-4xl"
+          >
+            Say it,{" "}
+            <span className="whitespace-nowrap" aria-hidden="true">
+              <span className="inline-grid align-baseline">
+                {MODEL_ACTIONS.map((action) => (
+                  <span key={action} className="invisible col-start-1 row-start-1">{action}</span>
+                ))}
+                <span key={actionIndex} className="home-rotating-word col-start-1 row-start-1 justify-self-center">
+                  {MODEL_ACTIONS[actionIndex]}
+                </span>
+              </span>{" "}
+              it
+            </span>
           </h1>
           <p className="mt-3 text-sm text-project-hub-ink-subtle">
             Name your project to start building in ChatSpace.

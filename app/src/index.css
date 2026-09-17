@@ -134,6 +134,27 @@
 }
 
 @layer components {
+  .home-rotating-word {
+    animation: home-word-cycle 2400ms linear both;
+  }
+
+  @keyframes home-word-cycle {
+    0% {
+      opacity: 0;
+      transform: translateY(0.3em);
+    }
+
+    12%, 76% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    96%, 100% {
+      opacity: 0;
+      transform: translateY(-0.3em);
+    }
+  }
+
   /* AgentDock 历史区保持轨道透明，只露出一枚低对比度的细胶囊滑块，
      避免系统原生浅色滚动条切断液态玻璃面板。 */
   .agent-dock-scrollbar {
@@ -587,6 +608,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .home-rotating-word {
+    animation: none;
+  }
+
   .project-folder-button {
     transition: background-color 120ms ease-out;
   }
