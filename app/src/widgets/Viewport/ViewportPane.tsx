@@ -44,7 +44,7 @@ export const ViewportPane = forwardRef<HTMLDivElement, ViewportPaneProps>(functi
             onClick={onToggleProjection}
             className="pointer-events-auto absolute top-2 right-2 text-[11px] text-ink-subtle transition-colors hover:text-accent"
           >
-            {projection === "perspective" ? "透视" : "正交"}
+            {projection === "perspective" ? "Perspective" : "Orthographic"}
           </button>
         </>
       )}

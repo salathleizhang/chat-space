@@ -95,15 +95,15 @@ const TRANSFORM_ICON = {
 } as const;
 /** 快捷键跟 Blender 对齐（G/R/S），写进 tooltip 里让用户发现得到 */
 const TRANSFORM_LABEL: Record<TransformMode, string> = {
-  translate: "移动（G）",
-  rotate: "旋转（R）",
-  scale: "缩放（S）",
+  translate: "Move (G)",
+  rotate: "Rotate (R)",
+  scale: "Scale (S)",
 };
 
 const LAYOUT_LABEL: Record<LayoutMode, string> = {
-  1: "单视图",
-  2: "双视图",
-  4: "四视图（Blender 布局）",
+  1: "Single view",
+  2: "Two views",
+  4: "Four views (Blender layout)",
 };
 
 /** 窗格默认投影：透视机位默认透视，其余轴向预设机位默认正交——用户可随时切换，与 kind 解耦 */
@@ -619,7 +619,7 @@ export const Viewport = memo(function Viewport({
     >
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] bg-fill-active text-sm text-ink">
-          松开以导入模型
+          Drop to import model
         </div>
       )}
       <Canvas
@@ -731,10 +731,10 @@ export const Viewport = memo(function Viewport({
             <Tooltip
               content={
                 transformMode === "scale"
-                  ? "缩放只能沿对象自身轴进行"
+                  ? "Scale uses the object's local axes"
                   : transformSpace === "world"
-                    ? "当前：世界坐标系（点击切为局部）"
-                    : "当前：局部坐标系（点击切为世界）"
+                    ? "Current: world coordinates (click for local)"
+                    : "Current: local coordinates (click for world)"
               }
               side="top"
             >
@@ -742,7 +742,7 @@ export const Viewport = memo(function Viewport({
                 // 缩放模式下 TransformControls 内部强制走 local，按钮留着可点会是句谎话
                 disabled={transformMode === "scale"}
                 icon={transformSpace === "world" ? GlobeSimpleIcon : BoundingBoxIcon}
-                aria-label="切换世界/局部坐标系"
+                aria-label="Toggle world/local coordinates"
                 onClick={() => setTransformSpace((s) => (s === "world" ? "local" : "world"))}
               />
             </Tooltip>
@@ -767,35 +767,35 @@ export const Viewport = memo(function Viewport({
           )}
           {!firstPerson && singlePane && (
             <Tooltip
-              content={projectionFor(singlePane) === "perspective" ? "切换为正交视图" : "切换为透视视图"}
+              content={projectionFor(singlePane) === "perspective" ? "Switch to orthographic view" : "Switch to perspective view"}
               side="top"
             >
               <ToolbarButton
                 icon={projectionFor(singlePane) === "perspective" ? PerspectiveIcon : CubeIcon}
-                aria-label="切换透视/正交视图"
+                aria-label="Toggle perspective/orthographic view"
                 onClick={() => toggleProjection(singlePane)}
               />
             </Tooltip>
           )}
           {!firstPerson && (
-            <Tooltip content={showGrid ? "隐藏网格" : "显示网格"} side="top">
+            <Tooltip content={showGrid ? "Hide grid" : "Show grid"} side="top">
               <ToolbarButton
                 selected={showGrid}
                 icon={GridFourIcon}
-                aria-label={showGrid ? "隐藏网格" : "显示网格"}
+                aria-label={showGrid ? "Hide grid" : "Show grid"}
                 onClick={() => setShowGrid((g) => !g)}
               />
             </Tooltip>
           )}
           {hasContent && (
             <Tooltip
-              content={firstPerson ? "回到轨道俯视视图" : "第一人称漫游（WASD 移动）"}
+              content={firstPerson ? "Return to orbit top view" : "First-person navigation (WASD to move)"}
               side="top"
             >
               <ToolbarButton
                 selected={firstPerson}
                 icon={firstPerson ? VideoCameraIcon : PersonSimpleWalkIcon}
-                aria-label={firstPerson ? "回到轨道视图" : "进入第一人称"}
+                aria-label={firstPerson ? "Return to orbit view" : "Enter first-person view"}
                 onClick={() =>
                   setMode((m) => {
                     const next = m === "orbit" ? "firstPerson" : "orbit";
@@ -813,14 +813,14 @@ export const Viewport = memo(function Viewport({
         <>
           {firstPerson && (
             <Panel className="pointer-events-none absolute top-16 left-1/2 -translate-x-1/2 px-3 py-1.5 text-xs text-ink-subtle">
-              点击画面锁定视角 · WASD 移动 · Shift 加速 · ESC 释放鼠标
+              Click the viewport to lock view · WASD to move · Shift to sprint · Esc to release mouse
             </Panel>
           )}
 
           <div className="pointer-events-none absolute bottom-24 left-1/2 flex -translate-x-1/2 items-center gap-2">
-            <Badge>{placedAssets.length} 个对象</Badge>
-            {selectedIds.size > 0 && <Badge>已选 {selectedIds.size} 个</Badge>}
-            {worldAsset && <Badge>高斯泼溅背景</Badge>}
+            <Badge>{placedAssets.length} objects</Badge>
+            {selectedIds.size > 0 && <Badge>Selected: {selectedIds.size}</Badge>}
+            {worldAsset && <Badge>Gaussian splat background</Badge>}
           </div>
         </>
       )}

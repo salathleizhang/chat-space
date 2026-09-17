@@ -54,7 +54,7 @@ function projectPreviewImages(projectSlug: string, state: ProjectState): string[
   return Array.from(images).slice(0, FOLDER_CARD_VARIANTS.length);
 }
 
-const DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
@@ -166,7 +166,7 @@ function CreateProjectDialog() {
           onClick={open}
           onMouseEnter={() => void preloadAppDashboard()}
         >
-          创建项目
+          Create project
         </Button>
       )}
     >
@@ -178,12 +178,12 @@ function CreateProjectDialog() {
             void submit(close);
           }}
         >
-          <DialogTitle>创建项目</DialogTitle>
-          <DialogDescription>每个项目拥有独立的资产、对话与生成任务。</DialogDescription>
+          <DialogTitle>Create project</DialogTitle>
+          <DialogDescription>Each project has its own assets, conversations, and generation tasks.</DialogDescription>
           <Input
             className="mt-4"
-            aria-label="项目名称"
-            placeholder="项目名称"
+            aria-label="Project name"
+            placeholder="Project name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             autoFocus
@@ -191,10 +191,10 @@ function CreateProjectDialog() {
           {error && <p className="mt-2 text-xs text-ink">⚠️ {error}</p>}
           <div className="mt-5 flex justify-end gap-2">
             <Button variant="ghost" onClick={close}>
-              取消
+              Cancel
             </Button>
             <Button type="submit" variant="primary" disabled={!name.trim() || creating}>
-              {creating ? "正在创建…" : "创建"}
+              {creating ? "Creating…" : "Create"}
             </Button>
           </div>
         </form>
@@ -248,9 +248,9 @@ export function ProjectHubPage() {
 
       <main className="animate-chrome-enter mx-auto w-full max-w-5xl px-6 pt-28 pb-16">
         <div className="mb-6 flex items-baseline justify-between">
-          <h1 className="text-sm font-medium text-project-hub-ink-strong">项目</h1>
+          <h1 className="text-sm font-medium text-project-hub-ink-strong">Projects</h1>
           {!loading && (
-            <span className="text-xs text-project-hub-ink-subtle">{items.length} 个</span>
+            <span className="text-xs text-project-hub-ink-subtle">{items.length} total</span>
           )}
         </div>
 
@@ -258,7 +258,7 @@ export function ProjectHubPage() {
 
         {loading ? (
           <p className="py-16 text-center text-sm text-project-hub-ink-subtle">
-            正在读取本地项目…
+            Loading local projects…
           </p>
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-20 text-center">
@@ -267,9 +267,9 @@ export function ProjectHubPage() {
               weight="thin"
               className="text-project-hub-ink-faint"
             />
-            <span className="text-sm text-project-hub-ink-subtle">还没有项目</span>
+            <span className="text-sm text-project-hub-ink-subtle">No projects yet</span>
             <span className="text-xs text-project-hub-ink-faint">
-              点击右上角「创建项目」，开始你的第一个 3D 项目。
+              Click “Create project” in the top right to start your first 3D project.
             </span>
           </div>
         ) : (
@@ -282,7 +282,7 @@ export function ProjectHubPage() {
                   onClick={() => navigate(`/app/${project.slug}`)}
                   onMouseEnter={() => void preloadAppDashboard()}
                   onFocus={() => void preloadAppDashboard()}
-                  aria-label={`进入项目 ${project.name}`}
+                  aria-label={`Open project ${project.name}`}
                 >
                   <ProjectFolderLogo
                     projectKey={project.slug}
@@ -294,7 +294,7 @@ export function ProjectHubPage() {
                       {project.name}
                     </span>
                     <span className="mt-1 block text-xs text-project-hub-ink-subtle">
-                      {assetCount} 个资产 · {sourceCount} 张源图
+                      {assetCount} assets · {sourceCount} source images
                     </span>
                     <span className="mt-0.5 block text-xs text-project-hub-ink-faint">
                       {DATE_FORMATTER.format(new Date(project.createdAt))}

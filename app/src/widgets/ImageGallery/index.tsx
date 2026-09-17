@@ -26,14 +26,14 @@ export const ImageGallery = memo(function ImageGallery({ images }: ImageGalleryP
     <>
       <Panel className="flex max-h-[70vh] w-80 flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <span className="text-sm font-medium text-ink-strong">参考图</span>
+          <span className="text-sm font-medium text-ink-strong">Reference images</span>
           <span className="text-[11px] text-ink-subtle">{images.length}</span>
         </div>
         <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto p-2">
           {images.length === 0 && (
             <div className="col-span-2 flex min-h-32 flex-col items-center justify-center gap-2 px-4 text-center text-xs text-ink-subtle">
               <ImageSquareIcon size={24} weight="regular" className="text-ink-faint" />
-              <span>还没有生成过参考图。</span>
+              <span>No reference images generated yet.</span>
             </div>
           )}
           {images.map((path) => {
@@ -42,7 +42,7 @@ export const ImageGallery = memo(function ImageGallery({ images }: ImageGalleryP
               <button
                 key={path}
                 type="button"
-                aria-label={`查看参考图 ${fileName}`}
+                aria-label={`View reference image ${fileName}`}
                 onClick={() => setSelected(path)}
                 className="group relative aspect-square min-w-0 overflow-hidden rounded-media bg-field text-left ring-1 ring-hairline transition-[transform,background-color] duration-150 ease-spring hover:bg-fill motion-safe:active:scale-[0.98]"
               >
@@ -54,7 +54,7 @@ export const ImageGallery = memo(function ImageGallery({ images }: ImageGalleryP
                   className="h-full w-full object-cover transition-transform duration-200 ease-spring group-hover:scale-[1.03]"
                 />
                 <span className="absolute inset-x-1.5 bottom-1.5 truncate rounded-full bg-canvas/65 px-2 py-1 text-[10px] text-ink backdrop-blur-sm">
-                  参考图
+                  Reference image
                 </span>
               </button>
             );
@@ -68,7 +68,7 @@ export const ImageGallery = memo(function ImageGallery({ images }: ImageGalleryP
             className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/70 p-6"
             role="dialog"
             aria-modal="true"
-            aria-label={`预览 ${selected.split("/").pop() ?? selected}`}
+            aria-label={`Preview ${selected.split("/").pop() ?? selected}`}
             onClick={(event) => {
               if (event.target === event.currentTarget) setSelected(null);
             }}
@@ -78,13 +78,13 @@ export const ImageGallery = memo(function ImageGallery({ images }: ImageGalleryP
                 <span className="min-w-0 truncate text-sm text-ink-strong">
                   {selected.split("/").pop() ?? selected}
                 </span>
-                <Tooltip content="关闭" side="bottom">
+                <Tooltip content="Close" side="bottom">
                   <Button
                     variant="ghost"
                     shape="square"
                     size="sm"
                     icon={XIcon}
-                    aria-label="关闭图片预览"
+                    aria-label="Close image preview"
                     onClick={() => setSelected(null)}
                   />
                 </Tooltip>
@@ -95,7 +95,7 @@ export const ImageGallery = memo(function ImageGallery({ images }: ImageGalleryP
                 className="min-h-0 max-h-[76vh] max-w-[86vw] rounded-inset bg-field object-contain"
               />
               <div className="flex items-center justify-between gap-4 px-3 py-2 text-xs text-ink-subtle">
-                <span>参考图</span>
+                <span>Reference image</span>
                 <span className="max-w-[60vw] truncate">
                   {selected.split("/").pop() ?? selected}
                 </span>

@@ -11,9 +11,9 @@ import {
 } from "../../shared/ui";
 
 const providers = [
-  { id: "volcengine", label: "火山方舟", hint: "GLM-5.3 · Seedream · Seed3D · Hyper3D · Hi3D" },
-  { id: "tripo3d", label: "Tripo3D", hint: "3D 模型生成" },
-  { id: "worldlabs", label: "World Labs", hint: "Marble 场景生成" },
+  { id: "volcengine", label: "Volcano Engine Ark", hint: "GLM-5.3 · Seedream · Seed3D · Hyper3D · Hi3D" },
+  { id: "tripo3d", label: "Tripo3D", hint: "3D model generation" },
+  { id: "worldlabs", label: "World Labs", hint: "Marble scene generation" },
 ] as const;
 
 type ProviderStatus = Record<(typeof providers)[number]["id"], boolean>;
@@ -25,7 +25,7 @@ export function SettingsDialog() {
     setStatus(undefined);
     void chatFetch("/api/capabilities")
       .then(async (response) => {
-        if (!response.ok) throw new Error(`本机服务返回 ${response.status}`);
+        if (!response.ok) throw new Error(`Local service returned ${response.status}`);
         return response.json() as Promise<{ providers?: Partial<ProviderStatus> }>;
       })
       .then((payload) => {
@@ -42,14 +42,14 @@ export function SettingsDialog() {
     <Dialog
       className="max-h-[80vh] w-[32rem] overflow-y-auto p-6"
       trigger={(open) => (
-        <ToolbarButton icon={GearSixIcon} aria-label="设置" onClick={() => { refreshStatus(); open(); }} />
+        <ToolbarButton icon={GearSixIcon} aria-label="Settings" onClick={() => { refreshStatus(); open(); }} />
       )}
     >
       {(close) => (
         <>
-          <DialogTitle>设置 · 本机服务</DialogTitle>
+          <DialogTitle>Settings · Local service</DialogTitle>
           <DialogDescription>
-            API 凭证只在本机 chat/.env 中配置。网页不会保存或发送密钥。
+            API credentials are configured locally in chat/.env. The web app does not store or send keys.
           </DialogDescription>
           <div className="mt-4 flex flex-col gap-4">
             {providers.map((provider) => (
@@ -59,13 +59,13 @@ export function SettingsDialog() {
                   <span className="text-xs text-ink-subtle">{provider.hint}</span>
                 </div>
                 <Badge>
-                  {status === undefined ? "读取中" : status === null ? "无法连接" : status[provider.id] ? "已配置" : "未配置"}
+                  {status === undefined ? "Loading" : status === null ? "Unable to connect" : status[provider.id] ? "Configured" : "Not configured"}
                 </Badge>
               </div>
             ))}
           </div>
           <div className="mt-6 flex justify-end">
-            <Button variant="secondary" onClick={close}>关闭</Button>
+            <Button variant="secondary" onClick={close}>Close</Button>
           </div>
         </>
       )}

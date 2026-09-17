@@ -204,7 +204,7 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
             按弧线削掉——固定 top-3 而不是垂直居中,这样 header 矮下去也不会把插槽推回圆角范围。 */}
         {inspection && (
           <div className="pointer-events-none absolute top-3 left-3.5">
-            <Badge>Agent 检查中…</Badge>
+            <Badge>Agent inspecting…</Badge>
           </div>
         )}
         <span className="pointer-events-none max-w-[65%] truncate text-sm font-medium text-ink-strong">
@@ -215,7 +215,7 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
           shape="square"
           size="sm"
           icon={XIcon}
-          aria-label="关闭预览"
+          aria-label="Close preview"
           onClick={onClose}
           disabled={inspection != null}
           className="absolute top-3 right-3.5"
@@ -252,7 +252,7 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
           </Canvas>
         ) : (
           <div className="flex h-full items-center justify-center text-xs text-ink-subtle">
-            该资产还没有可渲染的模型产物
+            This asset has no renderable model output
           </div>
         )}
       </div>

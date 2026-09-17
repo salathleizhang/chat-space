@@ -33,7 +33,7 @@ export function SensitiveInput({
       <button
         type="button"
         className="absolute right-1 rounded-control p-1 text-ink-subtle hover:bg-fill hover:text-ink"
-        aria-label={revealed ? "隐藏密钥" : "显示密钥"}
+        aria-label={revealed ? "Hide key" : "Show key"}
         onClick={() => setRevealed((v) => !v)}
       >
         {revealed ? <EyeSlashIcon size={14} /> : <EyeIcon size={14} />}

@@ -11,10 +11,10 @@ import { SettingsDialog } from "../SettingsDialog";
 export type SectionId = "assets" | "images" | "scenes" | "tasks";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof CubeIcon }[] = [
-  { id: "assets", label: "资产库", icon: CubeIcon },
-  { id: "images", label: "图片", icon: ImageSquareIcon },
-  { id: "scenes", label: "场景", icon: GlobeHemisphereWestIcon },
-  { id: "tasks", label: "生成任务", icon: ListChecksIcon },
+  { id: "assets", label: "Asset library", icon: CubeIcon },
+  { id: "images", label: "Images", icon: ImageSquareIcon },
+  { id: "scenes", label: "Scenes", icon: GlobeHemisphereWestIcon },
+  { id: "tasks", label: "Generation tasks", icon: ListChecksIcon },
 ];
 
 interface SidebarProps {
@@ -41,10 +41,10 @@ export const Sidebar = memo(function Sidebar({ active, onChange }: SidebarProps)
 
   return (
     <Panel className="flex items-center gap-1 p-1 rounded-full!">
-      <Tooltip content="返回项目列表" side="top">
+      <Tooltip content="Back to projects" side="top">
         <ToolbarButton
           icon={CubeFocusIcon}
-          aria-label="返回项目列表"
+          aria-label="Back to projects"
           onClick={() => navigate("/app")}
         />
       </Tooltip>

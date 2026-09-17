@@ -55,7 +55,7 @@ export interface LlmModelPreset {
 }
 
 export const LLM_MODEL_PRESETS: LlmModelPreset[] = [
-  { value: "", label: "自动选择 Agent 模型", baseUrl: "" },
+  { value: "", label: "Automatically select agent model", baseUrl: "" },
   { value: "glm-5.3", label: "GLM-5.3", provider: "volcengine" },
   { value: "deepseek-v4-1-flash-260910", label: "DeepSeek V4.1 Flash", provider: "volcengine" },
 ];
@@ -84,7 +84,7 @@ export function saveLlmSettings(settings: LlmSettings): boolean {
 export interface ThreeDProviderSettings { provider: string }
 
 export const THREE_D_PROVIDER_PRESETS = [
-  { value: "", label: "自动选择" },
+  { value: "", label: "Automatic selection" },
   { value: "seed3d-direct", label: "Seed3D" },
   { value: "hyper3d-volc", label: "Hyper3D" },
   { value: "hi3d-volc", label: "Hi3D" },
@@ -108,7 +108,7 @@ export function saveThreeDProviderSettings(settings: ThreeDProviderSettings): bo
 export interface ImageGenerateModelSettings { model: string }
 
 export const IMAGE_GENERATE_MODEL_PRESETS = [
-  { value: "", label: "自动选择图片模型" },
+  { value: "", label: "Automatically select image model" },
   { value: "seedream", label: "Seedream 4.5" },
 ];
 

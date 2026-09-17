@@ -16,7 +16,7 @@ function TextureStrip({ object }: { object: Object3D }) {
   const entries = useMemo(() => collectTextureEntries(object), [object]);
 
   if (entries.length === 0) {
-    return <span className="text-xs text-ink-faint">该模型没有贴图</span>;
+    return <span className="text-xs text-ink-faint">This model has no textures</span>;
   }
 
   return (
@@ -36,7 +36,7 @@ function TextureStrip({ object }: { object: Object3D }) {
             />
           ) : (
             <div className="flex h-24 w-24 items-center justify-center rounded-media bg-field px-2 text-center text-xs text-ink-faint ring-1 ring-hairline">
-              压缩格式
+              Compressed format
             </div>
           )}
           <span className="truncate text-xs text-ink">{entry.label}</span>
@@ -61,10 +61,10 @@ export function AssetTextureStrip({ asset }: { asset: LibraryAsset }) {
   */
   if (!asset.modelPath || asset.kind === "world") return null;
   return (
-    <Suspense fallback={<span className="text-xs text-ink-faint">贴图加载中…</span>}>
+    <Suspense fallback={<span className="text-xs text-ink-faint">Loading textures…</span>}>
       <LoadedAssetObject
         asset={asset}
-        fallback={<span className="text-xs text-ink-faint">贴图加载失败</span>}
+        fallback={<span className="text-xs text-ink-faint">Failed to load textures</span>}
       >
         {(object) => <TextureStrip object={object} />}
       </LoadedAssetObject>

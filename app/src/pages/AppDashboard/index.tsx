@@ -140,7 +140,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
   // 摆位落盘失败以前只写状态行，会被下一个状态顶掉——用户摆的位置没存上，
   // 且事后完全查不到原因。走 reportError 让它同时留在对话里。
   const handleSceneSaveError = useCallback(
-    (message: string) => reportError(`保存摆位失败：${message}`),
+    (message: string) => reportError(`Failed to save placement: ${message}`),
     [reportError],
   );
   /** 视口 gizmo 调过的资产摆放：磁盘上的 scene.json 叠加本会话改动（乐观更新 + 防抖落盘） */
@@ -177,7 +177,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     async (files: File[]) => {
       const groups = groupModelImportFiles(files);
       if (groups.length === 0) {
-        reportError("未识别到 .glb/.gltf/.obj/.fbx 模型文件");
+        reportError("No .glb, .gltf, .obj, or .fbx model files found");
         return;
       }
       const failures: string[] = [];
@@ -188,8 +188,8 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
             state: "working",
             message:
               groups.length === 1
-                ? `正在导入 ${group.primary.name}`
-                : `正在导入 ${index + 1}/${groups.length}：${group.primary.name}`,
+                ? `Importing ${group.primary.name}`
+                : `Importing ${index + 1}/${groups.length}: ${group.primary.name}`,
           });
           // 顺序导入是刻意的：同名文件依赖服务端 unique slug，完全并发会让两个请求
           // 同时看见同一个可用 slug。模型文件通常很大，顺序传输也避免多份 base64 峰值叠加。
@@ -197,18 +197,18 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           imported += 1;
         } catch (err) {
           failures.push(
-            `${group.primary.name}：${err instanceof Error ? err.message : String(err)}`,
+            `${group.primary.name}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
       if (imported > 0) {
         setActivity({
           state: "idle",
-          message: groups.length === 1 ? `已导入 ${groups[0]!.primary.name}` : `已导入 ${imported} 个模型`,
+          message: groups.length === 1 ? `Imported ${groups[0]!.primary.name}` : `Imported ${imported} models`,
         });
         bumpRefresh();
       }
-      if (failures.length > 0) reportError(`部分模型导入失败：\n${failures.join("\n")}`);
+      if (failures.length > 0) reportError(`Some models could not be imported: \n${failures.join("\n")}`);
     },
     [projectSlug, bumpRefresh, setActivity, reportError],
   );
@@ -288,13 +288,13 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
       />
       <div className="absolute top-4 left-1/2 z-10 -translate-x-1/2 animate-chrome-enter">
         <Panel className="flex items-center gap-2 py-2 pr-4 pl-2">
-          <Tooltip content="退出当前场景" side="bottom">
+          <Tooltip content="Leave current scene" side="bottom">
             <Button
               variant="ghost"
               shape="square"
               size="sm"
               icon={ArrowLeftIcon}
-              aria-label="退出当前场景"
+              aria-label="Leave current scene"
               onClick={() => navigate("/app")}
             />
           </Tooltip>

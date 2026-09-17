@@ -9,10 +9,10 @@ export interface PaneSpec {
   label: string;
 }
 
-const PERSPECTIVE: PaneSpec = { id: "persp", camera: "perspective", label: "透视" };
-const TOP: PaneSpec = { id: "top", camera: "top", label: "顶视图" };
-const FRONT: PaneSpec = { id: "front", camera: "front", label: "前视图" };
-const RIGHT: PaneSpec = { id: "right", camera: "right", label: "右视图" };
+const PERSPECTIVE: PaneSpec = { id: "persp", camera: "perspective", label: "Perspective" };
+const TOP: PaneSpec = { id: "top", camera: "top", label: "Top view" };
+const FRONT: PaneSpec = { id: "front", camera: "front", label: "Front view" };
+const RIGHT: PaneSpec = { id: "right", camera: "right", label: "Right view" };
 
 /** Blender 式布局预设：4 视图 DOM 顺序即 2x2 CSS grid 的左上/右上/左下/右下 */
 export const LAYOUTS: Record<LayoutMode, PaneSpec[]> = {

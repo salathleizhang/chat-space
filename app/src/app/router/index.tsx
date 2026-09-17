@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 
 const hydrateFallbackElement = (
   <div className="flex h-full w-full items-center justify-center bg-canvas text-sm text-ink-subtle">
-    正在加载…
+    Loading…
   </div>
 );
 
