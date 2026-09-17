@@ -89,13 +89,8 @@ export function HomePage() {
           >
             Say it,{" "}
             <span className="whitespace-nowrap" aria-hidden="true">
-              <span className="inline-grid align-baseline">
-                {MODEL_ACTIONS.map((action) => (
-                  <span key={action} className="invisible col-start-1 row-start-1">{action}</span>
-                ))}
-                <span key={actionIndex} className="home-rotating-word col-start-1 row-start-1 justify-self-center">
-                  {MODEL_ACTIONS[actionIndex]}
-                </span>
+              <span key={actionIndex} className="home-rotating-word inline-block">
+                {MODEL_ACTIONS[actionIndex]}
               </span>{" "}
               it
             </span>
