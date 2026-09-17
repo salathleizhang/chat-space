@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 export const LLM_PROVIDER_IDS = ["volcengine"] as const;
+export const DEEPSEEK_FLASH_SELECTION = "deepseek-v4-1-flash-260910";
 
 const EnvSchema = z.object({
   CHAT_PORT: z.coerce.number().int().positive().default(3901),
@@ -13,6 +14,7 @@ const EnvSchema = z.object({
   WORLDLABS_KEY: z.string().min(1).optional(),
   VOLC_LLM_BASE_URL: z.url().default("https://ark.cn-beijing.volces.com/api/v3"),
   VOLC_LLM_MODEL: z.string().min(1).default("glm-5.3"),
+  VOLC_DEEPSEEK_MODEL: z.string().min(1).default(DEEPSEEK_FLASH_SELECTION),
   VOLC_HYPER3D_MODEL: z.string().min(1).default("hyper3d-gen2-260112"),
   VOLC_HI3D_MODEL: z.string().min(1).default("hitem3d-2-0-251223"),
 });
@@ -52,6 +54,7 @@ export const config = {
   llm: {
     defaultBaseUrl: env.VOLC_LLM_BASE_URL,
     defaultModel: env.VOLC_LLM_MODEL,
+    deepseekModel: env.VOLC_DEEPSEEK_MODEL,
   },
   ark3d: {
     hyper3dModel: env.VOLC_HYPER3D_MODEL,
@@ -59,10 +62,10 @@ export const config = {
   },
 } as const;
 
-/** 不信任浏览器带来的 key、模型名或任意 API 地址；仅注入本机配置。 */
+/** 浏览器只能选择已配置的模型，凭证、实际模型 ID 和端点均由本机决定。 */
 export function createServerCredentialInjector(
   keys: Readonly<Record<string, string | undefined>>,
-  llm: { baseUrl: string; model: string },
+  llm: { baseUrl: string; model: string; deepseekModel: string },
 ) {
   return (body: unknown): unknown => {
     if (!body || typeof body !== "object" || Array.isArray(body)) return body;
@@ -74,11 +77,14 @@ export function createServerCredentialInjector(
       if (key) merged[field] = key;
     }
     if ("llm" in merged) {
+      const requestedModel = merged.llm && typeof merged.llm === "object" && !Array.isArray(merged.llm)
+        ? (merged.llm as Record<string, unknown>).model
+        : undefined;
       merged.llm = {
         apiKey: keys.volcengineApiKey ?? "",
         provider: "volcengine",
         baseUrl: llm.baseUrl,
-        model: llm.model,
+        model: requestedModel === DEEPSEEK_FLASH_SELECTION ? llm.deepseekModel : llm.model,
       };
     }
     return merged;
@@ -88,4 +94,5 @@ export function createServerCredentialInjector(
 export const withServerCredentials = createServerCredentialInjector(serverKeys, {
   baseUrl: env.VOLC_LLM_BASE_URL,
   model: env.VOLC_LLM_MODEL,
+  deepseekModel: env.VOLC_DEEPSEEK_MODEL,
 });

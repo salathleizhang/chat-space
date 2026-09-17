@@ -17,7 +17,11 @@ describe("server credentials", () => {
       seed3dApiKey: "local-volc",
       tripo3dApiKey: "local-tripo",
     },
-    { baseUrl: "https://ark.example/api/v3", model: "glm-5.3" },
+    {
+      baseUrl: "https://ark.example/api/v3",
+      model: "glm-5.3",
+      deepseekModel: "deepseek-v4-1-flash-260910",
+    },
   );
 
   test("忽略浏览器传来的所有凭证与任意 LLM 端点", () => {
@@ -46,9 +50,26 @@ describe("server credentials", () => {
     });
   });
 
+  test("允许选择火山方舟 DeepSeek V4.1 Flash，但实际配置仍由服务端注入", () => {
+    expect(inject({ llm: {
+      apiKey: "browser-llm",
+      baseUrl: "https://evil.example/v1",
+      model: "deepseek-v4-1-flash-260910",
+    } })).toMatchObject({
+      llm: {
+        apiKey: "local-volc",
+        provider: "volcengine",
+        baseUrl: "https://ark.example/api/v3",
+        model: "deepseek-v4-1-flash-260910",
+      },
+    });
+  });
+
   test("缺少本机配置时不接受浏览器补交密钥", () => {
     const empty = createServerCredentialInjector({}, {
-      baseUrl: "https://ark.example/api/v3", model: "glm-5.3",
+      baseUrl: "https://ark.example/api/v3",
+      model: "glm-5.3",
+      deepseekModel: "deepseek-v4-1-flash-260910",
     });
     expect(empty({ worldLabsApiKey: "browser-world", llm: { apiKey: "browser-llm" } })).toEqual({
       llm: {

@@ -4,6 +4,7 @@ import {
   loadImageGenerateModelSettings,
   loadLlmSettings,
   loadThreeDProviderSettings,
+  saveLlmSettings,
 } from "./apiKeys";
 
 beforeEach(() => localStorage.clear());
@@ -26,6 +27,24 @@ describe("server-only provider migration", () => {
     expect(loadLlmSettings().model).toBe("");
     expect(loadThreeDProviderSettings().provider).toBe("");
     expect(loadImageGenerateModelSettings().model).toBe("");
+  });
+
+  test("保存并恢复 DeepSeek V4.1 Flash 选择", () => {
+    expect(saveLlmSettings({
+      provider: "volcengine",
+      baseUrl: "https://untrusted.example/v1",
+      model: "deepseek-v4-1-flash-260910",
+    })).toBe(true);
+    expect(loadLlmSettings()).toEqual({
+      provider: "volcengine",
+      baseUrl: "",
+      model: "deepseek-v4-1-flash-260910",
+    });
+    expect(JSON.parse(localStorage.getItem("gabo.llmSettings:v1")!)).toEqual({
+      provider: "volcengine",
+      baseUrl: "",
+      model: "deepseek-v4-1-flash-260910",
+    });
   });
 
   test.each(["hyper3d-volc", "hi3d-volc"])("保留火山方舟 3D 模型偏好：%s", (provider) => {

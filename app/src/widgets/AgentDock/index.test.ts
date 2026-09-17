@@ -804,7 +804,7 @@ describe("AgentDock 状态行", () => {
 });
 
 describe("AgentDock LLM 能力筛选", () => {
-  test("env 激活火山方舟时，只展示 GLM-5.3", async () => {
+  test("env 激活火山方舟时，展示 GLM-5.3 与 DeepSeek V4.1 Flash", async () => {
     globalThis.fetch = mock(async () =>
       Response.json({ llmProviders: ["volcengine"] }),
     ) as unknown as typeof fetch;
@@ -819,8 +819,18 @@ describe("AgentDock LLM 能力筛选", () => {
     await act(async () => modelSelect.click());
 
     expect(document.body.textContent).toContain("GLM-5.3");
+    expect(document.body.textContent).toContain("DeepSeek V4.1 Flash");
     expect(document.body.textContent).not.toContain("GPT-4o mini");
     expect(document.body.textContent).not.toContain("Gemini 2.5 Flash");
+
+    const deepseek = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("DeepSeek V4.1 Flash"),
+    ) as HTMLButtonElement;
+    await act(async () => deepseek.click());
+    expect(modelSelect.textContent).toContain("DeepSeek V4.1 Flash");
+    expect(JSON.parse(localStorage.getItem("gabo.llmSettings:v1")!)).toMatchObject({
+      model: "deepseek-v4-1-flash-260910",
+    });
   });
 
   test("旧浏览器 OpenAI Key 不会激活其他模型", async () => {

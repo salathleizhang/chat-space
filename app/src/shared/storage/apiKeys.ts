@@ -53,21 +53,27 @@ export interface LlmModelPreset {
 export const LLM_MODEL_PRESETS: LlmModelPreset[] = [
   { value: "", label: "自动选择 Agent 模型", baseUrl: "" },
   { value: "glm-5.3", label: "GLM-5.3", provider: "volcengine" },
+  { value: "deepseek-v4-1-flash-260910", label: "DeepSeek V4.1 Flash", provider: "volcengine" },
 ];
+
+function savedLlmModel(model: unknown): string {
+  return LLM_MODEL_PRESETS.some((preset) => preset.provider && preset.value === model)
+    ? model as string
+    : "";
+}
 
 export function loadLlmSettings(): LlmSettings {
   const saved = readObject(LLM_SETTINGS_KEY);
-  if (saved?.model === "glm-5.3") {
-    return { provider: "volcengine", baseUrl: "", model: "glm-5.3" };
-  }
-  return { provider: "", baseUrl: "", model: "" };
+  const model = savedLlmModel(saved?.model);
+  return { provider: model ? "volcengine" : "", baseUrl: "", model };
 }
 
 export function saveLlmSettings(settings: LlmSettings): boolean {
+  const model = savedLlmModel(settings.model);
   return writeObject(LLM_SETTINGS_KEY, {
-    provider: settings.model === "glm-5.3" ? "volcengine" : "",
+    provider: model ? "volcengine" : "",
     baseUrl: "",
-    model: settings.model === "glm-5.3" ? "glm-5.3" : "",
+    model,
   });
 }
 
