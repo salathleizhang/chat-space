@@ -9,6 +9,7 @@ import {
   confirmReferenceAssetsTool,
   getCadSourceTool,
   generateReferenceImagesTool,
+  generateTextureTool,
   identifyAssetTool,
   inspectAssetTool,
   listGenerationTasksTool,
@@ -36,6 +37,7 @@ export function createCreatorAgent(
     tools: {
       "update-plan": updatePlanTool,
       "generate-reference-images": generateReferenceImagesTool,
+      "generate-texture": generateTextureTool,
       "analyze-scene": analyzeSceneTool,
       ...(options.enableAnalyzeReference
         ? { "analyze-reference": analyzeReferenceTool }

@@ -34,10 +34,9 @@ import {
   runHunyuanMotion,
   runHunyuanRetopo,
   runHunyuanRig,
-  runHunyuanTexture,
 } from "./hunyuanOps";
 import { latestAssetModel, requireProject } from "./projectTools";
-import { runTripoRig, runTripoTexture } from "./tripoOps";
+import { runTripoRig } from "./tripoOps";
 import {
   optionalContextString,
   requireContextString,
@@ -221,58 +220,6 @@ function startMeshOpTask(
     runMeshOperation(getAssetStorage(), toRequest(projectSlug), { apiKey }),
   );
 }
-
-export const generateTextureTool = createTool({
-  id: "generate-texture",
-  description:
-    "为资产库中已有模型重新生成贴图（付费操作——启动前须经用户同意）：文字描述目标风格。渠道：meshy 默认（收本地模型，可沿用原 UV）/ hunyuan（模型经公网 URL，过期或本地导入自动经 fal 存储中转）/ tripo（链式，非 Tripo 资产自动导入）。任务化返回，用 list-generation-tasks 跟进",
-  inputSchema: z.object({
-    assetSlug: SlugSchema,
-    stylePrompt: z.string().min(1).max(600),
-    channel: z.enum(["meshy", "hunyuan", "tripo"]).default("meshy"),
-    enablePbr: z.boolean().default(true),
-    /** meshy 专用：沿用原 UV */
-    enableOriginalUv: z.boolean().default(false),
-  }),
-  execute: async (input, context) => {
-    if (input.channel === "hunyuan") {
-      const falApiKey = optionalContextString(context, "falApiKey");
-      return startChanneledTask(context, "hunyuan", "texture", `贴图生成：${input.assetSlug}`, (projectSlug, apiKey) =>
-        runHunyuanTexture(
-          getAssetStorage(),
-          { projectSlug, assetSlug: input.assetSlug, prompt: input.stylePrompt, enablePbr: input.enablePbr },
-          { apiKey },
-          { falApiKey },
-        ),
-      );
-    }
-    if (input.channel === "tripo") {
-      return startChanneledTask(context, "tripo", "texture", `贴图生成：${input.assetSlug}`, (projectSlug, apiKey) =>
-        runTripoTexture(
-          getAssetStorage(),
-          { projectSlug, assetSlug: input.assetSlug, prompt: input.stylePrompt, pbr: input.enablePbr },
-          { apiKey },
-        ),
-      );
-    }
-    return startMeshOpTask(context, "texture", `贴图生成：${input.assetSlug}`, (projectSlug) => ({
-      projectSlug,
-      assetSlug: input.assetSlug,
-      path: MESHY_PATHS.retexture,
-      modelField: "model_url",
-      body: {
-        text_style_prompt: input.stylePrompt,
-        enable_pbr: input.enablePbr,
-        enable_original_uv: input.enableOriginalUv,
-      },
-      sidecarParams: {
-        text_style_prompt: input.stylePrompt,
-        enable_pbr: input.enablePbr,
-        enable_original_uv: input.enableOriginalUv,
-      },
-    }));
-  },
-});
 
 export const retopologizeTool = createTool({
   id: "retopologize",

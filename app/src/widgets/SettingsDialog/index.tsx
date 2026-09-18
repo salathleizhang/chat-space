@@ -12,7 +12,7 @@ import {
 
 const providers = [
   { id: "volcengine", label: "Volcano Engine Ark", hint: "GLM 5.3 Flash · DeepSeek V4.1 Flash · Doubao-Seed-Evolving · Doubao-Seed-2.1-pro · Seedream · Seed3D · Hyper3D · Hi3D" },
-  { id: "tripo3d", label: "Tripo3D", hint: "3D model generation" },
+  { id: "tripo3d", label: "Tripo3D", hint: "3D model generation · Texture regeneration · Segmentation" },
   { id: "worldlabs", label: "World Labs", hint: "Marble scene generation" },
 ] as const;
 

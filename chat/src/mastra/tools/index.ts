@@ -7,10 +7,10 @@ export { identifyAssetTool } from "./identifyTools";
 export { inspectAssetTool } from "./inspectTools";
 export {
   generateAnimationTool,
-  generateTextureTool,
   retopologizeTool,
   rigModelTool,
 } from "./meshOps";
+export { generateTextureTool } from "./textureOps";
 export {
   analyzeReferenceTool,
   confirmReferenceAssetsTool,

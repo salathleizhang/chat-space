@@ -10,7 +10,7 @@ import {
   writeJson,
 } from "../../services/assetStorage";
 import { createProject, getProjectState } from "./projectTools";
-import { runTripoImageTo3d, runTripoSegmentation } from "./tripoOps";
+import { runTripoImageTo3d, runTripoSegmentation, runTripoTexture } from "./tripoOps";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-tripo-test-"));
 const storage = new LocalFileStorage(root);
@@ -45,7 +45,13 @@ function makeFakeTripoFetch() {
       });
     }
     if (url.endsWith("/files")) {
-      calls.push({ url });
+      const uploaded = init?.body instanceof FormData ? init.body.get("file") : null;
+      calls.push({
+        url,
+        body: uploaded instanceof File
+          ? { name: uploaded.name, bytes: [...new Uint8Array(await uploaded.arrayBuffer())] }
+          : undefined,
+      });
       return jsonResponse({ code: 0, data: { file_token: "ft-1" } });
     }
     if (url.startsWith("https://s3.fake/") && init?.method === "PUT") {
@@ -63,6 +69,10 @@ function makeFakeTripoFetch() {
     if (url.endsWith("/mesh/segment")) {
       calls.push({ url, body: JSON.parse(String(init?.body)) });
       return jsonResponse({ code: 0, data: { task_id: "seg-1" } });
+    }
+    if (url.endsWith("/models/texture")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "tex-1" } });
     }
     if (url.includes("/v3/tasks/seg-1")) {
       return jsonResponse({
@@ -98,6 +108,47 @@ function makeFakeTripoFetch() {
 beforeAll(async () => {
   await createProject(storage, { name: "Tripo 演示", slug: "tp" });
   await storage.writeBytes(`${projectSourceDir("tp")}/0-photo.png`, PNG_BYTES);
+});
+
+describe("runTripoTexture", () => {
+  test("上传当前模型并只用 v3 texture 端点生成新模型", async () => {
+    const dir = assetDir("tp", "painted-crate");
+    await writeJson(storage, assetIdentityFile("tp", "painted-crate"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "painted-crate",
+      kind: "model",
+      name: "Painted crate",
+      intent: "A painted crate",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    await storage.writeBytes(`${dir}/0-painted-crate.glb`, GLB_BYTES);
+    const latestBytes = new Uint8Array([...GLB_BYTES, 1]);
+    await storage.writeBytes(`${dir}/1-painted-crate.glb`, latestBytes);
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoTexture(
+      storage,
+      { projectSlug: "tp", assetSlug: "painted-crate", prompt: "worn red paint", pbr: true },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+
+    const textureCall = calls.find((call) => call.url.endsWith("/models/texture"));
+    expect(textureCall?.body).toEqual({
+      input: "ft-1",
+      texture_prompt: { text: "worn red paint" },
+      pbr: true,
+    });
+    expect(calls.find((call) => call.url.endsWith("/files"))?.body).toEqual({
+      name: "1-painted-crate.glb",
+      bytes: [...latestBytes],
+    });
+    expect(calls.some((call) => call.url.endsWith("/models/import"))).toBe(false);
+    expect(result.files[0]).toBe(`${dir}/2-painted-crate.glb`);
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.params.input_model).toBe(`${dir}/1-painted-crate.glb`);
+    expect(sidecar.model).toBe("/models/texture");
+    expect(sidecar.status).toBe("succeeded");
+  });
 });
 
 afterAll(() => rm(root, { recursive: true, force: true }));

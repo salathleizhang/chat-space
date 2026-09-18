@@ -7,6 +7,13 @@ describe("creator 工具可用性", () => {
     const tools = await createCreatorAgent({ apiKey: "sk-test" }).listTools();
     expect(tools["update-plan"]).toBeDefined();
     expect(tools["generate-reference-images"]).toBeDefined();
+    expect(tools["generate-texture"]).toBeDefined();
+    const textureSchema = z.toJSONSchema(
+      (tools["generate-texture"] as unknown as { inputSchema: z.ZodType }).inputSchema,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown> };
+    expect(textureSchema.properties).not.toHaveProperty("model");
+    expect(textureSchema.properties).not.toHaveProperty("channel");
     expect(Object.keys(tools)).not.toContain("generate-plate");
     expect(Object.keys(tools)).not.toContain("edit-reference-image");
     expect(tools["analyze-scene"]).toBeDefined();

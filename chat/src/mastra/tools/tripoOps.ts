@@ -21,6 +21,7 @@ import {
   type RequestSidecar,
 } from "../../dto/library";
 import { extractMeshyFileUrls } from "../../models/meshy";
+import { convertModel } from "../../services/modelConvert";
 import {
   createTripoImageToModelTask,
   createTripoImportModelTask,
@@ -462,19 +463,37 @@ export const segmentPartsTool = createTool({
 
 // ---------- 后处理渠道函数（v3 新版独立端点，developers.tripo3d.ai 核实 2026-07） ----------
 
-/** 贴图重生成（POST /v3/models/texture）：input 链已有/自动导入的 Tripo 任务 */
+/** 贴图重生成只调用 Tripo v3 /models/texture；上传资产库最新模型作为输入。 */
 export async function runTripoTexture(
   storage: AssetStorage,
   params: { projectSlug: string; assetSlug: string; prompt?: string; pbr?: boolean },
   callOptions: TripoCallOptions,
 ): Promise<TripoOpResult> {
   await requireProject(storage, params.projectSlug);
-  const originalTaskId = await ensureTripoTaskId(
-    storage,
-    params.projectSlug,
-    params.assetSlug,
-    callOptions,
-  );
+  const identityPath = assetIdentityFile(params.projectSlug, params.assetSlug);
+  if (!(await storage.exists(identityPath))) {
+    throw new ChatServiceError(`模型资产「${params.assetSlug}」不存在`, 404, "asset_not_found");
+  }
+  const identity = await readJson(storage, identityPath, AssetIdentitySchema);
+  if (identity.kind !== "model") {
+    throw new ChatServiceError(`资产「${params.assetSlug}」不是模型`, 409, "asset_not_model");
+  }
+  const modelPath = await latestAssetModel(storage, params.projectSlug, params.assetSlug);
+  // glTF 可能引用同目录的 .bin/贴图，上传前打包成单文件内嵌资源。
+  const bytes = modelPath.toLowerCase().endsWith(".gltf")
+    ? (await convertModel(storage, modelPath, "gltf")).bytes
+    : await storage.readBytes(modelPath);
+  if (bytes.byteLength === 0) {
+    throw new ChatServiceError(`模型文件「${modelPath}」为空`, 422, "model_empty");
+  }
+  if (bytes.byteLength > 150 * 1024 * 1024) {
+    throw new ChatServiceError("Tripo 贴图接口只接受不超过 150 MB 的模型", 413, "tripo_model_too_large");
+  }
+  const fileName = modelPath.split("/").pop()!;
+  const ext = fileName.split(".").pop()!.toLowerCase();
+  const fileToken = bytes.byteLength > 60 * 1024 * 1024
+    ? await uploadTripoModelViaSts(ext, bytes, callOptions)
+    : await uploadTripoFile(fileName, bytes, callOptions);
   return runTripoV3Job(
     storage,
     {
@@ -482,13 +501,14 @@ export async function runTripoTexture(
       assetSlug: params.assetSlug,
       path: "/models/texture",
       body: {
-        input: originalTaskId,
+        input: fileToken,
         ...(params.prompt ? { texture_prompt: { text: params.prompt } } : {}),
         ...(params.pbr !== undefined ? { pbr: params.pbr } : {}),
       },
       sidecarParams: {
-        original_model_task_id: originalTaskId,
+        input_model: modelPath,
         ...(params.prompt ? { prompt: params.prompt } : {}),
+        ...(params.pbr !== undefined ? { pbr: params.pbr } : {}),
       },
     },
     callOptions,
