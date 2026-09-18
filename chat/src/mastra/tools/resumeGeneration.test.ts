@@ -22,7 +22,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 假供应商：FAL 状态直接 COMPLETED；World Labs operation 直接 done */
+/** 假供应商：World Labs operation 直接 done */
 const fakeFetch = (async (input: string | URL | Request) => {
   const url = String(input);
   if (url.startsWith("https://cdn.fake/")) {
@@ -40,13 +40,6 @@ const fakeFetch = (async (input: string | URL | Request) => {
       },
     });
   }
-  if (url.endsWith("/status")) return jsonResponse({ status: "COMPLETED" });
-  if (url.includes("/requests/")) {
-    return jsonResponse({
-      model_mesh: { url: "https://cdn.fake/crate.glb" },
-      textures: [{ url: "https://cdn.fake/tex.png", content_type: "image/png" }],
-    });
-  }
   return jsonResponse({}, 404);
 }) as typeof fetch;
 
@@ -55,24 +48,6 @@ const now = new Date().toISOString();
 beforeAll(async () => {
   await createProject(storage, { name: "续跑演练", slug: "rz" });
   // 模拟"提交后进程崩溃"留下的 running 侧写：有 providerTaskId、无 outputs
-  await writeJson(
-    storage,
-    `${assetDir("rz", "crate")}/.0-crate-request.json`,
-    RequestSidecarSchema,
-    {
-      schemaVersion: 1,
-      index: 0,
-      slug: "crate",
-      provider: "fal",
-      model: "fal-ai/hunyuan3d-v3/image-to-3d",
-      providerTaskId: "req-crashed",
-      params: { image: "projects/rz/source/0-a.png" },
-      status: "running",
-      outputs: [],
-      createdAt: now,
-      updatedAt: now,
-    },
-  );
   await writeJson(
     storage,
     `${assetDir("rz", "world")}/.0-world-request.json`,
@@ -91,24 +66,6 @@ beforeAll(async () => {
       updatedAt: now,
     },
   );
-  // 无 providerTaskId 的 queued 侧写：不可续跑
-  await writeJson(
-    storage,
-    `${projectSourceDir("rz")}/.0-edit-request.json`,
-    RequestSidecarSchema,
-    {
-      schemaVersion: 1,
-      index: 0,
-      slug: "edit",
-      provider: "fal",
-      model: "fal-ai/nano-banana-2/edit",
-      params: {},
-      status: "queued",
-      outputs: [],
-      createdAt: now,
-      updatedAt: now,
-    },
-  );
 });
 
 afterAll(() => rm(root, { recursive: true, force: true }));
@@ -116,19 +73,11 @@ afterAll(() => rm(root, { recursive: true, force: true }));
 describe("凭侧写续跑", () => {
   test("扫描出全部 queued/running 侧写并标注可续跑性", async () => {
     const resumable = await listResumableSidecars(storage, "rz");
-    expect(resumable).toHaveLength(3);
+    expect(resumable).toHaveLength(1);
     const bySlug = Object.fromEntries(resumable.map((r) => [r.slug, r]));
-    expect(bySlug.crate?.hasProviderTaskId).toBe(true);
-    expect(bySlug.edit?.hasProviderTaskId).toBe(false);
+    expect(bySlug.world?.hasProviderTaskId).toBe(true);
   });
 
-  test("已停用的 FAL 历史任务不得续跑", async () => {
-    await expect(resumeGeneration(
-      storage,
-      `${assetDir("rz", "crate")}/.0-crate-request.json`,
-      { falApiKey: "sk-fal", fetchFn: fakeFetch, pollIntervalMs: 1 },
-    )).rejects.toThrow("已停用");
-  });
 
   test("World Labs 任务续跑：只轮询 operation，不重新提交", async () => {
     const result = await resumeGeneration(
@@ -141,14 +90,6 @@ describe("凭侧写续跑", () => {
     expect(await storage.exists(`${assetDir("rz", "world")}/0-world.json`)).toBe(true);
   });
 
-  test("无供应商任务 id 时拒绝续跑并指引重新生成", async () => {
-    expect(
-      resumeGeneration(storage, `${projectSourceDir("rz")}/.0-edit-request.json`, {
-        falApiKey: "sk-fal",
-        fetchFn: fakeFetch,
-      }),
-    ).rejects.toThrow("已停用");
-  });
 });
 
 describe("resumeGeneration · 新渠道", () => {

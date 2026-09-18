@@ -322,7 +322,7 @@ export async function* streamChat(
         ? [
             `用户在界面上显式选择了图片生成模型：${request.imageGenerateModel}。调用 ` +
               "generate-reference-images 的 mode=generate 时，model 参数优先使用这个选择；" +
-              "mode=edit 也使用 seedream。",
+              "mode=edit 也使用这个选择。",
           ]
         : []),
     ].join("\n"),

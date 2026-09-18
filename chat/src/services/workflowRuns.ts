@@ -10,7 +10,6 @@ export interface RunKeys {
   currentImagePaths?: string[];
   /** 最新用户文本明确要求把附图提取/生成成 3D 资产。 */
   referenceAnalysisAllowed?: boolean;
-  falApiKey?: string;
   worldLabsApiKey?: string;
   meshyApiKey?: string;
   tripo3dApiKey?: string;
@@ -29,7 +28,6 @@ export function buildRequestContext(keys: RunKeys): RequestContext {
   if (keys.llm) ctx.set("llm", keys.llm);
   if (keys.currentImagePaths) ctx.set("currentImagePaths", keys.currentImagePaths);
   if (keys.referenceAnalysisAllowed) ctx.set("referenceAnalysisAllowed", true);
-  if (keys.falApiKey) ctx.set("falApiKey", keys.falApiKey);
   if (keys.worldLabsApiKey) ctx.set("worldLabsApiKey", keys.worldLabsApiKey);
   if (keys.meshyApiKey) ctx.set("meshyApiKey", keys.meshyApiKey);
   if (keys.tripo3dApiKey) ctx.set("tripo3dApiKey", keys.tripo3dApiKey);

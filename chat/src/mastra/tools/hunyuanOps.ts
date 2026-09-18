@@ -45,13 +45,13 @@ import {
   requireContextString,
   requireCurrentProject,
 } from "./requestContext";
-import { resolveModelPublicUrl, type StorageRelayOptions } from "./storageRelay";
+import { resolveModelPublicUrl } from "./modelPublicUrl";
 
 /**
  * 混元生 3D 直连能力（腾讯云 TC3，全部 Action 经官方 API 文档核实 2026-07）：
  * hunyuan-direct 生成渠道 + 3D 人物生成（generate-character）+ UV 展开（unwrap-uv）。
- * 图片输入走 Base64（本地优先友好）；模型输入只收公网 URL——经 storageRelay 策略链
- * 解析（未过期侧写 providerUrl → fal 存储中转本地文件 → 过期 URL 兜底）。
+ * 图片输入走 Base64（本地优先友好）；模型输入只收公网 URL——经 modelPublicUrl 策略链
+ * 解析（优先使用未过期的供应商链接，过期链接作为兜底）。
  */
 
 export const HunyuanGenParamsSchema = z.object({
@@ -323,34 +323,22 @@ export async function runProfileTo3d(
   return result;
 }
 
-/** 模型公网 URL 解析（storageRelay 策略链），fetchFn 沿用渠道调用配置 */
-function resolveModel(
-  storage: AssetStorage,
-  projectSlug: string,
-  assetSlug: string,
-  callOptions: HunyuanCallOptions,
-  relay?: StorageRelayOptions,
-) {
-  return resolveModelPublicUrl(storage, projectSlug, assetSlug, {
-    falApiKey: relay?.falApiKey,
-    fetchFn: relay?.fetchFn ?? callOptions.fetchFn,
-  });
+/** 模型公网 URL 解析（modelPublicUrl 策略链），从资产侧写查找供应商链接 */
+function resolveModel(storage: AssetStorage, projectSlug: string, assetSlug: string) {
+  return resolveModelPublicUrl(storage, projectSlug, assetSlug);
 }
 
-/** UV 展开（混元专属）：模型经公网 URL 传入（storageRelay 解析） */
+/** UV 展开（混元专属）：模型经公网 URL 传入（modelPublicUrl 解析） */
 export async function runHunyuanUvUnwrap(
   storage: AssetStorage,
   params: { projectSlug: string; assetSlug: string },
   callOptions: HunyuanCallOptions,
-  relay?: StorageRelayOptions,
 ): Promise<HunyuanOpResult> {
   await requireProject(storage, params.projectSlug);
   const model = await resolveModel(
     storage,
     params.projectSlug,
     params.assetSlug,
-    callOptions,
-    relay,
   );
   return runHunyuanAssetJob(
     storage,
@@ -363,7 +351,6 @@ export async function runHunyuanUvUnwrap(
       sidecarParams: {
         input_model_url: model.url,
         input_type: model.type,
-        ...(model.relayed ? { input_model_relay: "fal" } : {}),
       },
     },
     callOptions,
@@ -444,7 +431,7 @@ export const generateCharacterTool = createTool({
 export const unwrapUvTool = createTool({
   id: "unwrap-uv",
   description:
-    "对资产的最新模型做 UV 展开（腾讯混元专属，付费操作——启动前须经用户同意）。模型输入需公网 URL：优先用未过期的供应商链接，过期或本地导入的模型自动经 fal 存储中转（需 fal key）。任务化返回",
+    "对资产的最新模型做 UV 展开（腾讯混元专属，付费操作——启动前须经用户同意）。模型输入需公网 URL：优先用未过期的供应商链接，并使用可访问的供应商链接。任务化返回",
   inputSchema: z.object({
     assetSlug: SlugSchema,
   }),
@@ -455,7 +442,6 @@ export const unwrapUvTool = createTool({
       "hunyuanApiKey",
       "缺少混元 API key（腾讯云「SecretId:SecretKey」，请用户在设置中填写）",
     );
-    const falApiKey = optionalContextString(context, "falApiKey");
     const task = startCustomTask(
       "uv",
       projectSlug,
@@ -465,7 +451,6 @@ export const unwrapUvTool = createTool({
           getAssetStorage(),
           { projectSlug, assetSlug: input.assetSlug },
           { apiKey },
-          { falApiKey },
         ),
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };
@@ -479,10 +464,9 @@ export async function runHunyuanTexture(
   storage: AssetStorage,
   params: { projectSlug: string; assetSlug: string; prompt: string; enablePbr?: boolean },
   callOptions: HunyuanCallOptions,
-  relay?: StorageRelayOptions,
 ): Promise<HunyuanOpResult> {
   await requireProject(storage, params.projectSlug);
-  const model = await resolveModel(storage, params.projectSlug, params.assetSlug, callOptions, relay);
+  const model = await resolveModel(storage, params.projectSlug, params.assetSlug);
   return runHunyuanAssetJob(
     storage,
     {
@@ -498,7 +482,6 @@ export async function runHunyuanTexture(
       sidecarParams: {
         input_model_url: model.url,
         prompt: params.prompt,
-        ...(model.relayed ? { input_model_relay: "fal" } : {}),
       },
     },
     callOptions,
@@ -515,10 +498,9 @@ export async function runHunyuanRetopo(
     polygonType?: "triangle" | "quadrilateral";
   },
   callOptions: HunyuanCallOptions,
-  relay?: StorageRelayOptions,
 ): Promise<HunyuanOpResult> {
   await requireProject(storage, params.projectSlug);
-  const model = await resolveModel(storage, params.projectSlug, params.assetSlug, callOptions, relay);
+  const model = await resolveModel(storage, params.projectSlug, params.assetSlug);
   return runHunyuanAssetJob(
     storage,
     {
@@ -535,7 +517,6 @@ export async function runHunyuanRetopo(
         input_model_url: model.url,
         ...(params.faceLevel ? { face_level: params.faceLevel } : {}),
         ...(params.polygonType ? { polygon_type: params.polygonType } : {}),
-        ...(model.relayed ? { input_model_relay: "fal" } : {}),
       },
     },
     callOptions,
@@ -547,10 +528,9 @@ export async function runHunyuanRig(
   storage: AssetStorage,
   params: { projectSlug: string; assetSlug: string; motionType?: number },
   callOptions: HunyuanCallOptions,
-  relay?: StorageRelayOptions,
 ): Promise<HunyuanOpResult> {
   await requireProject(storage, params.projectSlug);
-  const model = await resolveModel(storage, params.projectSlug, params.assetSlug, callOptions, relay);
+  const model = await resolveModel(storage, params.projectSlug, params.assetSlug);
   return runHunyuanAssetJob(
     storage,
     {
@@ -565,7 +545,6 @@ export async function runHunyuanRig(
       sidecarParams: {
         input_model_url: model.url,
         ...(params.motionType !== undefined ? { motion_type: params.motionType } : {}),
-        ...(model.relayed ? { input_model_relay: "fal" } : {}),
       },
     },
     callOptions,
@@ -577,10 +556,9 @@ export async function runHunyuanPartSegmentation(
   storage: AssetStorage,
   params: { projectSlug: string; assetSlug: string },
   callOptions: HunyuanCallOptions,
-  relay?: StorageRelayOptions,
 ): Promise<HunyuanOpResult> {
   await requireProject(storage, params.projectSlug);
-  const model = await resolveModel(storage, params.projectSlug, params.assetSlug, callOptions, relay);
+  const model = await resolveModel(storage, params.projectSlug, params.assetSlug);
   if (model.type !== "FBX") {
     throw new ChatServiceError(
       `混元组件生成仅支持 FBX 输入，资产「${params.assetSlug}」最新产物是 ${model.type}——可改用 tripo 渠道，或先经 Meshy 产出 FBX`,
@@ -598,7 +576,6 @@ export async function runHunyuanPartSegmentation(
       payload: { File: { Url: model.url, Type: model.type } },
       sidecarParams: {
         input_model_url: model.url,
-        ...(model.relayed ? { input_model_relay: "fal" } : {}),
       },
     },
     callOptions,

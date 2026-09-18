@@ -8,14 +8,12 @@ import {
 } from "../common/libraryPaths";
 import { SceneAnalysisSchema } from "../dto/library";
 import { GenerationTaskSchema, type GenerationTask } from "../dto/tasks";
-import { runFal3dGeneration, type Fal3dProvider } from "../mastra/tools/fal3d";
 import { getProjectState } from "../mastra/tools/projectTools";
 import { runSkyboxGeneration } from "../mastra/tools/skyboxGen";
 import { runProjectWorldGeneration } from "../mastra/tools/worldGen";
 import { getAssetStorage, readJson, writeJson } from "./assetStorage";
 import { readCandidates } from "./candidateRegistry";
 import {
-  runAndPublishGeneratedModel,
   type GenerationObject,
 } from "./modelPublishing";
 
@@ -150,66 +148,6 @@ export async function resolve3dObjects(
     );
   }
   return objects;
-}
-
-export interface Batch3dOptions {
-  falApiKey: string;
-  provider?: Fal3dProvider;
-  faceCount?: number;
-  generateType?: "Normal" | "LowPoly" | "Geometry";
-  enableRigging?: boolean;
-  enableAnimation?: boolean;
-}
-
-/** FAL 批量生成：每个对象独立校验并发布，互不等待。 */
-export function start3dBatch(
-  projectSlug: string,
-  objects: GenerationObject[],
-  options: Batch3dOptions,
-): GenerationTask[] {
-  const { falApiKey, ...generation } = options;
-  const batchId = `batch-${Date.now().toString(36)}`;
-  return objects.map((object) =>
-    startCustomTask(
-      "3d",
-      projectSlug,
-      `3D 生成：${object.name}`,
-      (task) =>
-        runAndPublishGeneratedModel(
-          getAssetStorage(),
-          projectSlug,
-          task.id,
-          object,
-          task.setPhase,
-          (target) =>
-            runFal3dGeneration(
-              target,
-              {
-                projectSlug,
-                assetSlug: object.slug,
-                images: object.sourceImages,
-                ...Object.fromEntries(
-                  Object.entries(generation).filter(([, value]) => value !== undefined),
-                ),
-              },
-              { apiKey: falApiKey },
-            ),
-        ),
-      {
-        assetSlug: object.slug,
-        batchId,
-        retry: {
-          kind: "3d",
-          assetSlug: object.slug,
-          name: object.name,
-          intent: object.intent,
-          sourceImages: object.sourceImages,
-          provider: generation.provider,
-          options: generation,
-        },
-      },
-    ),
-  );
 }
 
 export function startWorldTask(

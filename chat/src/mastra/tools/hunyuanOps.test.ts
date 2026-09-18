@@ -24,19 +24,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 假·腾讯云 ai3d：按 X-TC-Action 分发（Submit* → JobId；Describe/Query* → DONE + ResultFile3Ds）+ CDN + fal 存储 */
+/** 假·腾讯云 ai3d：按 X-TC-Action 分发（Submit* → JobId；Describe/Query* → DONE + ResultFile3Ds）+ CDN */
 function makeFakeHunyuanFetch() {
   const calls: { action: string; body: Record<string, unknown> }[] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith("https://cdn.fake/")) {
       return new Response(OBJ_BYTES.buffer.slice(0), { status: 200 });
-    }
-    if (url.includes("/storage/upload/initiate")) {
-      return jsonResponse({ upload_url: "https://up.fake/x", file_url: "https://cdn.fake/relayed.glb" });
-    }
-    if (url.startsWith("https://up.fake/")) {
-      return new Response(null, { status: 200 });
     }
     const headers = init?.headers as Record<string, string>;
     const action = headers["X-TC-Action"] ?? "";
@@ -127,7 +121,7 @@ describe("runProfileTo3d / runHunyuanUvUnwrap", () => {
       schemaVersion: 1,
       index: 0,
       slug: "local-only",
-      provider: "fal",
+      provider: "volcengine",
       model: "x/y",
       params: {},
       status: "succeeded",
@@ -144,21 +138,6 @@ describe("runProfileTo3d / runHunyuanUvUnwrap", () => {
     ).rejects.toThrow("公网 URL");
   });
 
-  test("UV 展开：本地导入 + fal key → 经 fal 存储中转，侧写记 input_model_relay", async () => {
-    const dir = assetDir("hy", "imported");
-    await storage.writeBytes(`${dir}/0-imported.glb`, OBJ_BYTES);
-    const { fetchFn, calls } = makeFakeHunyuanFetch();
-    const result = await runHunyuanUvUnwrap(
-      storage,
-      { projectSlug: "hy", assetSlug: "imported" },
-      { apiKey: "sid:skey", fetchFn, pollIntervalMs: 1 },
-      { falApiKey: "fk" },
-    );
-    const submit = calls.find((c) => c.action === "SubmitHunyuanTo3DUVJob");
-    expect((submit?.body.File as { Url: string }).Url).toBe("https://cdn.fake/relayed.glb");
-    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
-    expect(sidecar.params.input_model_relay).toBe("fal");
-  });
 });
 
 describe("后处理渠道函数", () => {

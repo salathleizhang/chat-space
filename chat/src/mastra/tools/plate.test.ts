@@ -12,9 +12,9 @@ import {
 } from "../../services/assetStorage";
 import {
   composePlatePrompt,
-  runFalImageEdit,
+  runLibraryImageEdit,
   runPlateGeneration,
-} from "./falImageEdit";
+} from "./imageEdit";
 import { createProject } from "./projectTools";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-plate-test-"));
@@ -34,13 +34,7 @@ const fakeFetch = (async (input: string | URL | Request) => {
   if (url === "https://cdn.fake/plate.png") {
     return new Response(PNG_BYTES.buffer.slice(0), { status: 200 });
   }
-  if (url.endsWith("/status")) return jsonResponse({ status: "COMPLETED" });
-  if (url.includes("/requests/")) {
-    return jsonResponse({
-      images: [{ url: "https://cdn.fake/plate.png", content_type: "image/png" }],
-    });
-  }
-  return jsonResponse({ request_id: "req-plate" });
+  return jsonResponse({}, 404);
 }) as typeof fetch;
 
 beforeAll(async () => {
@@ -97,7 +91,7 @@ describe("runPlateGeneration", () => {
       storage,
       { projectSlug: "plate-demo" },
       { volcengineApiKey: "sk-test" },
-      { fetchFn: fakeFetch, pollIntervalMs: 1 },
+      { fetchFn: fakeFetch },
     );
 
     expect(result.output).toBe(`${projectSourceDir("plate-demo")}/1-plate.png`);
@@ -115,25 +109,25 @@ describe("runPlateGeneration", () => {
       runPlateGeneration(
         storage,
         { projectSlug: "empty" },
-        { falApiKey: "sk-test" },
-        { fetchFn: fakeFetch, pollIntervalMs: 1 },
+        { volcengineApiKey: "sk-test" },
+        { fetchFn: fakeFetch },
       ),
     ).rejects.toThrow("analyze-reference + confirm-reference-assets");
   });
 });
 
-describe("runFalImageEdit 输入校验", () => {
+describe("runLibraryImageEdit 输入校验", () => {
   test("输入图不存在时在生成前失败", () => {
     expect(
-      runFalImageEdit(
+      runLibraryImageEdit(
         storage,
         {
           projectSlug: "plate-demo",
           images: ["projects/plate-demo/source/999-nope.png"],
           prompt: "x",
         },
-        { falApiKey: "sk-test" },
-        { fetchFn: fakeFetch, pollIntervalMs: 1 },
+        { volcengineApiKey: "sk-test" },
+        { fetchFn: fakeFetch },
       ),
     ).rejects.toThrow("输入图不存在");
   });

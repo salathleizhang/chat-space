@@ -15,7 +15,7 @@ import {
   RequestSidecarSchema,
   SceneAnalysisSchema,
 } from "../../dto/library";
-import { routeImageGenerateChannel } from "../../models/images";
+import { routeImageEditChannel, routeImageGenerateChannel, runImageGenerate } from "../../models/images";
 import { LocalFileStorage, readJson, writeJson } from "../../services/assetStorage";
 import { createProject } from "./projectTools";
 import {
@@ -37,23 +37,11 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 假·四种渠道：fal 队列 / 方舟(OpenAI 兼容) / Gemini / OpenRouter + CDN */
+/** 假·方舟、Gemini、OpenRouter 图片接口及 CDN */
 const fakeFetch = (async (input: string | URL | Request) => {
   const url = String(input);
   if (url.startsWith("https://cdn.fake/")) {
     return new Response(PNG_BYTES.buffer.slice(0), { status: 200 });
-  }
-  if (url.endsWith("/status")) return jsonResponse({ status: "COMPLETED" });
-  if (url.includes("queue.fal.run") && url.includes("/requests/")) {
-    return jsonResponse({
-      images: [
-        { url: "https://cdn.fake/ref1.png", content_type: "image/png" },
-        { url: "https://cdn.fake/ref2.png", content_type: "image/png" },
-      ],
-    });
-  }
-  if (url.startsWith("https://queue.fal.run/")) {
-    return jsonResponse({ request_id: "req-ref" });
   }
   if (url.includes("ark.cn-beijing.volces.com")) {
     return jsonResponse({ data: [{ b64_json: PNG_B64 }] });
@@ -106,22 +94,29 @@ beforeAll(async () => {
 afterAll(() => rm(root, { recursive: true, force: true }));
 
 describe("routeImageGenerateChannel", () => {
-  test("未指定渠道时原厂优先，原厂没 key 才回退聚合渠道", () => {
-    expect(
-      routeImageGenerateChannel("seedream", { volcengineApiKey: "vk" }).channel,
-    ).toBe("volcengine");
-    expect(
-      routeImageGenerateChannel("seedream", {
-        falApiKey: "fk",
-        volcengineApiKey: "vk",
-      }).channel,
-    ).toBe("volcengine");
-    expect(routeImageGenerateChannel("seedream", { falApiKey: "fk" }).channel).toBe("fal");
+  test.each([
+    ["seedream", "doubao-seedream-4-5-251128"],
+    ["seedream-5", "doubao-seedream-5-0-260128"],
+    ["seedream-5-pro", "doubao-seedream-5-0-pro-260628"],
+  ] as const)("%s 生成与编辑只能使用火山方舟", (model, volc) => {
+    const keys = { volcengineApiKey: "vk", googleApiKey: "gk", openrouterApiKey: "ok" };
+    expect(routeImageGenerateChannel(model, keys)).toMatchObject({
+      channel: "volcengine",
+      entry: { model: volc },
+    });
+    expect(routeImageEditChannel(model, keys)).toMatchObject({
+      channel: "volcengine",
+      entry: { model: volc },
+    });
+    expect(() => routeImageGenerateChannel(model, { googleApiKey: "gk", openrouterApiKey: "ok" }))
+      .toThrow("火山方舟");
+    expect(() => routeImageGenerateChannel(model, keys, "google")).toThrow("不支持");
+    expect(() => routeImageGenerateChannel(model, keys, "openrouter")).toThrow("不支持");
   });
 
   test("指定渠道但模型不支持 → 400；没 key → 401", () => {
     expect(() =>
-      routeImageGenerateChannel("seedream", { falApiKey: "fk" }, "google"),
+      routeImageGenerateChannel("seedream", { googleApiKey: "gk" }, "google"),
     ).toThrow("不支持");
     expect(() =>
       routeImageGenerateChannel("nano-banana", {}, "google"),
@@ -130,6 +125,35 @@ describe("routeImageGenerateChannel", () => {
       "都没有配置",
     );
   });
+});
+
+test("Seedream 5.0 Pro 在火山方舟逐张生成，避免发送不支持的组图参数", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return jsonResponse({ data: [{ url: `https://cdn.fake/${bodies.length}.png` }] });
+  }) as typeof fetch;
+  const route = routeImageGenerateChannel("seedream-5-pro", { volcengineApiKey: "vk" });
+
+  const result = await runImageGenerate(route.channel, route.entry, {
+    prompt: "一把木椅",
+    count: 2,
+    canvas: "landscape",
+  }, route.apiKey, { fetchFn });
+
+  expect(result.refs.map((ref) => ref.url)).toEqual([
+    "https://cdn.fake/1.png",
+    "https://cdn.fake/2.png",
+  ]);
+  expect(bodies).toHaveLength(2);
+  expect(bodies[0]).toMatchObject({
+    model: "doubao-seedream-5-0-pro-260628",
+    watermark: false,
+  });
+  for (const body of bodies) {
+    expect(body).not.toHaveProperty("n");
+    expect(body).not.toHaveProperty("sequential_image_generation");
+  }
 });
 
 describe("composeReferenceImagePrompt", () => {
@@ -204,43 +228,6 @@ describe("GenerateReferenceImagesInputSchema", () => {
 });
 
 describe("runReferenceImageGeneration", () => {
-  test("fal 渠道：多张落盘 source/ 共享索引 + 侧写可续跑", async () => {
-    const submittedBodies: Record<string, unknown>[] = [];
-    const recordFalFetch = (async (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      if (String(input).startsWith("https://queue.fal.run/") && init?.body) {
-        submittedBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
-      }
-      return fakeFetch(input);
-    }) as typeof fetch;
-    const result = await runReferenceImageGeneration(
-      storage,
-      { projectSlug: "ref-demo", prompt: "a wooden crate, white background", count: 2 },
-      { falApiKey: "fk" },
-      { fetchFn: recordFalFetch, pollIntervalMs: 1 },
-    );
-    const sourceDir = projectSourceDir("ref-demo");
-    expect(result.channel).toBe("fal");
-    expect(result.images).toEqual([
-      `${sourceDir}/0-ref.png`,
-      `${sourceDir}/0-ref-v2.png`,
-    ]);
-    for (const image of result.images) {
-      expect(await storage.exists(image)).toBe(true);
-    }
-    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
-    expect(sidecar.provider).toBe("fal");
-    expect(sidecar.providerTaskId).toBe("req-ref");
-    expect(sidecar.status).toBe("succeeded");
-    expect(sidecar.params.canvas).toBe("landscape");
-    expect(String(sidecar.params.effective_prompt)).toContain("fully visible");
-    expect(submittedBodies[0]).toMatchObject({
-      image_size: "landscape_4_3",
-      num_images: 2,
-    });
-  });
 
   test("volcengine 渠道（b64）+ assetSlug：参考图绑定候选但不创建资产", async () => {
     const result = await runReferenceImageGeneration(
@@ -341,34 +328,6 @@ describe("runReferenceImageGeneration", () => {
     expect(calls).toBe(0);
   });
 
-  test("fal Nano Banana 使用 aspect_ratio，而不是其他 fal 模型的 image_size", async () => {
-    const submittedBodies: Record<string, unknown>[] = [];
-    const recordFalFetch = (async (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      if (String(input).startsWith("https://queue.fal.run/") && init?.body) {
-        submittedBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
-      }
-      return fakeFetch(input);
-    }) as typeof fetch;
-
-    await runReferenceImageGeneration(
-      storage,
-      {
-        projectSlug: "ref-demo",
-        prompt: "a tall floor lamp",
-        model: "nano-banana",
-        channel: "fal",
-        canvas: "portrait",
-      },
-      { falApiKey: "fk" },
-      { fetchFn: recordFalFetch, pollIntervalMs: 1 },
-    );
-
-    expect(submittedBodies[0]).toMatchObject({ aspect_ratio: "3:4" });
-    expect(submittedBodies[0]).not.toHaveProperty("image_size");
-  });
 
   test("volcengine 渠道：张数走组图开关而非 n，且关水印", async () => {
     const bodies: Record<string, unknown>[] = [];
@@ -487,33 +446,6 @@ describe("runReferenceImageGeneration", () => {
     });
   });
 
-  test("openrouter Seedream 专用 Image API 使用顶层 aspect_ratio", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    const recordFetch = (async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return jsonResponse({ data: [{ b64_json: PNG_B64 }] });
-    }) as typeof fetch;
-
-    const result = await runReferenceImageGeneration(
-      storage,
-      {
-        projectSlug: "ref-demo",
-        prompt: "a compact stool",
-        model: "seedream",
-        channel: "openrouter",
-        canvas: "square",
-      },
-      { openrouterApiKey: "ok" },
-      { fetchFn: recordFetch },
-    );
-
-    expect(await storage.exists(result.images[0]!)).toBe(true);
-    expect(bodies[0]).toMatchObject({ aspect_ratio: "1:1", n: 1 });
-  });
-
   test("失败时侧写记 failed", async () => {
     const failFetch = (async () =>
       jsonResponse({ error: "boom" }, 500)) as unknown as typeof fetch;
@@ -566,7 +498,7 @@ describe("runReferenceImageEdit", () => {
       runReferenceImageEdit(
         storage,
         { projectSlug: "ref-demo", assetSlug: "nope-asset", prompt: "x" },
-        { falApiKey: "fk" },
+        { googleApiKey: "gk" },
       ),
     ).rejects.toThrow("不存在");
   });
@@ -585,45 +517,11 @@ describe("runReferenceImageEdit", () => {
       runReferenceImageEdit(
         storage,
         { projectSlug: "ref-demo", assetSlug: "no-ref-asset", prompt: "x" },
-        { falApiKey: "fk" },
+        { googleApiKey: "gk" },
       ),
     ).rejects.toThrow("还没有参考图");
   });
 
-  test("fal 渠道编辑：产物替换资产参考图（不覆盖旧文件）", async () => {
-    // rope-coil 候选与参考图由上面 volcengine 测试建立
-    const before = await readJson(
-      storage,
-      projectAnalysisFile("ref-demo"),
-      SceneAnalysisSchema,
-    );
-    const originalImage = before.objects[0]!.sourceImages![0]!;
-
-    const result = await runReferenceImageEdit(
-      storage,
-      { projectSlug: "ref-demo", assetSlug: "rope-coil", prompt: "make it look wet", model: "nano-banana", channel: "fal" },
-      { falApiKey: "fk" },
-      { fetchFn: fakeFetch, pollIntervalMs: 1 },
-    );
-
-    expect(result.channel).toBe("fal");
-    expect(await storage.exists(result.image)).toBe(true);
-    // 旧参考图仍在磁盘上，没被删除或覆盖
-    expect(await storage.exists(originalImage)).toBe(true);
-    expect(result.image).not.toBe(originalImage);
-
-    const analysis = await readJson(
-      storage,
-      projectAnalysisFile("ref-demo"),
-      SceneAnalysisSchema,
-    );
-    expect(analysis.objects[0]?.sourceImages).toEqual([result.image]);
-
-    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
-    expect(sidecar.status).toBe("succeeded");
-    expect(String(sidecar.params.prompt)).toBe("make it look wet");
-    expect(String(sidecar.params.effective_prompt)).toContain("visual source of truth");
-  });
 
   test("统一 generate-reference-images 的 edit 模式走图生图并返回 images 数组", async () => {
     const sourceImage = `${projectSourceDir("ref-demo")}/scene-chair.png`;

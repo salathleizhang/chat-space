@@ -22,7 +22,7 @@ import { readCandidates } from "../../services/candidateRegistry";
 import { renderablePathsFromResult } from "../../services/modelPublishing";
 import { findRunningTask, getTask, startCustomTask } from "../../services/tasks";
 import { buildRequestContext, type RunKeys } from "../../services/workflowRuns";
-import { composePlatePrompt, runPlateGeneration } from "../tools/falImageEdit";
+import { composePlatePrompt, runPlateGeneration } from "../tools/imageEdit";
 import { runReferenceImageEdit } from "../tools/referenceImage";
 import { setCurrentWorld } from "../tools/projectTools";
 import { startSeed3d3dBatch } from "../tools/seed3dOps";

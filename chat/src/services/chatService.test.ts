@@ -62,7 +62,7 @@ describe("imagePathsFromToolResult", () => {
           "../../secret.png",
         ],
         sidecar: "projects/demo/source/0-ref.request.json",
-        channel: "fal",
+        channel: "volcengine",
       }),
     ).toEqual(["projects/demo/source/0-ref.png"]);
   });

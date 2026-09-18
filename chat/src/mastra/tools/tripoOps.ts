@@ -372,7 +372,7 @@ export async function runTripoSegmentation(
   }
 }
 
-/** tripo-direct 的批量 3D 生成（与 services/tasks.start3dBatch 同构，避免循环依赖放在本文件） */
+/** tripo-direct 的批量 3D 生成，避免循环依赖放在本文件。 */
 export function startTripo3dBatch(
   projectSlug: string,
   objects: GenerationObject[],
@@ -426,7 +426,6 @@ export const segmentPartsTool = createTool({
         "hunyuanApiKey",
         "缺少混元 API key（腾讯云「SecretId:SecretKey」，请用户在设置中填写）",
       );
-      const falApiKey = optionalContextString(context, "falApiKey");
       const task = startCustomTask(
         "segment",
         projectSlug,
@@ -436,7 +435,6 @@ export const segmentPartsTool = createTool({
             getAssetStorage(),
             { projectSlug, assetSlug: input.assetSlug },
             { apiKey: hunyuanKey },
-            { falApiKey },
           ),
       );
       return { task: { id: task.id, subject: task.subject, status: task.status } };

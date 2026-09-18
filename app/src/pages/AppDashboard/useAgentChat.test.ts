@@ -135,7 +135,7 @@ describe("useAgentChat 服务端凭证", () => {
   test("图片生成模型偏好随下一轮请求发送", async () => {
     localStorage.setItem(
       "gabo.imageGenerateModelSettings:v1",
-      JSON.stringify({ model: "seedream" }),
+      JSON.stringify({ model: "seedream-5" }),
     );
     const { mount } = harness();
     const h = await mount();
@@ -143,7 +143,7 @@ describe("useAgentChat 服务端凭证", () => {
     await act(async () => h.result.current.send("生成一张机器人参考图"));
 
     expect(streamChat.mock.calls[0]![4]).toMatchObject({
-      imageGenerateModel: "seedream",
+      imageGenerateModel: "seedream-5",
     });
 
     await h.unmount();

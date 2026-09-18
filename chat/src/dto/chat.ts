@@ -45,7 +45,7 @@ export const ChatStreamRequestSchema = z.object({
   volcengineApiKey: z.string().min(1).optional(),
   threeDProvider: z.enum(["seed3d-direct", "hyper3d-volc", "hi3d-volc", "tripo-direct"]).optional(),
   /** AgentDock 图片生成模型偏好（软约束）；省略 = 由 agent 自动选择 */
-  imageGenerateModel: z.literal("seedream").optional(),
+  imageGenerateModel: z.enum(["seedream", "seedream-5", "seedream-5-pro"]).optional(),
 });
 export type ChatStreamRequest = z.infer<typeof ChatStreamRequestSchema>;
 

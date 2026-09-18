@@ -224,7 +224,7 @@ function startMeshOpTask(
 export const retopologizeTool = createTool({
   id: "retopologize",
   description:
-    "重拓扑/减面资产库中已有模型（付费操作——启动前须经用户同意）。渠道：meshy 默认（targetPolycount 精确面数）/ hunyuan（faceLevel 档位，模型经公网 URL，可经 fal 存储中转）。生成新模型时的重拓扑可改用 start-3d-batch 的 hunyuan LowPoly。任务化返回",
+    "重拓扑/减面资产库中已有模型（付费操作——启动前须经用户同意）。渠道：meshy 默认（targetPolycount 精确面数）/ hunyuan（faceLevel 档位，模型经公网 URL）。生成新模型时的重拓扑可改用 start-3d-batch 的 hunyuan LowPoly。任务化返回",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     channel: z.enum(["meshy", "hunyuan"]).default("meshy"),
@@ -235,7 +235,6 @@ export const retopologizeTool = createTool({
   }),
   execute: async (input, context) => {
     if (input.channel === "hunyuan") {
-      const falApiKey = optionalContextString(context, "falApiKey");
       return startChanneledTask(context, "hunyuan", "retopo", `重拓扑：${input.assetSlug}`, (projectSlug, apiKey) =>
         runHunyuanRetopo(
           getAssetStorage(),
@@ -246,7 +245,6 @@ export const retopologizeTool = createTool({
             polygonType: input.topology === "quad" ? "quadrilateral" : "triangle",
           },
           { apiKey },
-          { falApiKey },
         ),
       );
     }
@@ -270,7 +268,7 @@ export const retopologizeTool = createTool({
 export const rigModelTool = createTool({
   id: "rig-model",
   description:
-    "为资产库中已有模型绑骨蒙皮（付费操作——启动前须经用户同意）。渠道：meshy 默认（人形，收本地模型）/ hunyuan（A/T-pose 人形，模型经公网 URL 可经 fal 中转，可带 1–48 预设动画编号）/ tripo（支持四足/禽类等 rigType，非 Tripo 资产自动导入）。超过 30 万面先 retopologize。任务化返回，成功后可接 generate-animation",
+    "为资产库中已有模型绑骨蒙皮（付费操作——启动前须经用户同意）。渠道：meshy 默认（人形，收本地模型）/ hunyuan（A/T-pose 人形，模型经公网 URL，可带 1–48 预设动画编号）/ tripo（支持四足/禽类等 rigType，非 Tripo 资产自动导入）。超过 30 万面先 retopologize。任务化返回，成功后可接 generate-animation",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     channel: z.enum(["meshy", "hunyuan", "tripo"]).default("meshy"),
@@ -287,13 +285,11 @@ export const rigModelTool = createTool({
   }),
   execute: async (input, context) => {
     if (input.channel === "hunyuan") {
-      const falApiKey = optionalContextString(context, "falApiKey");
       return startChanneledTask(context, "hunyuan", "rig", `绑骨蒙皮：${input.assetSlug}`, (projectSlug, apiKey) =>
         runHunyuanRig(
           getAssetStorage(),
           { projectSlug, assetSlug: input.assetSlug, motionType: input.motionType },
           { apiKey },
-          { falApiKey },
         ),
       );
     }

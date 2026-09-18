@@ -34,7 +34,6 @@ describe("server credentials", () => {
   test("忽略浏览器传来的所有凭证与任意 LLM 端点", () => {
     expect(inject({
       projectSlug: "demo",
-      falApiKey: "browser-fal",
       volcengineApiKey: "browser-volc",
       tripo3dApiKey: "browser-tripo",
       llm: {

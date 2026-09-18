@@ -113,11 +113,20 @@ export interface ImageGenerateModelSettings { model: string }
 export const IMAGE_GENERATE_MODEL_PRESETS = [
   { value: "", label: "Auto" },
   { value: "seedream", label: "Seedream 4.5" },
+  { value: "seedream-5", label: "Seedream 5.0" },
+  { value: "seedream-5-pro", label: "Seedream 5.0 Pro" },
 ];
 
 export function loadImageGenerateModelSettings(): ImageGenerateModelSettings {
   const saved = readObject(IMAGE_SETTINGS_KEY);
-  return { model: saved?.model === "seedream" ? "seedream" : "" };
+  const model = saved?.model;
+  return {
+    model:
+      typeof model === "string" &&
+      IMAGE_GENERATE_MODEL_PRESETS.some((preset) => preset.value && preset.value === model)
+        ? model
+        : "",
+  };
 }
 
 export function saveImageGenerateModelSettings(settings: ImageGenerateModelSettings): boolean {

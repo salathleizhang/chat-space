@@ -2,41 +2,20 @@ import { ChatServiceError } from "../../common/errors";
 import { parseRequestSidecarName } from "../../common/indexedFiles";
 import { assetDir } from "../../common/libraryPaths";
 import { RequestSidecarSchema } from "../../dto/library";
-import { uploadToFalStorage } from "../../models/fal";
 import { readJson, type AssetStorage } from "../../services/assetStorage";
 import { latestAssetModel } from "./projectTools";
 
-/**
- * 中转存储：把资产的最新模型换成模型厂商可下载的公网 URL（混元 InputFile3D 只收 URL）。
- * 策略链：未过期的侧写 providerUrl（免费）→ fal 存储上传（需 fal key）→ 过期 URL 兜底
- * → 报错给指引。v1 仅 fal 渠道；未来纯增量：腾讯 COS（混元同密钥）、BYOB 自配桶。
- */
-
-export interface StorageRelayOptions {
-  falApiKey?: string;
-  fetchFn?: typeof fetch;
-}
-
+/** 将资产的最新模型解析为下游可访问的供应商 URL。 */
 export interface PublicModelRef {
   url: string;
   /** 大写扩展名（GLB/FBX…），混元 File.Type 直用 */
   type: string;
-  /** 本次经 fal 存储中转上传（侧写据此记 input_model_relay） */
-  relayed: boolean;
 }
 
 /** 供应商链接按混元最短的 24h 时效判定，留 4h 余量给下游任务消费 */
 const PROVIDER_URL_FRESH_MS = 20 * 60 * 60 * 1000;
 
 const MODEL_FILE_RE = /\.(glb|gltf|obj|fbx|stl)$/i;
-
-const MODEL_CONTENT_TYPES: Record<string, string> = {
-  glb: "model/gltf-binary",
-  gltf: "model/gltf+json",
-  obj: "model/obj",
-  fbx: "application/octet-stream",
-  stl: "model/stl",
-};
 
 function extOf(path: string): string {
   return path.split(".").pop()!.toLowerCase();
@@ -82,7 +61,6 @@ export async function resolveModelPublicUrl(
   storage: AssetStorage,
   projectSlug: string,
   assetSlug: string,
-  relay: StorageRelayOptions = {},
 ): Promise<PublicModelRef> {
   let modelPath: string | null = null;
   try {
@@ -93,28 +71,17 @@ export async function resolveModelPublicUrl(
 
   const sidecarRef = await findSidecarModelUrl(storage, projectSlug, assetSlug, modelPath);
   if (sidecarRef?.fresh) {
-    return { url: sidecarRef.url, type: sidecarRef.type, relayed: false };
-  }
-
-  if (modelPath && relay.falApiKey) {
-    const ext = extOf(modelPath);
-    const url = await uploadToFalStorage(
-      modelPath.split("/").pop()!,
-      MODEL_CONTENT_TYPES[ext] ?? "application/octet-stream",
-      await storage.readBytes(modelPath),
-      { apiKey: relay.falApiKey, fetchFn: relay.fetchFn },
-    );
-    return { url, type: ext.toUpperCase(), relayed: true };
+    return { url: sidecarRef.url, type: sidecarRef.type };
   }
 
   // 过期链接兜底：混元 24h 之外的供应商可能仍有效，好过直接失败
   if (sidecarRef) {
-    return { url: sidecarRef.url, type: sidecarRef.type, relayed: false };
+    return { url: sidecarRef.url, type: sidecarRef.type };
   }
 
   throw new ChatServiceError(
     modelPath
-      ? `资产「${assetSlug}」的模型没有可用公网 URL（本地导入或供应商链接缺失）：在设置中填写 fal.ai key 激活中转存储后即可自动上传本地模型`
+      ? `资产「${assetSlug}」的模型没有可用公网 URL（本地导入或供应商链接缺失）：请先使用带有可访问链接的模型`
       : `资产「${assetSlug}」目录下没有模型文件，请先生成 3D 模型`,
     409,
     "public_model_url_unavailable",

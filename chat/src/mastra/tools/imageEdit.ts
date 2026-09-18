@@ -33,8 +33,7 @@ import { requireProject } from "./projectTools";
 
 /**
  * 图片编辑能力（img2img）：给定库内输入图 + 指令，产出编辑后的新图，落盘 source/
- * 新索引 + 侧写。模型×渠道选路、按渠道分发调用都下沉到 models/images.ts
- * （2026-07 迁移，原来只有 fal 一个渠道，现覆盖 fal/google/openrouter）；
+ * 新索引 + 侧写。模型×渠道选路、按渠道分发调用都下沉到 models/images.ts。
  * 本文件只管编辑特有的业务逻辑：输入图存在性校验 + plate 特化（读场景分析→
  * 合成"只删不补"移除 prompt→最新源图）。仍是场景级能力，服务 one-shot 管线的
  * world 生成前置步骤，跟资产级的参考图编辑（referenceImage.ts）不是一回事，
@@ -51,10 +50,7 @@ export const ImageEditParamsSchema = z.object({
   outputSlug: SlugSchema.optional(),
   model: z.enum(IMAGE_EDIT_MODEL_IDS).default("seedream"),
   channel: z.enum(IMAGE_CHANNELS).optional(),
-  resolution: z.string().default("1K"),
-  aspectRatio: z.string().default("auto"),
   outputFormat: z.enum(["png", "jpeg", "webp"]).default("png"),
-  seed: z.number().int().optional(),
 });
 export type ImageEditParams = z.infer<typeof ImageEditParamsSchema>;
 export type ImageEditParamsInput = z.input<typeof ImageEditParamsSchema>;
@@ -62,16 +58,14 @@ export type ImageEditParamsInput = z.input<typeof ImageEditParamsSchema>;
 export interface ImageEditResult {
   output: string;
   sidecar: string;
-  requestId?: string;
 }
 
 interface GenOptions {
   fetchFn?: typeof fetch;
-  pollIntervalMs?: number;
 }
 
 /** 图片编辑：生成 → 落盘 → 侧写，磁盘不齐不算成功 */
-export async function runFalImageEdit(
+export async function runLibraryImageEdit(
   storage: AssetStorage,
   rawParams: ImageEditParamsInput,
   keys: ImageProviderKeys,
@@ -103,10 +97,7 @@ export async function runFalImageEdit(
       prompt: params.prompt,
       role: params.role,
       input_images: params.images,
-      resolution: params.resolution,
-      aspect_ratio: params.aspectRatio,
       output_format: params.outputFormat,
-      ...(params.seed !== undefined ? { seed: params.seed } : {}),
     },
     status: "queued",
     outputs: [],
@@ -123,29 +114,16 @@ export async function runFalImageEdit(
       imageUrls.push(await readAsDataUri(storage, image));
     }
 
-    const { refs, providerTaskId } = await runImageEdit(
+    const { refs } = await runImageEdit(
       route.channel,
       route.entry,
       {
         prompt: params.prompt,
         images: imageUrls,
-        resolution: params.resolution,
-        aspectRatio: params.aspectRatio,
-        outputFormat: params.outputFormat,
-        seed: params.seed,
       },
       route.apiKey,
-      {
-        ...options,
-        // fal 渠道提交后立即落盘 requestId：轮询中途崩溃也能凭侧写续跑，不重复扣费。
-        onSubmitted: async (requestId) => {
-          sidecar.providerTaskId = requestId;
-          sidecar.status = "running";
-          await saveSidecar();
-        },
-      },
+      options,
     );
-    if (providerTaskId) sidecar.providerTaskId = providerTaskId;
     const ref = refs[0];
     if (!ref) {
       throw new ChatServiceError("图片编辑结果中没有图片", 502, "imageedit_no_images");
@@ -167,7 +145,7 @@ export async function runFalImageEdit(
     sidecar.status = "succeeded";
     await saveSidecar();
 
-    return { output: outputPath, sidecar: sidecarPath, requestId: providerTaskId };
+    return { output: outputPath, sidecar: sidecarPath };
   } catch (err) {
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
@@ -253,7 +231,7 @@ export async function runPlateGeneration(
     }
   }
 
-  return runFalImageEdit(
+  return runLibraryImageEdit(
     storage,
     {
       projectSlug: input.projectSlug,

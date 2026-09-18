@@ -903,13 +903,15 @@ describe("AgentDock 图片生成模型选择", () => {
     expect(imageModelSelect.textContent).toContain("Auto");
 
     await act(async () => imageModelSelect.click());
+    expect(document.body.textContent).toContain("Seedream 4.5");
+    expect(document.body.textContent).toContain("Seedream 5.0");
     const seedream = Array.from(document.body.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("Seedream 4.5"),
+      (button) => button.textContent?.includes("Seedream 5.0 Pro"),
     ) as HTMLButtonElement;
     await act(async () => seedream.click());
 
     expect(JSON.parse(localStorage.getItem("chatspace.imageGenerateModelSettings:v1")!)).toEqual({
-      model: "seedream",
+      model: "seedream-5-pro",
     });
   });
 });

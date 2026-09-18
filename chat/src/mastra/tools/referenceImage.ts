@@ -41,7 +41,7 @@ import {
 } from "../../services/assetStorage";
 import { mutateCandidates, readCandidates } from "../../services/candidateRegistry";
 import { downloadToLibrary } from "./assetRepair";
-import { PlateInputSchema, runPlateGeneration } from "./falImageEdit";
+import { PlateInputSchema, runPlateGeneration } from "./imageEdit";
 import { requireProject } from "./projectTools";
 import { optionalContextString, requireCurrentProject } from "./requestContext";
 
@@ -288,22 +288,13 @@ export async function runReferenceImageGeneration(
   await saveSidecar();
 
   try {
-    const { refs, providerTaskId } = await runImageGenerate(
+    const { refs } = await runImageGenerate(
       route.channel,
       route.entry,
       { prompt: effectivePrompt, count: params.count, canvas: params.canvas },
       route.apiKey,
-      {
-        ...options,
-        // fal 渠道提交后立即落盘 requestId：轮询中途崩溃也能凭侧写续跑，不重复扣费。
-        onSubmitted: async (requestId) => {
-          sidecar.providerTaskId = requestId;
-          sidecar.status = "running";
-          await saveSidecar();
-        },
-      },
+      options,
     );
-    if (providerTaskId) sidecar.providerTaskId = providerTaskId;
     if (refs.length === 0) {
       throw new ChatServiceError("生成结果中没有图片", 502, "imagegen_no_images");
     }
@@ -362,7 +353,7 @@ export async function runReferenceImageGeneration(
  * 编辑资产已有的参考图（图生图）：绝大多数供应商没有"编辑模型"能力，
  * 取巧的办法是编辑生成模型用的参考图，再让用户对该资产重跑 start-3d-batch——
  * 3D 生成本身不动，走的还是"参考图优先级：显式 images > 身份绑定 sourceImages
- * > 最新源图"这条老路径（fal3d.ts resolveImages）。产物落盘 source/ 新索引，
+ * > 最新源图"这条旧路径。产物落盘 source/ 新索引，
  * 且替换 identity.sourceImages（旧参考图/旧模型都留在磁盘上，不覆盖，可回退）。
  */
 export const EditReferenceImageParamsSchema = z.object({
@@ -453,22 +444,13 @@ export async function runReferenceImageEdit(
       imageUrls.push(await readAsDataUri(storage, image));
     }
 
-    const { refs, providerTaskId } = await runImageEdit(
+    const { refs } = await runImageEdit(
       route.channel,
       route.entry,
       { prompt: effectivePrompt, images: imageUrls },
       route.apiKey,
-      {
-        ...options,
-        // fal 渠道提交后立即落盘 requestId：轮询中途崩溃也能凭侧写续跑，不重复扣费。
-        onSubmitted: async (requestId) => {
-          sidecar.providerTaskId = requestId;
-          sidecar.status = "running";
-          await saveSidecar();
-        },
-      },
+      options,
     );
-    if (providerTaskId) sidecar.providerTaskId = providerTaskId;
     const ref = refs[0];
     if (!ref) {
       throw new ChatServiceError("图片编辑结果中没有图片", 502, "imageedit_no_images");
@@ -504,7 +486,6 @@ export async function runReferenceImageEdit(
 
 function providerKeysFromContext(context: Parameters<typeof optionalContextString>[0]): ImageProviderKeys {
   return {
-    falApiKey: optionalContextString(context, "falApiKey"),
     volcengineApiKey:
       optionalContextString(context, "volcengineApiKey") ??
       optionalContextString(context, "seed3dApiKey"),

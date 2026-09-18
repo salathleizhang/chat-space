@@ -8,7 +8,7 @@ const baseRequest = {
 };
 
 describe("ChatStreamRequestSchema 图片生成模型偏好", () => {
-  test.each(["seedream"])(
+  test.each(["seedream", "seedream-5", "seedream-5-pro"])(
     "接受已启用模型：%s",
     (imageGenerateModel) => {
       expect(

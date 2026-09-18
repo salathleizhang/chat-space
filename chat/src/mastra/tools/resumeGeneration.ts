@@ -15,11 +15,6 @@ import {
   RequestSidecarSchema,
   type RequestSidecar,
 } from "../../dto/library";
-import {
-  extractFileRefs,
-  getFalQueueResult,
-  waitForFalCompletion,
-} from "../../models/fal";
 import { pollSkyboxExport, pollSkyboxGenerate } from "../../models/blockadelabs";
 import { waitForHunyuanJob } from "../../models/hunyuan";
 import { extractSeed3dFileUrls, waitForSeed3dTask } from "../../models/seed3d";
@@ -58,7 +53,6 @@ import {
  */
 
 export interface ResumeKeys {
-  falApiKey?: string;
   worldLabsApiKey?: string;
   meshyApiKey?: string;
   tripo3dApiKey?: string;
@@ -136,8 +130,6 @@ function extOf(url: string, fallback: string): string {
   return match ? match[1]!.toLowerCase() : fallback;
 }
 
-const MODEL_EXT_RE = /\.(glb|obj|fbx|usdz)(\?|$)/i;
-const IMAGE_EXT_RE = /\.(png|jpe?g|webp)(\?|$)/i;
 
 export interface ResumeResult {
   files: string[];
@@ -293,48 +285,6 @@ export async function resumeGeneration(
           ),
         );
       }
-    } else if (sidecar.provider === "fal") {
-      if (!keys.falApiKey) {
-        throw new ChatServiceError("续跑 FAL 任务需要 fal.ai API key", 401, "missing_fal_key");
-      }
-      const options = {
-        apiKey: keys.falApiKey,
-        fetchFn: keys.fetchFn,
-        pollIntervalMs: keys.pollIntervalMs,
-      };
-      const submission = {
-        requestId: sidecar.providerTaskId,
-        submittedAt: sidecar.createdAt,
-      };
-      await waitForFalCompletion(sidecar.model, submission, options);
-      const result = await getFalQueueResult(sidecar.model, submission, options);
-      const refs = extractFileRefs(result);
-      const primary =
-        refs.find((r) => MODEL_EXT_RE.test(r.url)) ??
-        refs.find(
-          (r) => r.contentType?.startsWith("image/") || IMAGE_EXT_RE.test(r.url),
-        );
-      if (!primary) {
-        throw new ChatServiceError("续跑结果中没有可下载文件", 502, "resume_no_files");
-      }
-      await download(
-        primary.url,
-        formatIndexedName(sidecar.index, sidecar.slug, extOf(primary.url, "bin")),
-      );
-      let seq = 0;
-      for (const ref of refs) {
-        if (ref === primary) continue;
-        if (!MODEL_EXT_RE.test(ref.url) && !IMAGE_EXT_RE.test(ref.url)) continue;
-        seq += 1;
-        await download(
-          ref.url,
-          formatIndexedName(
-            sidecar.index,
-            `${sidecar.slug}-f${seq}`,
-            extOf(ref.url, "bin"),
-          ),
-        );
-      }
     } else if (sidecar.provider === "meshy") {
       if (!keys.meshyApiKey) {
         throw new ChatServiceError("续跑 Meshy 任务需要 Meshy API key", 401, "missing_meshy_key");
@@ -475,7 +425,6 @@ export const resumeGenerationTool = createTool({
       throw new ChatServiceError("只能续跑当前项目中的生成任务", 403, "project_scope_violation");
     }
     return resumeGeneration(getAssetStorage(), input.sidecarPath, {
-      falApiKey: optionalContextString(context, "falApiKey"),
       worldLabsApiKey: optionalContextString(context, "worldLabsApiKey"),
       meshyApiKey: optionalContextString(context, "meshyApiKey"),
       tripo3dApiKey: optionalContextString(context, "tripo3dApiKey"),

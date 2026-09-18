@@ -78,7 +78,7 @@ describe("JSON 契约读写", () => {
       schemaVersion: 1 as const,
       index: 0,
       slug: "arm",
-      provider: "fal",
+      provider: "volcengine",
       model: "hunyuan-3d",
       status: "queued" as const,
       outputs: [],

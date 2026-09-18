@@ -1,5 +1,4 @@
 import { ChatServiceError } from "../common/errors";
-import { callFalQueue, extractFileRefs, type FalCallOptions } from "./fal";
 
 /**
  * 图片生成（文生图）+ 编辑（img2img）传输客户端，2026-07 合并自原
@@ -8,26 +7,22 @@ import { callFalQueue, extractFileRefs, type FalCallOptions } from "./fal";
  * 那层拆分就只剩仪式感——渠道常量、选路函数、data URI 解析器直接放在本文件
  * 顶部给下面两段共用，不再需要单独导出。
  *
- * 渠道覆盖（生成 5 个，编辑 3 个）：
- * - fal 队列（generateImagesFal/editImagesFal，复用 models/fal.ts 协议）。
- * - OpenAI 兼容 images API（OpenAI 官方 / 火山方舟，仅生成——OpenAI 官方
- *   images 编辑是独立的 multipart `/images/edits` 端点，字段未经在线核实，
- *   先不接；火山方舟暂无模型声明编辑端点）。
+ * 渠道覆盖：
+ * - OpenAI 兼容 images API（OpenAI 官方用于生成；火山方舟的 Seedream 用同一
+ *   端点完成生成与编辑）。
  * - Gemini generateContent（Google 官方）：生成与编辑是同一个调用，编辑只是
  *   多带一到多个 inlineData part，故意不共享同一个函数 signature（生成不需要
  *   images 参数）。
- * - OpenRouter（统一 Image API 用于生成 seedream 等非对话型模型；chat
- *   completions + modalities 用于生成/编辑 nano-banana 等对话型模型，编辑多带
- *   image_url part）。
+ * - OpenRouter（chat completions + modalities 用于生成/编辑 nano-banana 等
+ *   对话型模型，编辑多带 image_url part）。Seedream 只走火山方舟。
  */
 
 // ---------- 渠道选路（生成/编辑共用） ----------
 
-export const IMAGE_CHANNELS = ["fal", "volcengine", "google", "openai", "openrouter"] as const;
+export const IMAGE_CHANNELS = ["volcengine", "google", "openai", "openrouter"] as const;
 export type ImageChannel = (typeof IMAGE_CHANNELS)[number];
 
 const IMAGE_CHANNEL_KEYS = {
-  fal: "falApiKey",
   volcengine: "volcengineApiKey",
   google: "googleApiKey",
   openai: "openaiApiKey",
@@ -35,7 +30,6 @@ const IMAGE_CHANNEL_KEYS = {
 } as const;
 
 const IMAGE_CHANNEL_LABELS: Record<ImageChannel, string> = {
-  fal: "fal.ai",
   volcengine: "火山方舟",
   google: "Google AI",
   openai: "OpenAI",
@@ -127,15 +121,6 @@ const ASPECT_RATIO_BY_CANVAS: Record<ReferenceImageCanvas, "4:3" | "3:4" | "1:1"
   landscape: "4:3",
   portrait: "3:4",
   square: "1:1",
-};
-
-const FAL_IMAGE_SIZE_BY_CANVAS: Record<
-  ReferenceImageCanvas,
-  "landscape_4_3" | "portrait_4_3" | "square_hd"
-> = {
-  landscape: "landscape_4_3",
-  portrait: "portrait_4_3",
-  square: "square_hd",
 };
 
 const VOLCENGINE_SIZE_BY_CANVAS: Record<ReferenceImageCanvas, string> = {
@@ -292,49 +277,6 @@ export async function generateImageGoogle(
   throw new ChatServiceError("Gemini 响应中没有图片", 502, "imagegen_no_images");
 }
 
-/**
- * OpenRouter 统一 Image API（非对话型图片模型如 seedream 走这里）。
- * 响应形状宽松解析（data[]/images[] 里的 b64_json / url / data URL），冒烟脚本验证。
- */
-export async function generateImagesOpenRouterImagesApi(
-  model: string,
-  input: ImageGenerateInput,
-  options: ImageGenOptions,
-): Promise<GeneratedImageRef[]> {
-  const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${OPENROUTER_BASE}/images`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      prompt: input.prompt,
-      n: input.count,
-      aspect_ratio: ASPECT_RATIO_BY_CANVAS[input.canvas],
-    }),
-  });
-  const body = await jsonOrThrow(response, "OpenRouter 图片生成", "imagegen_failed");
-  const items = (body.data ?? body.images ?? []) as Record<string, unknown>[];
-  const images: GeneratedImageRef[] = [];
-  for (const item of items) {
-    if (typeof item.b64_json === "string") {
-      images.push({ dataBase64: item.b64_json, mimeType: "image/png" });
-      continue;
-    }
-    const url = typeof item.url === "string" ? item.url : undefined;
-    if (url) {
-      const dataUri = RESPONSE_DATA_URL_RE.exec(url);
-      images.push(dataUri ? { dataBase64: dataUri[2]!, mimeType: dataUri[1]! } : { url });
-    }
-  }
-  if (images.length === 0) {
-    throw new ChatServiceError("OpenRouter 响应中没有图片", 502, "imagegen_no_images");
-  }
-  return images;
-}
-
 /** OpenRouter：chat completions + modalities，图片以 data URL 返回（一次一张） */
 export async function generateImageOpenRouter(
   model: string,
@@ -371,68 +313,43 @@ export async function generateImageOpenRouter(
   throw new ChatServiceError("OpenRouter 响应中没有图片", 502, "imagegen_no_images");
 }
 
-/** fal 队列渠道：num_images 支持批量出图，与其余四个直连渠道归一化为同一返回形状 */
-export async function generateImagesFal(
-  endpoint: string,
-  input: ImageGenerateInput,
-  framingParam: "image_size" | "aspect_ratio",
-  options: FalCallOptions,
-): Promise<{ refs: GeneratedImageRef[]; providerTaskId?: string }> {
-  const framing =
-    framingParam === "image_size"
-      ? { image_size: FAL_IMAGE_SIZE_BY_CANVAS[input.canvas] }
-      : { aspect_ratio: ASPECT_RATIO_BY_CANVAS[input.canvas] };
-  const { submission, result } = await callFalQueue(
-    endpoint,
-    { prompt: input.prompt, num_images: input.count, ...framing },
-    options,
-    { onSubmit: options.onSubmitted },
-  );
-  const refs = extractFileRefs(result)
-    .filter(
-      (ref) =>
-        ref.contentType?.startsWith("image/") || /\.(png|jpe?g|webp)(\?|$)/i.test(ref.url),
-    )
-    .map((ref) => ({ url: ref.url }));
-  return { refs, providerTaskId: submission.requestId };
-}
-
 /**
  * 图生 3D 用的文生图模型 × 渠道注册表。一个模型条目声明各渠道的端点/模型 id，
- * 按用户已激活 key 选路（渠道声明顺序即优先级：原厂优先，聚合渠道兜底）。
+ * 按用户已激活 key 选路；Seedream 仅声明火山方舟渠道。
  * 端点 id 经各家文档/模型页核实（2026-07）。
  */
 export interface ImageChannelEntry {
-  /** fal 队列端点或直连渠道的模型 id */
+  /** 对应渠道的模型 id */
   model: string;
-  /** openrouter 专用：非对话型模型（seedream 等）走统一 Image API 而非 chat completions */
-  openrouterImagesApi?: boolean;
-  /** fal 端点对画幅的字段名并不统一：Seedream/GPT Image 用 image_size，Nano Banana 用 aspect_ratio。 */
-  falFramingParam?: "image_size" | "aspect_ratio";
+  /** 火山 Seedream 5.0 Pro 每次只返回一张，count > 1 时逐次请求。 */
+  volcengineSingleImage?: boolean;
 }
 
 export const IMAGE_GENERATE_MODELS = {
   seedream: {
     channels: {
       volcengine: { model: "doubao-seedream-4-5-251128" },
-      fal: {
-        model: "fal-ai/bytedance/seedream/v4.5/text-to-image",
-        falFramingParam: "image_size",
-      },
-      openrouter: { model: "bytedance-seed/seedream-4.5", openrouterImagesApi: true },
+    } as Partial<Record<ImageChannel, ImageChannelEntry>>,
+  },
+  "seedream-5": {
+    channels: {
+      volcengine: { model: "doubao-seedream-5-0-260128" },
+    } as Partial<Record<ImageChannel, ImageChannelEntry>>,
+  },
+  "seedream-5-pro": {
+    channels: {
+      volcengine: { model: "doubao-seedream-5-0-pro-260628", volcengineSingleImage: true },
     } as Partial<Record<ImageChannel, ImageChannelEntry>>,
   },
   "nano-banana": {
     channels: {
       google: { model: "gemini-3.1-flash-image" },
-      fal: { model: "fal-ai/nano-banana-2", falFramingParam: "aspect_ratio" },
       openrouter: { model: "google/gemini-3.1-flash-image-preview" },
     } as Partial<Record<ImageChannel, ImageChannelEntry>>,
   },
   "gpt-image-2": {
     channels: {
       openai: { model: "gpt-image-2" },
-      fal: { model: "openai/gpt-image-2", falFramingParam: "image_size" },
     } as Partial<Record<ImageChannel, ImageChannelEntry>>,
   },
 } as const;
@@ -452,40 +369,37 @@ export function routeImageGenerateChannel(
 
 interface ImageDispatchOptions {
   fetchFn?: typeof fetch;
-  pollIntervalMs?: number;
-  /** fal 渠道提交后、轮询前回调（供业务层提前落盘 requestId，中断可续跑不重复扣费） */
-  onSubmitted?: (requestId: string) => void | Promise<void>;
 }
 
-/** 按渠道分发文生图调用，归一化为 refs + 可选 providerTaskId（fal 可续跑） */
+/** 按渠道分发文生图调用，归一化为图片引用。 */
 export async function runImageGenerate(
   channel: ImageChannel,
   entry: ImageChannelEntry,
   input: ImageGenerateInput,
   apiKey: string,
   options: ImageDispatchOptions = {},
-): Promise<{ refs: GeneratedImageRef[]; providerTaskId?: string }> {
-  if (channel === "fal") {
-    return generateImagesFal(
-      entry.model,
-      input,
-      entry.falFramingParam ?? "image_size",
-      {
-        apiKey,
-        fetchFn: options.fetchFn,
-        pollIntervalMs: options.pollIntervalMs ?? 5_000,
-        ...(options.onSubmitted
-          ? { onSubmitted: (submission) => options.onSubmitted!(submission.requestId) }
-          : {}),
-      },
-    );
-  }
+): Promise<{ refs: GeneratedImageRef[] }> {
   const callOptions = { apiKey, fetchFn: options.fetchFn };
   if (channel === "openai" || channel === "volcengine") {
     const baseUrl =
       channel === "openai"
         ? "https://api.openai.com/v1"
         : "https://ark.cn-beijing.volces.com/api/v3";
+    if (channel === "volcengine" && entry.volcengineSingleImage && input.count > 1) {
+      const refs: GeneratedImageRef[] = [];
+      for (let i = 0; i < input.count; i++) {
+        refs.push(
+          ...(await generateImagesOpenAICompat(
+            baseUrl,
+            entry.model,
+            { ...input, count: 1 },
+            callOptions,
+            channel,
+          )),
+        );
+      }
+      return { refs };
+    }
     return {
       refs: await generateImagesOpenAICompat(
         baseUrl,
@@ -495,9 +409,6 @@ export async function runImageGenerate(
         channel,
       ),
     };
-  }
-  if (channel === "openrouter" && entry.openrouterImagesApi) {
-    return { refs: await generateImagesOpenRouterImagesApi(entry.model, input, callOptions) };
   }
   // google / openrouter(chat completions)：一次一张，按 count 串行
   const refs: GeneratedImageRef[] = [];
@@ -523,16 +434,20 @@ export const IMAGE_EDIT_MODELS = {
       volcengine: { model: "doubao-seedream-4-5-251128" },
     } as Partial<Record<ImageChannel, ImageEditChannelEntry>>,
   },
+  "seedream-5": {
+    channels: {
+      volcengine: { model: "doubao-seedream-5-0-260128" },
+    } as Partial<Record<ImageChannel, ImageEditChannelEntry>>,
+  },
+  "seedream-5-pro": {
+    channels: {
+      volcengine: { model: "doubao-seedream-5-0-pro-260628" },
+    } as Partial<Record<ImageChannel, ImageEditChannelEntry>>,
+  },
   "nano-banana": {
     channels: {
       google: { model: "gemini-3.1-flash-image" },
-      fal: { model: "fal-ai/nano-banana-2/edit" },
       openrouter: { model: "google/gemini-3.1-flash-image-preview" },
-    } as Partial<Record<ImageChannel, ImageEditChannelEntry>>,
-  },
-  "gpt-image-2": {
-    channels: {
-      fal: { model: "openai/gpt-image-2/edit" },
     } as Partial<Record<ImageChannel, ImageEditChannelEntry>>,
   },
 } as const;
@@ -554,38 +469,6 @@ export interface ImageEditInput {
   prompt: string;
   /** 输入图（data URI），至少一张 */
   images: string[];
-  /** 仅 fal 渠道使用——Google/OpenRouter 的协议不支持这几个参数，直接忽略 */
-  resolution?: string;
-  aspectRatio?: string;
-  outputFormat?: "png" | "jpeg" | "webp";
-  seed?: number;
-}
-
-async function editImagesFal(
-  endpoint: string,
-  input: ImageEditInput,
-  options: FalCallOptions,
-): Promise<{ refs: GeneratedImageRef[]; providerTaskId?: string }> {
-  const falInput: Record<string, unknown> = {
-    prompt: input.prompt,
-    image_urls: input.images,
-    num_images: 1,
-    aspect_ratio: input.aspectRatio ?? "auto",
-    output_format: input.outputFormat ?? "png",
-    resolution: input.resolution ?? "1K",
-  };
-  if (input.seed !== undefined) falInput.seed = input.seed;
-
-  const { submission, result } = await callFalQueue(endpoint, falInput, options, {
-    onSubmit: options.onSubmitted,
-  });
-  const refs = extractFileRefs(result)
-    .filter(
-      (ref) =>
-        ref.contentType?.startsWith("image/") || /\.(png|jpe?g|webp)(\?|$)/i.test(ref.url),
-    )
-    .map((ref) => ({ url: ref.url }));
-  return { refs, providerTaskId: submission.requestId };
 }
 
 /** Gemini generateContent：文本 part + 每张输入图一个 inlineData part（编辑=多模态输入） */
@@ -668,29 +551,16 @@ async function editImageOpenRouter(
 
 interface ImageEditDispatchOptions {
   fetchFn?: typeof fetch;
-  pollIntervalMs?: number;
-  /** fal 渠道提交后、轮询前回调（供业务层提前落盘 requestId，中断可续跑不重复扣费） */
-  onSubmitted?: (requestId: string) => void | Promise<void>;
 }
 
-/** 按渠道分发图片编辑调用，归一化为 refs + 可选 providerTaskId（fal 可续跑） */
+/** 按渠道分发图片编辑调用，归一化为图片引用。 */
 export async function runImageEdit(
   channel: ImageChannel,
   entry: ImageEditChannelEntry,
   input: ImageEditInput,
   apiKey: string,
   options: ImageEditDispatchOptions = {},
-): Promise<{ refs: GeneratedImageRef[]; providerTaskId?: string }> {
-  if (channel === "fal") {
-    return editImagesFal(entry.model, input, {
-      apiKey,
-      fetchFn: options.fetchFn,
-      pollIntervalMs: options.pollIntervalMs ?? 5_000,
-      ...(options.onSubmitted
-        ? { onSubmitted: (submission) => options.onSubmitted!(submission.requestId) }
-        : {}),
-    });
-  }
+): Promise<{ refs: GeneratedImageRef[] }> {
   const callOptions = { apiKey, fetchFn: options.fetchFn };
   if (channel === "volcengine") {
     return {
@@ -710,7 +580,7 @@ export async function runImageEdit(
     return { refs: [await editImageOpenRouter(entry.model, input, callOptions)] };
   }
   throw new ChatServiceError(
-    `图片编辑暂不支持渠道「${channel}」（协议未核实，先用 fal/google/openrouter）`,
+    `图片编辑暂不支持渠道「${channel}」`,
     400,
     "imageedit_channel_unsupported",
   );

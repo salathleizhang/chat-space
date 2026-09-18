@@ -191,7 +191,7 @@ const MIME_BY_EXT: Record<string, string> = {
   stl: "model/stl",
 };
 
-/** 库内图片/模型文件 → data URI（送多模态模型/FAL/直连渠道的统一入口） */
+/** 库内图片/模型文件 → data URI（送多模态模型/直连渠道的统一入口） */
 export async function readAsDataUri(
   storage: AssetStorage,
   logicalPath: string,

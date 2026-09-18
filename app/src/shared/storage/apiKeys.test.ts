@@ -11,7 +11,7 @@ beforeEach(() => localStorage.clear());
 
 describe("server-only provider migration", () => {
   test("清除旧版浏览器密钥，不碰模型偏好", () => {
-    localStorage.setItem("gabo.apiKeys", JSON.stringify({ fal: "secret" }));
+    localStorage.setItem("gabo.apiKeys", JSON.stringify({ obsolete: "secret" }));
     localStorage.setItem("gabo.apiKeys:v1", JSON.stringify({ volcengine: "secret" }));
     localStorage.setItem("gabo.llmSettings:v1", JSON.stringify({ model: "glm-5-3-flash-260828" }));
     clearLegacyApiKeys();
@@ -75,5 +75,10 @@ describe("server-only provider migration", () => {
     expect(loadImageGenerateModelSettings().model).toBe("seedream");
     expect(localStorage.getItem("gabo.imageGenerateModelSettings:v1")).toBeNull();
     expect(JSON.parse(localStorage.getItem("chatspace.imageGenerateModelSettings:v1")!)).toEqual({ model: "seedream" });
+  });
+
+  test.each(["seedream-5", "seedream-5-pro"])("保存并恢复图片模型：%s", (model) => {
+    localStorage.setItem("chatspace.imageGenerateModelSettings:v1", JSON.stringify({ model }));
+    expect(loadImageGenerateModelSettings().model).toBe(model);
   });
 });

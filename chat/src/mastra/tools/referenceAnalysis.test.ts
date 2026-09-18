@@ -46,7 +46,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 假 FAL（编辑 + 3D）+ 假 World Labs + 假 CDN */
+/** 假 World Labs 和 Seed3D 接口及 CDN */
 function installFakeFetch() {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -82,16 +82,6 @@ function installFakeFetch() {
           assets: { mesh: { collider_mesh_url: "https://cdn.fake/world.glb" } },
         },
       });
-    }
-    if (url.endsWith("/status")) return jsonResponse({ status: "COMPLETED" });
-    if (url.includes("/requests/")) {
-      return jsonResponse({
-        images: [{ url: "https://cdn.fake/out.png", content_type: "image/png" }],
-        model_mesh: { url: "https://cdn.fake/model.glb" },
-      });
-    }
-    if (url.startsWith("https://queue.fal.run/")) {
-      return jsonResponse({ request_id: "req-tool" });
     }
     return jsonResponse({}, 404);
   }) as typeof fetch;

@@ -11,7 +11,7 @@ import {
   type AssetStorage,
 } from "../../services/assetStorage";
 import { repairProjectAssets } from "./assetRepair";
-import { runFalImageEdit } from "./falImageEdit";
+import { runLibraryImageEdit } from "./imageEdit";
 import { writePlan } from "./planTools";
 import {
   activateEnvironmentAsset,
@@ -36,21 +36,15 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 模拟 FAL 队列 + 产物 CDN */
+/** 模拟方舟图片接口与产物 CDN */
 function makeFakeFetch(options?: { failSubmit?: boolean }) {
   return (async (input: string | URL | Request) => {
     const url = String(input);
     if (url === "https://cdn.fake/out.png") {
       return new Response(PNG_BYTES.buffer.slice(0), { status: 200 });
     }
-    if (url.endsWith("/status")) return jsonResponse({ status: "COMPLETED" });
-    if (url.includes("/requests/")) {
-      return jsonResponse({
-        images: [{ url: "https://cdn.fake/out.png", content_type: "image/png" }],
-      });
-    }
     if (options?.failSubmit) return jsonResponse({ detail: "invalid key" }, 401);
-    return jsonResponse({ request_id: "req-42" });
+    return jsonResponse({ data: [{ url: "https://cdn.fake/out.png" }] });
   }) as typeof fetch;
 }
 
@@ -95,7 +89,7 @@ describe("projectTools", () => {
         schemaVersion: 1,
         index: 1,
         slug: "chair-ref",
-        provider: "fal",
+        provider: "volcengine",
         model: "seedream",
         params: { prompt: "chair", count: 1, asset_slug: "chair" },
         status: "succeeded",
@@ -112,8 +106,8 @@ describe("projectTools", () => {
         schemaVersion: 1,
         index: 2,
         slug: "plate",
-        provider: "fal",
-        model: "nano-banana",
+        provider: "volcengine",
+        model: "seedream",
         params: { prompt: "remove objects", role: "plate" },
         status: "succeeded",
         outputs: [{ path: platePath }],
@@ -205,25 +199,23 @@ describe("saveAssetThumbnail", () => {
   });
 });
 
-describe("runFalImageEdit", () => {
+describe("runLibraryImageEdit", () => {
   test("生成 plate：产物落盘为新源图索引 + 侧写完整且无密钥", async () => {
     const sourceDir = projectSourceDir("demo");
     await storage.writeBytes(`${sourceDir}/0-photo.png`, PNG_BYTES);
 
-    const result = await runFalImageEdit(
+    const result = await runLibraryImageEdit(
       storage,
       {
         projectSlug: "demo",
         images: [`${sourceDir}/0-photo.png`],
         prompt: "remove the dog, only removal",
         role: "plate",
-        model: "nano-banana",
-        resolution: "1K",
-        aspectRatio: "auto",
+        model: "seedream",
         outputFormat: "png",
       },
-      { falApiKey: "sk-secret-do-not-persist" },
-      { fetchFn: makeFakeFetch(), pollIntervalMs: 1 },
+      { volcengineApiKey: "sk-secret-do-not-persist" },
+      { fetchFn: makeFakeFetch() },
     );
 
     expect(result.output).toBe(`${sourceDir}/1-plate.png`);
@@ -231,7 +223,6 @@ describe("runFalImageEdit", () => {
 
     const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
     expect(sidecar.status).toBe("succeeded");
-    expect(sidecar.providerTaskId).toBe("req-42");
     expect(sidecar.outputs[0]?.providerUrl).toBe("https://cdn.fake/out.png");
     expect(await storage.readText(result.sidecar)).not.toContain(
       "sk-secret-do-not-persist",
@@ -245,22 +236,20 @@ describe("runFalImageEdit", () => {
   test("提交失败：侧写记为 failed 并携带错误", async () => {
     const sourceDir = projectSourceDir("demo");
     expect(
-      runFalImageEdit(
+      runLibraryImageEdit(
         storage,
         {
           projectSlug: "demo",
           images: [`${sourceDir}/0-photo.png`],
           prompt: "x",
           role: "edit",
-          model: "nano-banana",
-          resolution: "1K",
-          aspectRatio: "auto",
+          model: "seedream",
           outputFormat: "png",
         },
-        { falApiKey: "bad" },
-        { fetchFn: makeFakeFetch({ failSubmit: true }), pollIntervalMs: 1 },
+        { volcengineApiKey: "bad" },
+        { fetchFn: makeFakeFetch({ failSubmit: true }) },
       ),
-    ).rejects.toThrow("FAL 提交失败");
+    ).rejects.toThrow("图片生成失败");
 
     const sidecar = await readJson(
       storage,
@@ -268,7 +257,7 @@ describe("runFalImageEdit", () => {
       RequestSidecarSchema,
     );
     expect(sidecar.status).toBe("failed");
-    expect(sidecar.error).toContain("FAL 提交失败");
+    expect(sidecar.error).toContain("图片生成失败");
   });
 });
 

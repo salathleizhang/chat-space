@@ -19,7 +19,7 @@ bun run dev
 
 | 本机变量 | 用途 |
 | --- | --- |
-| `VOLC_KEY` | 火山方舟 GLM 5.3 Flash / DeepSeek V4.1 Flash / Doubao-Seed-Evolving / Doubao-Seed-2.1-pro 对话、Seedream 图片，以及 Seed3D、Hyper3D、Hi3D 模型 |
+| `VOLC_KEY` | 火山方舟 GLM 5.3 Flash / DeepSeek V4.1 Flash / Doubao-Seed-Evolving / Doubao-Seed-2.1-pro 对话、Seedream 4.5 / 5.0 / 5.0 Pro 图片，以及 Seed3D、Hyper3D、Hi3D 模型 |
 | `TRIPO_KEY` | Tripo3D 模型生成、贴图重生成与分割 |
 | `TRIPO_IMAGE_MODEL` | Tripo3D 图生 3D 的几何模型 ID，默认 `v3.1-20260211`（v3 接口必填） |
 | `WORLDLABS_KEY` | World Labs Marble 场景 |

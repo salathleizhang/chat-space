@@ -1,7 +1,6 @@
 /** creator agent 工具汇出口（与 agents/creator.ts 挂载清单一一对应） */
 export { repairAssetsTool } from "./assetRepair";
 export { buildCadModelTool, getCadSourceTool } from "./cadOps";
-export { falWildcardSearchTool } from "./falWildcard";
 export { generateCharacterTool, unwrapUvTool } from "./hunyuanOps";
 export { identifyAssetTool } from "./identifyTools";
 export { inspectAssetTool } from "./inspectTools";

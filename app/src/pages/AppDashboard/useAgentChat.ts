@@ -112,7 +112,6 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "list-generation-tasks": "Checking generation progress",
   "resume-generation": "Resuming generation",
   "repair-assets": "Repairing assets",
-  "fal-wildcard-search": "Using extended capability",
 };
 
 /**
