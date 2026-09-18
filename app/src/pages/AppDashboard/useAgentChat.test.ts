@@ -443,6 +443,36 @@ describe("useAgentChat 并发不变量", () => {
     await h.unmount();
   });
 
+  test("one-shot-scene Workflow 的总任务完成后自动继续会话", async () => {
+    const { mount, pollTasks } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成完整场景"));
+    await act(async () =>
+      handlersOf(0).onToolResult("workflow-one-shot-scene", "workflow-one-shot", undefined, ["one-shot-task"]),
+    );
+    expect(pollTasks.mock.calls[0]![0]).toEqual(["one-shot-task"]);
+    await act(async () => handlersOf(0).onDone());
+
+    const onSettled = pollTasks.mock.calls[0]![1] as (value: unknown) => void;
+    await act(async () =>
+      onSettled({
+        tasks: [{
+          id: "one-shot-task",
+          workflowId: "one-shot",
+          projectSlug: "proj-a",
+          subject: "完整场景生成",
+          status: "succeeded",
+        }],
+      }),
+    );
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    expect(streamChat.mock.calls[1]![1]).toEqual([
+      expect.objectContaining({ content: expect.stringContaining("[Background tasks finished]") }),
+    ]);
+    await h.unmount();
+  });
+
   /**
    * 这条是整个改动的核心：不变量住在 startStream 里，不是按钮的 disabled 上。
    * 两条流并发时第二条的历史不含第一条的消息，上下文分叉、回复交错，

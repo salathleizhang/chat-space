@@ -39,6 +39,7 @@ function llmConfig(): LlmRequestConfig {
 
 /** 启动即返回、靠 useTaskPolling 逐个回报的生成任务工具 */
 const TASK_STARTING_TOOLS = new Set([
+  "workflow-one-shot-scene",
   "start-3d-batch",
   "start-world-task",
   "start-skybox-task",
@@ -93,7 +94,7 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "confirm-reference-assets": "Confirming reference assets",
   confirmReferenceAssetsTool: "Confirming reference assets",
   "generate-plate": "Generating scene base image",
-  "run-one-shot": "Generating complete scene",
+  "workflow-one-shot-scene": "Generating complete scene",
   "start-3d-batch": "Starting 3D generation",
   "start-world-task": "Generating 3D world",
   "start-skybox-task": "Generating skybox",
@@ -173,7 +174,7 @@ interface UseAgentChatOptions {
  * 图片上传统一走对话（2026-07 起不再有独立的手动 uncover workflow 与
  * 「自动模式」开关）：上传后把图片和指令拼成一条带图用户消息交给 agent，
  * 只有明确进入参考图资产提取时，才依次调用 analyze-reference →
- * confirm-reference-assets → 按需 run-one-shot；普通图片直接由多模态 agent 阅读，
+ * confirm-reference-assets → 按需 one-shot-scene Workflow；普通图片直接由多模态 agent 阅读，
  * 粒度全靠对话里的指令决定。
  */
 export function useAgentChat({

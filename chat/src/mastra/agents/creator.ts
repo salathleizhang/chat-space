@@ -19,6 +19,7 @@ import {
   startWorldTaskTool,
   updatePlanTool,
 } from "../tools";
+import { oneShotSceneWorkflow } from "../workflows/oneShot";
 
 /**
  * 本机服务注入凭证和固定 LLM 端点；Agent 工具只注册已支持的渠道。
@@ -50,6 +51,9 @@ export function createCreatorAgent(
       "list-generation-tasks": listGenerationTasksTool,
       "resume-generation": resumeGenerationTool,
       "repair-assets": repairAssetsTool,
+    },
+    workflows: {
+      "one-shot-scene": oneShotSceneWorkflow,
     },
     model: {
       providerId: "byok-openai-compatible",

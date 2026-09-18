@@ -23,6 +23,13 @@ import {
 const tasks = new Map<string, GenerationTask>();
 let taskSeq = 0;
 
+/** 同一项目的长流程仍在运行时复用其任务，避免重复提交付费请求。 */
+export function findRunningTask(projectSlug: string, workflowId: string): GenerationTask | undefined {
+  return [...tasks.values()].find(
+    (task) => task.projectSlug === projectSlug && task.workflowId === workflowId && task.status === "running",
+  );
+}
+
 async function persistTask(task: GenerationTask): Promise<void> {
   await writeJson(
     getAssetStorage(),

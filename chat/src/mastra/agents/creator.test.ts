@@ -11,8 +11,16 @@ describe("creator 工具可用性", () => {
     expect(tools["analyze-scene"]).toBeDefined();
     expect(tools["analyze-reference"]).toBeUndefined();
     expect(tools["confirm-reference-assets"]).toBeDefined();
+    expect(Object.keys(tools)).not.toContain("run-one-shot");
     expect(Object.keys(tools)).not.toContain("updatePlanTool");
     expect(Object.keys(tools)).not.toContain("generateReferenceImagesTool");
+  });
+
+  test("完整场景以 Workflow 注册，不占用自定义工具入口", async () => {
+    const agent = createCreatorAgent({ apiKey: "sk-test" });
+    const workflows = await agent.listWorkflows();
+    expect(workflows["one-shot-scene"]).toBeDefined();
+    expect(Object.keys(await agent.listTools())).not.toContain("run-one-shot");
   });
 
   test("当前消息有图且明确要求参考图分析时才提供 analyze-reference", async () => {

@@ -49,6 +49,10 @@ export function hasExplicitReferenceAnalysisIntent(message: ChatMessage): boolea
 
   return [
     /analyze-reference/,
+    /run-one-shot|one-shot-scene|image-blast|uncover/,
+    /(完整|一键|自动).{0,12}(场景|世界).{0,16}(生成|建模|3d|三维)/,
+    /(一键|自动).{0,12}(生成|制作).{0,12}(完整)?(场景|世界)/,
+    /(生成|制作|创建|做成).{0,12}完整.{0,12}(场景|世界)/,
     /参考图.{0,24}(分析|拆分|拆解|提取|识别|生成|建模|3d|三维)/,
     /(分析|拆分|拆解|提取|识别).{0,24}参考图/,
     /(提取|拆分|拆解|识别).{0,24}(资产|物体|对象|模型)/,
@@ -125,10 +129,13 @@ export function imagePathsFromToolResult(
   return paths.length > 0 ? paths : undefined;
 }
 
-/** 从各后台工具统一的 `{ task }` / `{ tasks }` 返回形状中提取任务 id。 */
+/** 工具和 Mastra Workflow 的返回形状中提取后台任务 id。 */
 export function taskIdsFromToolResult(result: unknown): string[] | undefined {
   if (!result || typeof result !== "object") return undefined;
-  const record = result as { task?: unknown; tasks?: unknown };
+  const outer = result as { result?: unknown; task?: unknown; tasks?: unknown };
+  const record = outer.result && typeof outer.result === "object"
+    ? outer.result as { task?: unknown; tasks?: unknown }
+    : outer;
   const candidates = Array.isArray(record.tasks)
     ? record.tasks
     : record.task

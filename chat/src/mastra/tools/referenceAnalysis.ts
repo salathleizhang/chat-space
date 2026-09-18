@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { ChatServiceError, toErrorMessage } from "../../common/errors";
+import { ChatServiceError } from "../../common/errors";
 import {
   projectAnalysisFile,
   projectDir,
@@ -14,37 +14,30 @@ import {
   ObjectCandidateSchema,
   SceneAnalysisSchema,
   SlugSchema,
-  type ConfirmedObject,
   type ObjectCandidate,
 } from "../../dto/library";
 import { getAssetStorage, readJson, writeJson } from "../../services/assetStorage";
 import { mutateCandidates } from "../../services/candidateRegistry";
-import { startWorldTask } from "../../services/tasks";
-import type { RunKeys } from "../../services/workflowRuns";
-import { runPlateGeneration, type ImageEditResult } from "./falImageEdit";
 import { requireProject, uniqueAssetSlug } from "./projectTools";
-import { startSeed3d3dBatch } from "./seed3dOps";
 import {
   currentImagePaths,
-  optionalContextString,
   referenceAnalysisAllowed,
   requireCurrentProject,
 } from "./requestContext";
 
 /**
- * 场景管线的对话入口，三个工具对应"发现对象 → 确认 → 一次跑完"三段：
+ * 场景管线的确认入口；完整生成由注册到 Agent 的 Mastra Workflow 执行：
  *
  * - analyze-reference（免费）：Creator 已经在当前多模态消息里看到了参考图，直接
  *   把观察结果作为工具参数交给本地代码校验、落盘，并停在对象确认站。这里不再
  *   嵌套调用第二个 LLM，也不再为一次确认维护 Mastra workflow suspend/resume。
  * - confirm-reference-assets（免费，本身不生成任何东西）：确认对象 → 只落盘
  *   analysis.json 候选；模型成功发布前绝不创建正式资产。
- * - run-one-shot（付费）：直接读已经落盘的 analysis.json（跟
- *   generate-plate 读的是同一份），点火 plate→world→批量 3D，立即返回不等待
- *   收尾（跟 start-3d-batch/start-world-task 一样的"启动即返回"纪律）。
+ * - one-shot-scene Workflow（付费）：逐对象参考图 → 干净底板 → 空环境世界
+ *   → 逐对象 3D；后台任务在全部产物落盘后才完成。
  *
  * 想要更细的控制——只生成底板、跳过场景、只挑几个对象——分别用
- * generate-plate / start-world-task / start-3d-batch，不必经过 run-one-shot。
+ * generate-plate / start-world-task / start-3d-batch。
  */
 
 export interface CandidateObject {
@@ -117,14 +110,6 @@ function sanitizeCandidateSlugs(
     used.add(slug);
     return { slug, name: object.name, description: object.description };
   });
-}
-
-function keysFromContext(context: Parameters<typeof optionalContextString>[0]): RunKeys {
-  return {
-    worldLabsApiKey: optionalContextString(context, "worldLabsApiKey"),
-    volcengineApiKey: optionalContextString(context, "volcengineApiKey"),
-    seed3dApiKey: optionalContextString(context, "seed3dApiKey"),
-  };
 }
 
 const IMAGE_EXT_RE = /^(png|jpe?g|webp)$/i;
@@ -200,23 +185,37 @@ export interface ConfirmReferenceAssetsResult {
   objects: ObjectCandidate[];
 }
 
-/** 确认对象 → 落盘参考图分析候选；不创建资产，也不生成任何东西。 */
-export async function runConfirmReferenceAssets(
-  projectSlug: string,
-  input: { runId: string; selectedSlugs?: string[] },
-): Promise<ConfirmReferenceAssetsResult> {
-  const parsedRunId = z.uuid().safeParse(input.runId);
+async function pendingRunPath(projectSlug: string, runId?: string): Promise<string> {
   const storage = getAssetStorage();
-  const pendingPath = parsedRunId.success
-    ? pendingAnalysisPath(projectSlug, parsedRunId.data)
-    : "";
-  if (!pendingPath || !(await storage.exists(pendingPath))) {
+  if (runId !== undefined) {
+    const parsed = z.uuid().safeParse(runId);
+    const path = parsed.success ? pendingAnalysisPath(projectSlug, parsed.data) : "";
+    if (path && await storage.exists(path)) return path;
     throw new ChatServiceError(
-      `没有可恢复的参考图分析 run「${input.runId}」（可能不存在或已经确认过，请重新调用 analyze-reference）`,
+      `没有可恢复的参考图分析 run「${runId}」（可能不存在或已经确认过，请重新调用 analyze-reference）`,
       404,
       "run_not_found",
     );
   }
+  const pending = (await storage.list(projectDir(projectSlug)))
+    .filter((name) => /^\.analyze-reference-[0-9a-f-]{36}\.json$/i.test(name));
+  if (pending.length === 1) return `${projectDir(projectSlug)}/${pending[0]}`;
+  throw new ChatServiceError(
+    pending.length === 0
+      ? "没有待确认的参考图分析，请重新调用 analyze-reference"
+      : "当前项目有多份待确认的参考图分析，请指定 runId",
+    409,
+    pending.length === 0 ? "run_not_found" : "multiple_pending_runs",
+  );
+}
+
+/** 确认对象 → 落盘参考图分析候选；不创建资产，也不生成任何东西。 */
+export async function runConfirmReferenceAssets(
+  projectSlug: string,
+  input: { runId?: string; selectedSlugs?: string[] },
+): Promise<ConfirmReferenceAssetsResult> {
+  const storage = getAssetStorage();
+  const pendingPath = await pendingRunPath(projectSlug, input.runId);
   const pending = await readJson(
     storage,
     pendingPath,
@@ -236,7 +235,7 @@ export async function runConfirmReferenceAssets(
   const selected = pending.objects.filter((object) => selectedSlugs.has(object.slug));
   if (selected.length === 0) {
     // 空选择（[] 或全不匹配的 slug）不能静默清空 analysis.json 并消费 run——
-    // run-one-shot / generate-plate 都读 analysis.json，会把它清成空。
+    // 完整场景 Workflow / generate-plate 都读 analysis.json，会把它清成空。
     throw new ChatServiceError(
       "没有选中任何候选对象，请至少确认一个对象",
       409,
@@ -283,100 +282,6 @@ export async function runConfirmReferenceAssets(
   return { projectSlug, objects: resolved };
 }
 
-export interface OneShotLaunchSummary {
-  projectSlug: string;
-  objects: ObjectCandidate[];
-  plate?: ImageEditResult;
-  plateSkippedReason?: string;
-  plateError?: string;
-  worldStarted: boolean;
-  tasksStarted: number;
-}
-
-/** plate → world + 批量 3D 任务点火，不等待任务收尾 */
-async function launchOneShotGeneration(
-  project: string,
-  uncover: { objects: ConfirmedObject[] },
-  keys: RunKeys,
-): Promise<OneShotLaunchSummary> {
-  const summary: OneShotLaunchSummary = {
-    projectSlug: project,
-    objects: uncover.objects,
-    worldStarted: false,
-    tasksStarted: 0,
-  };
-
-  if (uncover.objects.length > 0) {
-    const hasImageEditKey = keys.volcengineApiKey;
-    if (!hasImageEditKey) {
-      summary.plateSkippedReason = "本机 chat/.env 未配置 VOLC_KEY";
-    } else {
-      try {
-        summary.plate = await runPlateGeneration(
-          getAssetStorage(),
-          { projectSlug: project },
-          keys,
-        );
-      } catch (err) {
-        summary.plateError = toErrorMessage(err);
-      }
-    }
-  }
-
-  if (keys.worldLabsApiKey) {
-    startWorldTask(project, { worldLabsApiKey: keys.worldLabsApiKey });
-    summary.worldStarted = true;
-  }
-  if (keys.seed3dApiKey && uncover.objects.length > 0) {
-    const tasks = startSeed3d3dBatch(
-      project,
-      uncover.objects.map((object) => ({
-        slug: object.slug,
-        name: object.name,
-        intent: object.description,
-        sourceImages: object.sourceImages ?? [],
-      })),
-      { seed3dApiKey: keys.seed3dApiKey },
-    );
-    summary.tasksStarted = tasks.length;
-  }
-
-  return summary;
-}
-
-export interface RunOneShotResult extends OneShotLaunchSummary {
-  message: string;
-}
-
-/** 不碰 workflow，直接读已落盘的参考图分析（跟 generate-plate 读的是同一份）→ 点火 */
-export async function runRunOneShot(
-  projectSlug: string,
-  keys: RunKeys,
-): Promise<RunOneShotResult> {
-  const storage = getAssetStorage();
-  const analysisPath = projectAnalysisFile(projectSlug);
-  if (!(await storage.exists(analysisPath))) {
-    throw new ChatServiceError(
-      `项目「${projectSlug}」还没有参考图资产分析，请先用 analyze-reference + confirm-reference-assets 确认对象`,
-      409,
-      "analysis_missing",
-    );
-  }
-  const analysis = await readJson(storage, analysisPath, SceneAnalysisSchema);
-  const launch = await launchOneShotGeneration(
-    projectSlug,
-    { objects: analysis.objects },
-    keys,
-  );
-  return {
-    ...launch,
-    message:
-      launch.worldStarted || launch.tasksStarted > 0
-        ? "已启动生成，用 list-generation-tasks 跟进进度"
-        : "没有配置任何生成用的 key，没有启动任何任务",
-  };
-}
-
 // ---------- Mastra 工具包装 ----------
 
 export const analyzeReferenceTool = createTool({
@@ -412,9 +317,9 @@ export const analyzeReferenceTool = createTool({
 export const confirmReferenceAssetsTool = createTool({
   id: "confirm-reference-assets",
   description:
-    "确认 analyze-reference 从参考图提取的资产候选（免费，本身不生成任何东西）：省略 selectedSlugs 视为全部确认，传入子集则只对这些对象建立资产身份。确认后分析与各对象身份落盘，之后按需调用 generate-plate / start-world-task / start-3d-batch，或者用 run-one-shot 跑完整条链路。",
+    "确认 analyze-reference 从参考图提取的资产候选（免费，本身不生成任何东西）：当前项目只有一份待确认分析时可省略 runId；有多份时必须指定。省略 selectedSlugs 视为全部确认，传入子集则只对这些对象建立资产身份。确认后可按需调用单步工具，或启动 one-shot-scene Workflow 跑完整条链路。",
   inputSchema: z.object({
-    runId: z.string().min(1),
+    runId: z.string().min(1).optional(),
     selectedSlugs: z.array(z.string()).optional(),
   }),
   execute: async (input, context) =>
@@ -422,15 +327,4 @@ export const confirmReferenceAssetsTool = createTool({
       requireCurrentProject(context),
       input,
     ),
-});
-
-export const runOneShotTool = createTool({
-  id: "run-one-shot",
-  description:
-    "一次性跑完已确认参考图的干净底板、World Labs 场景生成、逐对象并行 3D 生成（付费操作——启动前须经用户同意）。要求当前项目已经用 analyze-reference + confirm-reference-assets 确认过资产（即 analysis.json 已存在）。启动后立即返回摘要，不等待任务收尾——用 list-generation-tasks 跟进进度。只想要其中一部分用 generate-plate / start-world-task / start-3d-batch 分别调用。",
-  inputSchema: z.object({}),
-  execute: async (_input, context) => {
-    const projectSlug = requireCurrentProject(context);
-    return runRunOneShot(projectSlug, keysFromContext(context));
-  },
 });

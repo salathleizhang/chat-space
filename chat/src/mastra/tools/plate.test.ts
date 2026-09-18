@@ -118,7 +118,7 @@ describe("runPlateGeneration", () => {
         { falApiKey: "sk-test" },
         { fetchFn: fakeFetch, pollIntervalMs: 1 },
       ),
-    ).rejects.toThrow("图片分析");
+    ).rejects.toThrow("analyze-reference + confirm-reference-assets");
   });
 });
 

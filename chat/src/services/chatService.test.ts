@@ -41,6 +41,9 @@ describe("hasExplicitReferenceAnalysisIntent", () => {
     expect(hasExplicitReferenceAnalysisIntent(imageMessage("请分析这张参考图，提取可生成的资产"))).toBe(true);
     expect(hasExplicitReferenceAnalysisIntent(imageMessage("把这张图片做成 3D 模型"))).toBe(true);
     expect(hasExplicitReferenceAnalysisIntent(imageMessage("提取图里的桌椅对象并分别建模"))).toBe(true);
+    expect(hasExplicitReferenceAnalysisIntent(imageMessage("把这张图一键生成完整场景"))).toBe(true);
+    expect(hasExplicitReferenceAnalysisIntent(imageMessage("把这张图生成完整场景"))).toBe(true);
+    expect(hasExplicitReferenceAnalysisIntent(imageMessage("直接用这张图生成世界"))).toBe(false);
     expect(
       hasExplicitReferenceAnalysisIntent(
         imageMessage("把这个图片的每个家具拆出来，生成单个的参考图"),
@@ -88,6 +91,9 @@ describe("taskIdsFromToolResult", () => {
         tasks: [{ id: "task-2" }, { id: "task-3" }, { id: "task-2" }],
       }),
     ).toEqual(["task-2", "task-3"]);
+    expect(
+      taskIdsFromToolResult({ runId: "workflow-run", result: { task: { id: "task-4" } } }),
+    ).toEqual(["task-4"]);
   });
 
   test("普通同步工具结果不产生后台任务 id", () => {

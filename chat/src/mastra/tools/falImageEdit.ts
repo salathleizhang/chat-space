@@ -220,7 +220,7 @@ export async function runPlateGeneration(
   const analysisPath = projectAnalysisFile(input.projectSlug);
   if (!(await storage.exists(analysisPath))) {
     throw new ChatServiceError(
-      `项目「${input.projectSlug}」还没有场景分析，请先运行图片分析（uncover）确认对象清单`,
+      `项目「${input.projectSlug}」还没有场景分析，请先用 analyze-reference + confirm-reference-assets 确认对象清单`,
       409,
       "analysis_missing",
     );
@@ -276,7 +276,7 @@ export async function runPlateGeneration(
 export const generatePlateTool = createTool({
   id: "generate-plate",
   description:
-    "为当前项目生成干净底板（clean plate，付费操作——调用前须经用户同意）：把参考图分析里已确认的对象从源图中整体移除，产出空场景背景图，通常用作 start-world-task 的输入图。需要项目已经用 analyze-reference + confirm-reference-assets 确认过对象（analysis.json 已存在）。想一次跑完整条链路用 run-one-shot。",
+    "为当前项目生成干净底板（clean plate，付费操作——调用前须经用户同意）：把参考图分析里已确认的对象从源图中整体移除，产出空场景背景图，通常用作 start-world-task 的输入图。需要项目已经用 analyze-reference + confirm-reference-assets 确认过对象（analysis.json 已存在）。想一次跑完整条链路可启动 one-shot-scene Workflow。",
   inputSchema: PlateInputSchema.omit({ projectSlug: true }),
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);

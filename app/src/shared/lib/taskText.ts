@@ -7,6 +7,8 @@ export function taskSubjectLabel(subject: string): string {
     .replace(/^3D 生成（混元直连）：/, "3D generation (Hunyuan): ")
     .replace(/^3D 生成：/, "3D generation: ")
     .replace(/^世界生成（World Labs）$/, "World generation (World Labs)")
+    .replace(/^空环境生成（World Labs）$/, "Empty environment generation (World Labs)")
+    .replace(/^完整场景生成$/, "Complete scene generation")
     .replace(/^天空盒生成（Blockade Labs）$/, "Skybox generation (Blockade Labs)")
     .replace(/^部件分割：/, "Part segmentation: ")
     .replace(/^贴图生成：/, "Texture generation: ")

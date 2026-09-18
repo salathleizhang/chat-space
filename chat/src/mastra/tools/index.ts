@@ -15,8 +15,7 @@ export {
 export {
   analyzeReferenceTool,
   confirmReferenceAssetsTool,
-  runOneShotTool,
-} from "./oneShotTool";
+} from "./referenceAnalysis";
 export { updatePlanTool } from "./planTools";
 export { analyzeSceneTool } from "./sceneAnalysis";
 export { generateReferenceImagesTool } from "./referenceImage";
