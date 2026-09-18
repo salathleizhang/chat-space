@@ -156,7 +156,7 @@ describe("composeReferenceImagePrompt", () => {
 });
 
 describe("GenerateReferenceImagesInputSchema", () => {
-  test("旧调用不传 mode 时仍默认为文生图，edit 模式使用图生图默认模型", () => {
+  test("旧调用不传 mode 时仍默认为文生图，edit 和 plate 使用图生图默认模型", () => {
     expect(GenerateReferenceImagesInputSchema.parse({ prompt: "a chair" })).toMatchObject({
       mode: "generate",
       model: "seedream",
@@ -168,9 +168,16 @@ describe("GenerateReferenceImagesInputSchema", () => {
         prompt: "isolate the chair",
       }),
     ).toMatchObject({ mode: "edit", model: "seedream" });
+    expect(GenerateReferenceImagesInputSchema.parse({ mode: "plate" })).toMatchObject({
+      mode: "plate",
+      model: "seedream",
+    });
+    expect(() => GenerateReferenceImagesInputSchema.parse({ mode: "generate" })).toThrow();
+    expect(() => GenerateReferenceImagesInputSchema.parse({ mode: "edit", assetSlug: "chair" })).toThrow();
+    expect(() => GenerateReferenceImagesInputSchema.parse({ mode: "plate", prompt: "erase chair" })).toThrow();
   });
 
-  test("工具入参是扁平 object，edit 分支仍由 union 校验", () => {
+  test("工具入参是扁平 object，三种模式分支仍由 union 校验", () => {
     const json = z.toJSONSchema(GenerateReferenceImagesToolSchema, { io: "input" }) as {
       type?: string;
       anyOf?: unknown;
@@ -186,6 +193,11 @@ describe("GenerateReferenceImagesInputSchema", () => {
     expect(GenerateReferenceImagesInputSchema.parse(flat)).toMatchObject({
       mode: "edit",
       assetSlug: "chair",
+      model: "seedream",
+    });
+    const plate = GenerateReferenceImagesToolSchema.parse({ mode: "plate" });
+    expect(GenerateReferenceImagesInputSchema.parse(plate)).toMatchObject({
+      mode: "plate",
       model: "seedream",
     });
   });
@@ -671,5 +683,43 @@ describe("runReferenceImageEdit", () => {
       AssetIdentitySchema,
     );
     expect(identity.sourceImages).toEqual(result.images);
+  });
+
+  test("统一 generate-reference-images 的 plate 模式读取已确认对象并返回底板图片", async () => {
+    const sourceImage = `${projectSourceDir("ref-demo")}/scene-plate-input.png`;
+    await storage.writeBytes(sourceImage, PNG_BYTES);
+    const submittedBodies: Record<string, unknown>[] = [];
+    const recordVolcFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith("/images/generations") && init?.body) {
+        submittedBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      }
+      return fakeFetch(input);
+    }) as typeof fetch;
+
+    const result = await runGenerateReferenceImages(
+      storage,
+      "ref-demo",
+      {
+        mode: "plate",
+        sourceImage,
+        objectSlugs: ["rope-coil"],
+        extraInstructions: "Keep the floor texture unchanged.",
+      },
+      { volcengineApiKey: "vk" },
+      { fetchFn: recordVolcFetch },
+    );
+
+    expect(result.mode).toBe("plate");
+    expect(result.images).toHaveLength(1);
+    expect(await storage.exists(result.images[0]!)).toBe(true);
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.params.role).toBe("plate");
+    expect(sidecar.params.input_images).toEqual([sourceImage]);
+    expect(String(sidecar.params.prompt)).toContain("缆绳卷");
+    expect(String(sidecar.params.prompt)).toContain("Keep the floor texture unchanged.");
+    expect(submittedBodies[0]).toMatchObject({
+      image: expect.stringContaining("data:image/png;base64,"),
+      prompt: expect.stringContaining("Removal only"),
+    });
   });
 });

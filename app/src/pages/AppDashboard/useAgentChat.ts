@@ -85,7 +85,7 @@ const BACKGROUND_ACTIVITY_TOOLS = new Set([
 
 const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "update-plan": "Updating plan",
-  "generate-reference-images": "Generating reference images",
+  "generate-reference-images": "Generating image",
   "edit-reference-image": "Editing reference image",
   "analyze-scene": "Analyzing current scene",
   analyzeSceneTool: "Analyzing current scene",

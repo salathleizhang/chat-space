@@ -7,6 +7,7 @@ describe("creator 工具可用性", () => {
     const tools = await createCreatorAgent({ apiKey: "sk-test" }).listTools();
     expect(tools["update-plan"]).toBeDefined();
     expect(tools["generate-reference-images"]).toBeDefined();
+    expect(Object.keys(tools)).not.toContain("generate-plate");
     expect(Object.keys(tools)).not.toContain("edit-reference-image");
     expect(tools["analyze-scene"]).toBeDefined();
     expect(tools["analyze-reference"]).toBeUndefined();

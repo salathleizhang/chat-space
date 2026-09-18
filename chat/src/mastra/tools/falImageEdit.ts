@@ -1,4 +1,3 @@
-import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
 import {
@@ -24,7 +23,6 @@ import {
   type ImageProviderKeys,
 } from "../../models/images";
 import {
-  getAssetStorage,
   readAsDataUri,
   readJson,
   writeJson,
@@ -32,7 +30,6 @@ import {
 } from "../../services/assetStorage";
 import { downloadToLibrary } from "./assetRepair";
 import { requireProject } from "./projectTools";
-import { optionalContextString, requireCurrentProject } from "./requestContext";
 
 /**
  * 图片编辑能力（img2img）：给定库内输入图 + 指令，产出编辑后的新图，落盘 source/
@@ -270,23 +267,3 @@ export async function runPlateGeneration(
     options,
   );
 }
-
-// ---------- Mastra 工具包装 ----------
-
-export const generatePlateTool = createTool({
-  id: "generate-plate",
-  description:
-    "为当前项目生成干净底板（clean plate，付费操作——调用前须经用户同意）：把参考图分析里已确认的对象从源图中整体移除，产出空场景背景图，通常用作 start-world-task 的输入图。需要项目已经用 analyze-reference + confirm-reference-assets 确认过对象（analysis.json 已存在）。想一次跑完整条链路可启动 one-shot-scene Workflow。",
-  inputSchema: PlateInputSchema.omit({ projectSlug: true }),
-  execute: async (input, context) => {
-    const projectSlug = requireCurrentProject(context);
-    const keys: ImageProviderKeys = {
-      falApiKey: optionalContextString(context, "falApiKey"),
-      volcengineApiKey: optionalContextString(context, "volcengineApiKey"),
-      googleApiKey: optionalContextString(context, "googleApiKey"),
-      openaiApiKey: optionalContextString(context, "openaiApiKey"),
-      openrouterApiKey: optionalContextString(context, "openrouterApiKey"),
-    };
-    return runPlateGeneration(getAssetStorage(), { ...input, projectSlug }, keys);
-  },
-});

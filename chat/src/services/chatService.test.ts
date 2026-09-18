@@ -79,6 +79,15 @@ describe("imagePathsFromToolResult", () => {
       }),
     ).toBeUndefined();
   });
+
+  test("统一生图工具的 plate 模式也能把底板图片交给工作台", () => {
+    expect(
+      imagePathsFromToolResult("generate-reference-images", {
+        mode: "plate",
+        images: ["projects/demo/source/2-plate.png"],
+      }),
+    ).toEqual(["projects/demo/source/2-plate.png"]);
+  });
 });
 
 describe("taskIdsFromToolResult", () => {

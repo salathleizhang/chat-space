@@ -13,6 +13,7 @@ import {
 } from "../../common/libraryPaths";
 import {
   AssetIdentitySchema,
+  LogicalPathSchema,
   RequestSidecarSchema,
   SceneAnalysisSchema,
   SlugSchema,
@@ -40,6 +41,7 @@ import {
 } from "../../services/assetStorage";
 import { mutateCandidates, readCandidates } from "../../services/candidateRegistry";
 import { downloadToLibrary } from "./assetRepair";
+import { PlateInputSchema, runPlateGeneration } from "./falImageEdit";
 import { requireProject } from "./projectTools";
 import { optionalContextString, requireCurrentProject } from "./requestContext";
 
@@ -519,6 +521,10 @@ export const GenerateReferenceImagesInputSchema = z.union([
   EditReferenceImageParamsSchema.omit({ projectSlug: true }).extend({
     mode: z.literal("edit"),
   }),
+  PlateInputSchema.omit({ projectSlug: true }).extend({
+    mode: z.literal("plate"),
+    prompt: z.never().optional(),
+  }),
 ]);
 export type GenerateReferenceImagesInput = z.input<
   typeof GenerateReferenceImagesInputSchema
@@ -529,12 +535,13 @@ export type GenerateReferenceImagesInput = z.input<
  * `{ anyOf: [...] }`，火山方舟的 DeepSeek 接入点会直接拒绝整轮请求：
  * `tools.N.function.parameters must be a JSON Schema of type object`
  * （Doubao 接入点恰好容忍 anyOf，所以只有切到 DeepSeek 才暴露）。
- * 因此工具层把 generate/edit 合并成一个扁平对象；分支必填约束仍由上面的
- * union 在执行层校验，模型看到的字段与两种模式的实际入参保持一致。
+ * 因此工具层把 generate/edit/plate 合并成一个扁平对象；分支必填约束仍由上面的
+ * union 在执行层校验，模型看到的字段与三种模式的实际入参保持一致。
  */
 export const GenerateReferenceImagesToolSchema = z.object({
-  mode: z.enum(["generate", "edit"]).default("generate"),
-  prompt: z.string().min(1),
+  mode: z.enum(["generate", "edit", "plate"]).default("generate"),
+  /** generate/edit 必填；plate 的移除指令由已确认的对象清单自动组装。 */
+  prompt: z.string().min(1).optional(),
   model: z.enum(IMAGE_GENERATE_MODEL_IDS).default("seedream"),
   channel: z.enum(IMAGE_CHANNELS).optional(),
   /** mode=generate 时可选绑定目标；mode=edit 时必填。 */
@@ -543,9 +550,13 @@ export const GenerateReferenceImagesToolSchema = z.object({
   assetIntent: z.string().min(1).optional(),
   count: z.number().int().min(1).max(4).default(1),
   canvas: z.enum(REFERENCE_IMAGE_CANVASES).default("landscape"),
+  /** plate 缺省移除全部已确认对象，使用场景分析绑定的原参考图。 */
+  objectSlugs: z.array(SlugSchema).optional(),
+  sourceImage: LogicalPathSchema.optional(),
+  extraInstructions: z.string().optional(),
 });
 
-/** generate/edit 两种模式归一成同一返回形状，方便 SSE 统一展示新参考图。 */
+/** 三种模式归一成 images 数组，方便 SSE 统一展示新图片。 */
 export async function runGenerateReferenceImages(
   storage: AssetStorage,
   projectSlug: string,
@@ -554,6 +565,14 @@ export async function runGenerateReferenceImages(
   options: GenOptions = {},
 ) {
   const input = GenerateReferenceImagesInputSchema.parse(rawInput);
+  if (input.mode === "plate") {
+    const result = await runPlateGeneration(storage, { ...input, projectSlug }, keys, options);
+    return {
+      mode: "plate" as const,
+      images: [result.output],
+      sidecar: result.sidecar,
+    };
+  }
   if (input.mode === "edit") {
     const result = await runReferenceImageEdit(
       storage,
@@ -581,7 +600,7 @@ export async function runGenerateReferenceImages(
 export const generateReferenceImagesTool = createTool({
   id: "generate-reference-images",
   description:
-    "生成 3D 用的单物体参考图（付费操作——调用前须经用户同意）。mode=generate 是文生图，默认火山 Seedream；要继续生成 3D 时必须传 assetSlug，并可传 assetName/assetIntent：图片成功后会自动登记待发布生成目标并绑定图片，紧接着用同一 assetSlug 调 start-3d-batch。mode=edit 使用火山 Seedream 图生图，要求已存在的 assetSlug，读取现有 sourceImages 隔离物体或修改外观。工具层强制完整入镜、四周留白、无遮挡。",
+    "统一图片生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent，成功后自动绑定生成目标。mode=edit 是图生图编辑资产参考图，需要已有 assetSlug 和 prompt，结果绑定回该资产；两种参考图模式都强制完整入镜、留白和无遮挡。mode=plate 是从已确认场景参考图移除对象、生成空场景底板，不传 prompt；需先 analyze-reference + confirm-reference-assets，默认移除全部已确认对象，也可传 objectSlugs、sourceImage、extraInstructions。完整场景链路请启动 one-shot-scene Workflow，不要重复调用单步生图。",
   inputSchema: GenerateReferenceImagesToolSchema,
   execute: async (input, context) =>
     runGenerateReferenceImages(

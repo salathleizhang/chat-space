@@ -542,7 +542,7 @@ describe("useAgentChat 并发不变量", () => {
     expect(afterTool.activities?.at(-1)).toMatchObject({
       id: "tool-1",
       contentOffset: 0,
-      label: "Generating reference images",
+      label: "Generating image",
       status: "running",
     });
 
@@ -550,7 +550,7 @@ describe("useAgentChat 并发不变量", () => {
     const afterResult = updateMessage.mock.calls.at(-1)![1](afterTool);
     expect(afterResult.activities?.at(-1)).toMatchObject({
       id: "tool-1",
-      label: "Completed: generating reference images",
+      label: "Completed: generating image",
       status: "completed",
     });
 
@@ -626,7 +626,7 @@ describe("useAgentChat 并发不变量", () => {
     const afterTool = updateMessage.mock.calls.at(-1)![1](assistant);
     expect(afterTool.activities?.at(-1)).toMatchObject({
       toolName: "generate-reference-images",
-      label: "Generating reference images",
+      label: "Generating image",
       status: "running",
     });
 
@@ -635,7 +635,7 @@ describe("useAgentChat 并发不变量", () => {
     );
     const afterResult = updateMessage.mock.calls.at(-1)![1](afterTool);
     expect(afterResult.activities?.at(-1)).toMatchObject({
-      label: "Completed: generating reference images",
+      label: "Completed: generating image",
       status: "completed",
     });
 

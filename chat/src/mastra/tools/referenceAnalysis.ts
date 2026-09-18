@@ -37,7 +37,7 @@ import {
  *   → 逐对象 3D；后台任务在全部产物落盘后才完成。
  *
  * 想要更细的控制——只生成底板、跳过场景、只挑几个对象——分别用
- * generate-plate / start-world-task / start-3d-batch。
+ * generate-reference-images(mode=plate) / start-world-task / start-3d-batch。
  */
 
 export interface CandidateObject {
@@ -235,7 +235,7 @@ export async function runConfirmReferenceAssets(
   const selected = pending.objects.filter((object) => selectedSlugs.has(object.slug));
   if (selected.length === 0) {
     // 空选择（[] 或全不匹配的 slug）不能静默清空 analysis.json 并消费 run——
-    // 完整场景 Workflow / generate-plate 都读 analysis.json，会把它清成空。
+    // 完整场景 Workflow / generate-reference-images(mode=plate) 都读 analysis.json，会把它清成空。
     throw new ChatServiceError(
       "没有选中任何候选对象，请至少确认一个对象",
       409,

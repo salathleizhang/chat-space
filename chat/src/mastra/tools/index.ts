@@ -2,7 +2,6 @@
 export { repairAssetsTool } from "./assetRepair";
 export { buildCadModelTool, getCadSourceTool } from "./cadOps";
 export { falWildcardSearchTool } from "./falWildcard";
-export { generatePlateTool } from "./falImageEdit";
 export { generateCharacterTool, unwrapUvTool } from "./hunyuanOps";
 export { identifyAssetTool } from "./identifyTools";
 export { inspectAssetTool } from "./inspectTools";

@@ -102,7 +102,7 @@ export function toolErrorMessage(value: unknown): string | undefined {
 
 /**
  * 工具完整结果还要回给 LLM，但不应原样塞进 SSE（里面可能有供应商元数据或大对象）。
- * 工作台目前只需要两类同步图片工具的落盘路径。
+ * 工作台只需要同步图片工具的落盘路径；统一入口的三种模式均返回 images。
  */
 export function imagePathsFromToolResult(
   toolName: string,
