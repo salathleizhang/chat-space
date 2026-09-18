@@ -6,9 +6,10 @@ import { OrbitControls } from "@react-three/drei/core/OrbitControls";
 import { Canvas, useThree } from "@react-three/fiber";
 import { memo, Suspense, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import * as THREE from "three";
-import type { LibraryAsset } from "../../shared/lib/libraryApi";
+import type { AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
 import { Badge, Button, Panel } from "../../shared/ui";
 import { ModelMesh } from "../Viewport/ModelMesh";
+import { createInspectionCamera, INSPECTION_VIEWS } from "./inspectionViews";
 
 /**
  * 模型预览小窗：模型栏双击打开，独立轨道相机 + 右上角视角球（Blender 式）。
@@ -23,25 +24,19 @@ export interface InspectionRequest {
 
 interface ModelPreviewWindowProps {
   asset: LibraryAsset;
+  /** 与主视口一致的旋转/缩放；位置由预览窗自动居中。 */
+  transform?: AssetTransform;
   inspection: InspectionRequest | null;
   onClose: () => void;
   /** 四视角合成图完成（pngBase64 不含 data: 前缀）；失败时 base64 为 null */
   onInspectionCaptured: (id: string, pngBase64: string | null) => void;
 }
 
-/** 检查图四视角（与提示词中的说明一致：ISO/前/右/顶） */
-const INSPECTION_VIEWS: { label: string; dir: [number, number, number] }[] = [
-  { label: "ISO", dir: [1, 0.8, 1] },
-  { label: "FRONT", dir: [0, 0.12, 1] },
-  { label: "RIGHT", dir: [1, 0.12, 0] },
-  { label: "TOP", dir: [0.001, 1, 0.001] },
-];
-
 const SHEET_TILE = 512;
 const INSPECTION_POLL_MS = 120;
 const INSPECTION_TIMEOUT_MS = 10_000;
 
-/** 在 Canvas 内执行四视角截图：等模型出现在场景里再动手，完成后恢复相机 */
+/** 在 Canvas 内执行四视角截图：等模型进场后，用独立相机拍摄。 */
 function InspectionCapturer({
   request,
   onCaptured,
@@ -82,13 +77,7 @@ function InspectionCapturer({
       }
 
       const sphere = box.getBoundingSphere(new THREE.Sphere());
-      const persp = camera as THREE.PerspectiveCamera;
-      // 单点/极薄退化几何的包围球可能为 0；相机落到球心会让 lookAt 退化并截出空图。
-      const radius = Math.max(sphere.radius, 1e-3);
-      const fitDistance =
-        (radius / Math.tan((persp.fov * Math.PI) / 360)) * 1.35;
-      const savedPosition = camera.position.clone();
-      const savedQuaternion = camera.quaternion.clone();
+      // 截图相机独立于用户相机。ISO 用透视；轴向视角与主视口一样用正交投影。
 
       const sheet = document.createElement("canvas");
       sheet.width = SHEET_TILE * 2;
@@ -100,11 +89,13 @@ function InspectionCapturer({
       }
 
       INSPECTION_VIEWS.forEach((view, i) => {
-        const dir = new THREE.Vector3(...view.dir).normalize();
-        camera.position.copy(sphere.center).addScaledVector(dir, fitDistance);
-        camera.lookAt(sphere.center);
-        persp.updateProjectionMatrix();
-        gl.render(scene, camera);
+        const inspectionCamera = createInspectionCamera(
+          camera as THREE.PerspectiveCamera,
+          view,
+          sphere.center,
+          sphere.radius,
+        );
+        gl.render(scene, inspectionCamera);
 
         const x = (i % 2) * SHEET_TILE;
         const y = Math.floor(i / 2) * SHEET_TILE;
@@ -123,10 +114,7 @@ function InspectionCapturer({
       ctx.lineTo(sheet.width, SHEET_TILE);
       ctx.stroke();
 
-      // 恢复到截图前的相机姿态，留给用户继续手动查看
-      camera.position.copy(savedPosition);
-      camera.quaternion.copy(savedQuaternion);
-      persp.updateProjectionMatrix();
+      // 让下一帧重新绘制用户的预览视角。
       invalidate();
 
       const dataUrl = sheet.toDataURL("image/png");
@@ -145,6 +133,7 @@ function InspectionCapturer({
 
 export const ModelPreviewWindow = memo(function ModelPreviewWindow({
   asset,
+  transform,
   inspection,
   onClose,
   onInspectionCaptured,
@@ -235,7 +224,9 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
             <directionalLight position={[-4, 2, -3]} intensity={0.5} />
             <Suspense fallback={null}>
               <Bounds fit clip observe margin={1.3}>
-                <ModelMesh asset={asset} />
+                <group rotation={transform?.rotation} scale={transform?.scale}>
+                  <ModelMesh asset={asset} />
+                </group>
               </Bounds>
             </Suspense>
             <OrbitControls makeDefault enableDamping />

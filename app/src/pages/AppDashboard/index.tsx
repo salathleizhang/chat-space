@@ -358,6 +358,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           <Suspense fallback={null}>
             <ModelPreviewWindow
               asset={preview.asset}
+              transform={transforms[preview.asset.assetSlug]}
               inspection={preview.inspection}
               onClose={closePreview}
               onInspectionCaptured={handleInspectionCaptured}
