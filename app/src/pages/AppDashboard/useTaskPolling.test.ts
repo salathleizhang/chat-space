@@ -215,3 +215,22 @@ describe("useTaskPolling", () => {
     await h.unmount();
   });
 });
+
+
+test("恢复会话前不轮询或写消息，恢复完成后才读取任务", async () => {
+  listTasks.mockImplementation(async () => []);
+  const pushAssistant = mock(() => "message");
+  const noop = () => {};
+  const h = await renderHook((enabled: boolean) => useTaskPolling({
+    projectSlug: "p1", enabled, assets: [], pushAssistant,
+    updateMessage: noop, setActivity: noop, bumpRefresh: noop,
+  }), false as boolean);
+  h.result.current.pollTasks(["pending"]);
+  await flush();
+  expect(listTasks).not.toHaveBeenCalled();
+  expect(pushAssistant).not.toHaveBeenCalled();
+  await h.rerender(true);
+  await flush();
+  expect(listTasks).toHaveBeenCalled();
+  await h.unmount();
+});

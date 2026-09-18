@@ -53,6 +53,10 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** 已提交且尚未完成自动跟进的后台任务；随会话保存以支持恢复。 */
+  pendingTaskIds?: string[];
+  /** 等待工作台截图的资产；恢复后继续自检。 */
+  pendingInspectionAssetSlug?: string;
   /** 消息携带的库内图片（用户附件、自检截图或工具生成图），逻辑路径 */
   images?: string[];
   /** 用户发送这条消息时选中的资产快照；切换当前选择后历史指向不漂移 */

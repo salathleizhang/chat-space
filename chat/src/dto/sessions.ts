@@ -11,6 +11,8 @@ export const SessionMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["user", "assistant"]),
   content: z.string(),
+  pendingTaskIds: z.array(z.string().min(1)).optional(),
+  pendingInspectionAssetSlug: SlugSchema.optional(),
   /** 消息携带的库内图片（用户附件、自检截图或工具生成图），逻辑路径引用 */
   images: z.array(LogicalPathSchema).optional(),
   /**

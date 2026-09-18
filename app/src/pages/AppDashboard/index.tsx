@@ -159,6 +159,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
 
   const { tasks, pollTasks, onThumbnailGenerated } = useTaskPolling({
     projectSlug,
+    enabled: sessionReady,
     assets,
     pushAssistant,
     updateMessage,
@@ -231,6 +232,8 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     streaming,
   } = useAgentChat({
       projectSlug,
+      sessionId: activeSessionId,
+      sessionReady,
       messagesRef,
       pushMessage,
       pushAssistant,

@@ -18,7 +18,9 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
   return session.messages.map((message) => ({
     ...message,
     agentStatus:
-      message.agentStatus?.status === "running"
+      message.pendingTaskIds?.length || message.pendingInspectionAssetSlug
+        ? { label: "Resuming generation", status: "running" as const }
+        : message.agentStatus?.status === "running"
         ? { label: "Execution interrupted", status: "failed" as const }
         : message.agentStatus,
     activities: message.activities?.map((item) =>
@@ -30,7 +32,7 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
 }
 
 function storedMessages(messages: ChatMessage[]) {
-  return messages.map(({ id, role, content, images, assets, activities, agentStatus }) => ({
+  return messages.map(({ id, role, content, images, assets, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug }) => ({
     id,
     role,
     content,
@@ -38,6 +40,8 @@ function storedMessages(messages: ChatMessage[]) {
     ...(assets?.length ? { assets } : {}),
     ...(activities?.length ? { activities } : {}),
     ...(agentStatus ? { agentStatus } : {}),
+    ...(pendingTaskIds?.length ? { pendingTaskIds } : {}),
+    ...(pendingInspectionAssetSlug ? { pendingInspectionAssetSlug } : {}),
   }));
 }
 

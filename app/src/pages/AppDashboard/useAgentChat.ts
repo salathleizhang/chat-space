@@ -145,6 +145,8 @@ function failedToolActivityMessage(name: string) {
 
 interface UseAgentChatOptions {
   projectSlug: string;
+  sessionId?: string;
+  sessionReady?: boolean;
   messagesRef: { current: ChatMessage[] };
   pushMessage: (message: ChatMessage) => void;
   pushAssistant: (content: string) => void;
@@ -176,6 +178,8 @@ interface UseAgentChatOptions {
  */
 export function useAgentChat({
   projectSlug,
+  sessionId = projectSlug,
+  sessionReady = true,
   messagesRef,
   pushMessage,
   pushAssistant,
@@ -201,11 +205,37 @@ export function useAgentChat({
   /** 待回传的候选资产参考图（identify-asset 工具事件）：同样等当前流结束后发出 */
   const pendingIdentifyRef = useRef<{ assetSlug: string; path: string }[] | null>(null);
   /** 后台生成完成结果：等当前流结束后作为新一轮上下文交回 Agent，驱动其继续。 */
-  const pendingTaskSettlementsRef = useRef<TaskSettlement[]>([]);
+  const pendingTaskSettlementsRef = useRef<(TaskSettlement & { ownerId: string })[]>([]);
+  // 一次 HTTP 回复结束不等于创作完成；任务、截图和续跑之间共享等待状态。
+  const backgroundTasksRef = useRef(new Map<string, string>());
+  const inspectionWaitRef = useRef<{ ownerId: string; assetSlug: string } | null>(null);
+  const identifyingRef = useRef(false);
+  const registeredTasksRef = useRef(new Set<string>());
+  const registeredInspectionsRef = useRef(new Set<string>());
+  const generationEpochRef = useRef(0);
+  const [waiting, setWaiting] = useState(false);
+  const hasPendingWork = () => backgroundTasksRef.current.size > 0 ||
+    inspectionWaitRef.current !== null || identifyingRef.current;
+  const syncWaiting = () => setWaiting(hasPendingWork());
+  const sessionRef = useRef(sessionId);
+  useLayoutEffect(() => {
+    if (sessionRef.current === sessionId) return;
+    sessionRef.current = sessionId;
+    generationEpochRef.current += 1;
+    backgroundTasksRef.current.clear();
+    registeredTasksRef.current.clear();
+    registeredInspectionsRef.current.clear();
+    inspectionWaitRef.current = null;
+    identifyingRef.current = false;
+    pendingTaskSettlementsRef.current = [];
+    pendingInspectionRef.current = null;
+    pendingIdentifyRef.current = null;
+    setWaiting(false);
+  }, [sessionId]);
   /**
    * 是否有一条 SSE 流在跑。ref 供各处同步判断（回传排队要在回调里立刻读到），
-   * state 供 UI 渲染——刻意不复用 `activity.state === "working"`：后台生成任务
-   * 轮询期间它同样是 working，拿它当判据会在一次几分钟的模型生成期间把输入锁死。
+   * state 供 UI 渲染。实际流与后台等待分开记录，自动续跑可以开启下一条流，
+   * 但工作台在整个生成/自检链结束前持续显示运行，并保留停止入口。
    */
   const streamingRef = useRef(false);
   const [streaming, setStreaming] = useState(false);
@@ -237,8 +267,26 @@ export function useAgentChat({
       setActivity({ state: "idle", message: "Upload stopped" });
       return;
     }
-    if (!abortRef.current) return;
-    abortRef.current.abort();
+    generationEpochRef.current += 1;
+    const pendingOwners = new Set(backgroundTasksRef.current.values());
+    if (inspectionWaitRef.current) pendingOwners.add(inspectionWaitRef.current.ownerId);
+    for (const id of pendingOwners) {
+      updateMessage(id, (message) => ({
+        ...message,
+        pendingTaskIds: undefined,
+        pendingInspectionAssetSlug: undefined,
+        agentStatus: { label: "Follow-up stopped", status: "failed" },
+      }));
+    }
+    backgroundTasksRef.current.clear();
+    inspectionWaitRef.current = null;
+    identifyingRef.current = false;
+    pendingTaskSettlementsRef.current = [];
+    pendingInspectionRef.current = null;
+    pendingIdentifyRef.current = null;
+    setPreview((current) => current ? { ...current, inspection: null } : current);
+    syncWaiting();
+    abortRef.current?.abort();
     abortRef.current = null;
     markStreaming(false);
     const assistantId = activeAssistantIdRef.current;
@@ -254,7 +302,7 @@ export function useAgentChat({
         ),
       }));
     }
-    setActivity({ state: "idle", message: "Generation stopped" });
+    setActivity({ state: "idle", message: "Agent stopped; submitted background tasks may still finish" });
   };
 
   /**
@@ -264,6 +312,7 @@ export function useAgentChat({
     activeRef.current = true;
     return () => {
       activeRef.current = false;
+      generationEpochRef.current += 1;
       uploadAbortRef.current?.abort();
       uploadAbortRef.current = null;
       uploadingRef.current = false;
@@ -275,6 +324,11 @@ export function useAgentChat({
       pendingInspectionRef.current = null;
       pendingIdentifyRef.current = null;
       pendingTaskSettlementsRef.current = [];
+      backgroundTasksRef.current.clear();
+      registeredTasksRef.current.clear();
+      registeredInspectionsRef.current.clear();
+      inspectionWaitRef.current = null;
+      identifyingRef.current = false;
     };
   }, []);
 
@@ -354,21 +408,44 @@ export function useAgentChat({
     });
 
   /** agent 自检请求（inspect-asset 工具事件）：打开小窗并触发四视角截图 */
-  const startInspection = async (assetSlug: string, toolCallId?: string) => {
-    if (!projectSlug) return;
+  const failInspection = (message: string) => {
+    const owner = inspectionWaitRef.current;
+    inspectionWaitRef.current = null;
+    syncWaiting();
+    if (owner) updateMessage(owner.ownerId, (current) => ({
+      ...current,
+      pendingInspectionAssetSlug: undefined,
+      agentStatus: { label: "Inspection failed", status: "failed" },
+    }));
+    setActivity({ state: "attention", message });
+    pushAssistant(`⚠️ ${message}`);
+  };
+
+  const startInspection = async (assetSlug: string, toolCallId?: string, ownerId = activeAssistantIdRef.current) => {
+    if (!projectSlug || !ownerId) return;
+    const epoch = generationEpochRef.current;
+    inspectionWaitRef.current = { ownerId, assetSlug };
+    registeredInspectionsRef.current.add(ownerId);
+    updateMessage(ownerId, (message) => ({
+      ...message,
+      pendingInspectionAssetSlug: assetSlug,
+      agentStatus: { label: "Inspecting generated model", status: "running" },
+    }));
+    syncWaiting();
+    setActivity({ state: "working", message: "Inspecting generated model" });
     let assets: LibraryAsset[];
     try {
       assets = await fetchLibraryAssets(projectSlug);
     } catch (err) {
-      if (activeRef.current) {
-        pushAssistant(`⚠️ Inspection failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (activeRef.current && epoch === generationEpochRef.current) {
+        failInspection(`Inspection failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       return;
     }
-    if (!activeRef.current) return;
+    if (!activeRef.current || epoch !== generationEpochRef.current) return;
     const asset = assets.find((a) => a.assetSlug === assetSlug);
     if (!asset?.modelPath) {
-      pushAssistant(`⚠️ Inspection failed: asset "${assetSlug}" has no renderable model output.`);
+      failInspection(`Inspection failed: asset "${assetSlug}" has no renderable model output.`);
       return;
     }
     const id =
@@ -381,10 +458,12 @@ export function useAgentChat({
   const handleInspectionCaptured = useCallback(
     (id: string, pngBase64: string | null) => {
       const current = preview;
+      const epoch = generationEpochRef.current;
+      if (!inspectionWaitRef.current || current?.inspection?.id !== id) return;
       setPreview((p) => (p ? { ...p, inspection: null } : p));
       if (!current) return;
       if (!pngBase64) {
-        pushAssistant("⚠️ Inspection screenshot failed: the model did not render in the preview.");
+        failInspection("Inspection screenshot failed: the model did not render in the preview.");
         return;
       }
       void uploadInspection(
@@ -394,15 +473,13 @@ export function useAgentChat({
         pngBase64,
       )
         .then((path) => {
-          if (!activeRef.current) return;
+          if (!activeRef.current || epoch !== generationEpochRef.current) return;
           pendingInspectionRef.current = { assetSlug: current.asset.assetSlug, path };
           if (!streamingRef.current) flushPendingInspection();
         })
         .catch((err) => {
-          if (!activeRef.current) return;
-          pushAssistant(
-            `⚠️ Failed to upload inspection image: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          if (!activeRef.current || epoch !== generationEpochRef.current) return;
+          failInspection(`Failed to upload inspection image: ${err instanceof Error ? err.message : String(err)}`);
         });
     },
     [preview, pushAssistant],
@@ -418,6 +495,13 @@ export function useAgentChat({
     const pending = pendingInspectionRef.current;
     if (!pending) return false;
     pendingInspectionRef.current = null;
+    const owner = inspectionWaitRef.current;
+    inspectionWaitRef.current = null;
+    syncWaiting();
+    if (owner) updateMessage(owner.ownerId, (message) => ({
+      ...message, pendingInspectionAssetSlug: undefined,
+      agentStatus: { label: "Inspection images ready", status: "completed" },
+    }));
     const userMessage: ChatMessage = {
       id: nextId(),
       role: "user",
@@ -436,22 +520,29 @@ export function useAgentChat({
    */
   const startIdentify = async (assetSlugs: string[]) => {
     if (!projectSlug) return;
+    const epoch = generationEpochRef.current;
+    identifyingRef.current = true;
+    syncWaiting();
     let assets: LibraryAsset[];
     try {
       assets = await fetchLibraryAssets(projectSlug);
     } catch (err) {
-      if (activeRef.current) {
+      if (activeRef.current && epoch === generationEpochRef.current) {
+        identifyingRef.current = false;
+        syncWaiting();
         pushAssistant(`⚠️ Asset identification failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       return;
     }
-    if (!activeRef.current) return;
+    if (!activeRef.current || epoch !== generationEpochRef.current) return;
     // slug → asset 建一次表，避免对每个候选 slug 都线性扫一遍 assets
     const bySlug = new Map(assets.map((a) => [a.assetSlug, a]));
     const found = assetSlugs
       .map((slug) => bySlug.get(slug))
       .filter((a): a is LibraryAsset => Boolean(a && a.sourceImages.length > 0));
     if (found.length === 0) {
+      identifyingRef.current = false;
+      syncWaiting();
       pushAssistant("⚠️ Asset identification failed: no candidate assets have reference images.");
       return;
     }
@@ -468,6 +559,8 @@ export function useAgentChat({
     const pending = pendingIdentifyRef.current;
     if (!pending || pending.length === 0) return false;
     pendingIdentifyRef.current = null;
+    identifyingRef.current = false;
+    syncWaiting();
     const userMessage: ChatMessage = {
       id: nextId(),
       role: "user",
@@ -486,6 +579,16 @@ export function useAgentChat({
     const settlements = pendingTaskSettlementsRef.current;
     if (settlements.length === 0) return false;
     pendingTaskSettlementsRef.current = [];
+    for (const settlement of settlements) {
+      const ids = new Set(settlement.tasks.map((task) => task.id));
+      for (const id of ids) backgroundTasksRef.current.delete(id);
+      updateMessage(settlement.ownerId, (message) => ({
+        ...message,
+        pendingTaskIds: message.pendingTaskIds?.filter((id) => !ids.has(id)),
+        agentStatus: { label: "Generation finished; continuing", status: "completed" },
+      }));
+    }
+    syncWaiting();
     const tasks = settlements.flatMap((settlement) => settlement.tasks);
     const userMessage: ChatMessage = {
       id: nextId(),
@@ -497,7 +600,7 @@ export function useAgentChat({
             ? `- ${taskSubjectLabel(task.subject)}: succeeded`
             : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
         ),
-        "Continue from the next incomplete step in the current plan; do not recreate or change the plan structure.",
+        "Continue the original request automatically: inspect successful model outputs as needed, then deliver the result. Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",
       ].join("\n"),
     };
     const history = toOutgoingHistory([...messagesRef.current, userMessage]);
@@ -506,7 +609,7 @@ export function useAgentChat({
     return true;
   };
 
-  const queueTaskSettlement = (settlement: TaskSettlement) => {
+  const queueTaskSettlement = (settlement: TaskSettlement & { ownerId: string }) => {
     pendingTaskSettlementsRef.current.push(settlement);
     // 轮询回报消息也是本 tick 才写入 React；推迟后再取完整历史。
     setTimeout(() => {
@@ -514,6 +617,33 @@ export function useAgentChat({
         flushPendingTaskSettlements();
       }
     }, 0);
+  };
+
+  const trackTasks = (ownerId: string, taskIds: string[]) => {
+    const freshIds = taskIds.filter((id) => !registeredTasksRef.current.has(id));
+    if (freshIds.length === 0) return;
+    const epoch = generationEpochRef.current;
+    for (const id of freshIds) {
+      registeredTasksRef.current.add(id);
+      backgroundTasksRef.current.set(id, ownerId);
+    }
+    syncWaiting();
+    if (!streamingRef.current) {
+      setActivity({ state: "working", message: "Generating; will continue automatically" });
+    }
+    updateMessage(ownerId, (message) => ({
+      ...message,
+      pendingTaskIds: [...new Set([...(message.pendingTaskIds ?? []), ...freshIds])],
+      agentStatus: { label: "Generating; will continue automatically", status: "running" },
+    }));
+    pollTasks(freshIds, (settlement) => {
+      if (!activeRef.current || epoch !== generationEpochRef.current) return;
+      updateMessage(ownerId, (message) => ({
+        ...message,
+        agentStatus: { label: "Checking generation results", status: "running" },
+      }));
+      queueTaskSettlement({ ...settlement, ownerId });
+    });
   };
 
   /** 驱动一轮 agent 对话流（send 与自检回传共用） */
@@ -536,9 +666,6 @@ export function useAgentChat({
     let toolSequence = 0;
     let replying = false;
     let streamedContent = "";
-    let pendingBackgroundBatches = 0;
-    let pendingModelCount = 0;
-    let backgroundTaskFailed = false;
     pushMessage({
       id: assistantId,
       role: "assistant",
@@ -557,6 +684,7 @@ export function useAgentChat({
       llm,
       {
         onDelta: (delta) => {
+          if (!activeRef.current || controller.signal.aborted) return;
           if (!delta) return;
           streamedContent += delta;
           if (!replying) {
@@ -570,6 +698,7 @@ export function useAgentChat({
           appendTo(assistantId, (content) => content + delta);
         },
         onTool: (name, toolCallId, args) => {
+          if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
           const label = toolActivityMessage(name);
           const activityId = toolCallId ?? `tool-${assistantId}-${++toolSequence}`;
@@ -606,6 +735,7 @@ export function useAgentChat({
           }
         },
         onToolResult: (name, toolCallId, images, taskIds, updatedPlan) => {
+          if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
           replying = false;
           updateMessage(assistantId, (message) => {
@@ -637,27 +767,11 @@ export function useAgentChat({
           }
           if (IMAGE_OUTPUT_TOOLS.has(name)) bumpRefresh();
           if (TASK_STARTING_TOOLS.has(name) && taskIds && taskIds.length > 0) {
-            pendingBackgroundBatches += 1;
-            if (name === "start-3d-batch") pendingModelCount += taskIds.length;
-            pollTasks(taskIds, (settlement) => {
-              pendingBackgroundBatches -= 1;
-              if (name === "start-3d-batch") {
-                pendingModelCount = Math.max(0, pendingModelCount - settlement.tasks.length);
-              }
-              backgroundTaskFailed ||= settlement.tasks.some(
-                (task) => task.status === "failed",
-              );
-              updateMessage(assistantId, (message) => ({
-                ...message,
-                agentStatus: backgroundTaskFailed
-                  ? { label: "Background task failed", status: "failed" }
-                  : { label: "Background task finished", status: "completed" },
-              }));
-              queueTaskSettlement(settlement);
-            });
+            trackTasks(assistantId, taskIds);
           }
         },
         onToolError: (name, toolCallId, errorMessage) => {
+          if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
           const failureLabel = failedToolActivityMessage(name);
           const label = errorMessage
@@ -693,6 +807,7 @@ export function useAgentChat({
           setActivity({ state: "working", message: "Thinking" });
         },
         onError: (message) => {
+          if (!activeRef.current || controller.signal.aborted) return;
           abortRef.current = null;
           activeAssistantIdRef.current = null;
           markStreaming(false);
@@ -710,8 +825,14 @@ export function useAgentChat({
           appendTo(assistantId, (content) =>
             content ? `${content}\n\n⚠️ ${message}` : `⚠️ ${message}`,
           );
+          // 工具已提交的后台工作仍可能成功；流出错也必须释放排队的完成通知。
+          setTimeout(() => {
+            if (!activeRef.current || controller.signal.aborted) return;
+            if (!flushPendingInspection() && !flushPendingIdentify()) flushPendingTaskSettlements();
+          }, 0);
         },
         onDone: () => {
+          if (!activeRef.current || controller.signal.aborted) return;
           abortRef.current = null;
           activeAssistantIdRef.current = null;
           markStreaming(false);
@@ -732,25 +853,19 @@ export function useAgentChat({
             );
             return {
               ...message,
-              agentStatus: hasFailedStep || backgroundTaskFailed
+              agentStatus: hasFailedStep
                 ? { label: "Some steps failed", status: "failed" }
-                : pendingBackgroundBatches > 0
-                  ? { label: "Background tasks running", status: "running" }
+                : hasPendingWork()
+                  ? { label: inspectionWaitRef.current ? "Inspecting generated model" : "Generating; will continue automatically", status: "running" }
                 : { label: "Completed", status: "completed" },
               activities,
             };
           });
           setActivity(
-            pendingBackgroundBatches > 0
-              ? {
-                  state: "working",
-                  message:
-                    pendingModelCount > 1
-                      ? `Generating ${pendingModelCount} models`
-                      : pendingModelCount === 1
-                        ? "Generating one model"
-                        : "Background tasks running",
-                }
+            hasPendingWork()
+              ? { state: "working", message: inspectionWaitRef.current
+                  ? "Inspecting generated model"
+                  : "Generating; will continue automatically" }
               : { state: "idle", message: "Agent finished responding" },
           );
           // agent 可能更新了计划或产出了资产：刷新派生状态
@@ -769,7 +884,7 @@ export function useAgentChat({
             这个延迟回调届时是 no-op，不会往新项目里发。
           */
           setTimeout(() => {
-            if (!activeRef.current) return;
+            if (!activeRef.current || controller.signal.aborted) return;
             if (!flushPendingInspection() && !flushPendingIdentify()) {
               flushPendingTaskSettlements();
             }
@@ -793,7 +908,7 @@ export function useAgentChat({
   ) => {
     // 提前拦一道：拦在这里才不会推入一条注定得不到回复的用户消息
     // （startStream 里那道是真正的不变量，两者不重复，职责不同）
-    if (streamingRef.current || uploadingRef.current) return;
+    if (streamingRef.current || uploadingRef.current || hasPendingWork()) return;
     if (imageFiles && imageFiles.length > 0) {
       const controller = new AbortController();
       uploadAbortRef.current = controller;
@@ -813,11 +928,26 @@ export function useAgentChat({
     startStream(history);
   };
 
+  // 只恢复当前会话明确记录的任务；不把其他会话的项目任务接到这里。
+  useEffect(() => {
+    if (!sessionReady) return;
+    for (const message of messagesRef.current) {
+      if (message.role !== "assistant") continue;
+      if (message.pendingTaskIds?.length) trackTasks(message.id, message.pendingTaskIds);
+      if (message.pendingInspectionAssetSlug && !registeredInspectionsRef.current.has(message.id)) {
+        void startInspection(message.pendingInspectionAssetSlug, undefined, message.id);
+      }
+    }
+  });
+
   const openPreview = useCallback(
     (asset: LibraryAsset) => setPreview({ asset, inspection: null }),
     [],
   );
-  const closePreview = useCallback(() => setPreview(null), []);
+  const closePreview = useCallback(() => {
+    if (inspectionWaitRef.current) failInspection("Inspection stopped because the preview was closed");
+    setPreview(null);
+  }, [pushAssistant, updateMessage, setActivity]);
   /**
    * 只在小窗正开着这个资产时关掉。用函数式 setState 读最新值，而不是让调用方拿
    * `preview` 去比对——那样调用方的 `useCallback` 就得把 `preview` 记进依赖，
@@ -836,6 +966,6 @@ export function useAgentChat({
     handleInspectionCaptured,
     send,
     stopStream,
-    streaming: streaming || uploading,
+    streaming: streaming || uploading || waiting,
   };
 }

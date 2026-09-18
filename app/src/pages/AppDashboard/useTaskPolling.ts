@@ -9,6 +9,8 @@ import type { AgentActivity, ChatMessage } from "../../widgets/AgentDock";
 
 interface UseTaskPollingOptions {
   projectSlug: string;
+  /** 先恢复会话，再允许轮询写入完成消息，避免抢占恢复窗口。 */
+  enabled?: boolean;
   assets: LibraryAsset[];
   pushAssistant: (content: string, images?: string[]) => string;
   updateMessage: (id: string, updater: (message: ChatMessage) => ChatMessage) => void;
@@ -44,6 +46,7 @@ export function modelPathFromTaskResult(result: unknown): string | null {
 /** 轮询当前项目的生成任务，逐个回报完成/失败，全部结束后停止 */
 export function useTaskPolling({
   projectSlug,
+  enabled = true,
   assets,
   pushAssistant,
   updateMessage,
@@ -109,7 +112,7 @@ export function useTaskPolling({
   }, []);
 
   const pollTasks = useCallback((taskIds: string[] = [], onSettled?: TaskSettledCallback) => {
-    if (cancelledRef.current || !projectSlug) return;
+    if (cancelledRef.current || !enabled || !projectSlug) return;
     const ids = new Set(taskIds.filter(Boolean));
     if (ids.size > 0) {
       activeBatchesRef.current.set(++batchSeqRef.current, { ids, onSettled });
@@ -234,10 +237,10 @@ export function useTaskPolling({
       for (const callback of callbacks) callback();
     };
     void tick();
-  }, [projectSlug, pushAssistant, updateMessage, setActivity, bumpRefresh]);
+  }, [projectSlug, enabled, pushAssistant, updateMessage, setActivity, bumpRefresh]);
 
   useEffect(() => {
-    if (!projectSlug) return;
+    if (!projectSlug || !enabled) return;
     let cancelled = false;
     initialLoadingRef.current = true;
     void listTasks(projectSlug)
@@ -262,7 +265,7 @@ export function useTaskPolling({
     return () => {
       cancelled = true;
     };
-  }, [projectSlug, pollTasks]);
+  }, [projectSlug, enabled, pollTasks]);
 
   return { tasks, pollTasks, onThumbnailGenerated };
 }

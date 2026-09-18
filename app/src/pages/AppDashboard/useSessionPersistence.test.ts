@@ -437,3 +437,24 @@ describe("useSessionPersistence", () => {
     await h.unmount();
   });
 });
+
+test("后台生成与自检恢复点随会话保存，恢复时不显示执行中断", async () => {
+  const pending: ChatMessage[] = [
+    { id: "task", role: "assistant", content: "生成中", pendingTaskIds: ["job-1"], agentStatus: { label: "Generating", status: "running" } },
+    { id: "inspection", role: "assistant", content: "检查中", pendingInspectionAssetSlug: "dog", agentStatus: { label: "Inspecting", status: "running" } },
+  ];
+  fetchLatestSession.mockImplementation(async () => session("resume", pending));
+  const p = parent();
+  const h = await p.mount("resume");
+  await flush();
+  expect(p.messages.every((message) => message.agentStatus?.status === "running")).toBe(true);
+  expect(p.messages[0]?.pendingTaskIds).toEqual(["job-1"]);
+  expect(p.messages[1]?.pendingInspectionAssetSlug).toBe("dog");
+  await h.rerender("resume");
+  await flush(PAST_DEBOUNCE);
+  expect(saveSession.mock.calls.at(-1)?.[3]).toEqual(expect.arrayContaining([
+    expect.objectContaining({ pendingTaskIds: ["job-1"] }),
+    expect.objectContaining({ pendingInspectionAssetSlug: "dog" }),
+  ]));
+  await h.unmount();
+});

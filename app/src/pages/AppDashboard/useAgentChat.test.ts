@@ -797,3 +797,192 @@ describe("useAgentChat 中止能力", () => {
   });
 
 });
+
+/** 用真实消息 state 覆盖整条链，避免只断言 mock 调用而漏掉恢复和状态竞争。 */
+async function liveHarness(ready = true) {
+  const { useChatMessages } = await import("./useChatMessages");
+  const pollTasks = mock((..._args: unknown[]) => {});
+  const h = await renderHook(({ sessionReady, sessionId }) => {
+    const chat = useChatMessages();
+    const agent = useAgentChat({
+      ...chat,
+      projectSlug: "proj-a",
+      sessionId,
+      sessionReady,
+      pollTasks: pollTasks as never,
+      bumpRefresh: () => {},
+    });
+    return { ...chat, ...agent };
+  }, { sessionReady: ready, sessionId: "session-a" });
+  const settle = (call = 0) => {
+    const [ids, callback] = pollTasks.mock.calls[call]! as [string[], (value: unknown) => void];
+    callback({ tasks: ids.map((id) => ({
+      id, workflowId: "3d", projectSlug: "proj-a", subject: "3D 生成：金毛", status: "succeeded",
+    })) });
+  };
+  return { h, pollTasks, settle };
+}
+
+describe("生成流程持续执行", () => {
+  test("提交后的回复结束仍保持运行，后台完成自动交付后才结束", async () => {
+    const { h, settle } = await liveHarness();
+    await act(async () => h.result.current.send("生成金毛的模型"));
+    await act(async () => handlersOf(0).onToolResult("start-3d-batch", "t", undefined, ["job-1"]));
+    await act(async () => handlersOf(0).onDone());
+    expect(h.result.current.streaming).toBe(true);
+    expect(h.result.current.activity.state).toBe("working");
+    expect(h.result.current.messages.at(-1)).toMatchObject({ pendingTaskIds: ["job-1"], agentStatus: { status: "running" } });
+    await act(async () => h.result.current.send("重复生成"));
+    expect(streamChat).toHaveBeenCalledTimes(1);
+
+    await act(async () => settle());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    expect(h.result.current.streaming).toBe(true);
+    expect(h.result.current.messages.some((message) => message.pendingTaskIds?.length)).toBe(false);
+    await act(async () => {
+      handlersOf(1).onDelta("模型已完成，这是产物路径。");
+      handlersOf(1).onDone();
+    });
+    expect(h.result.current.streaming).toBe(false);
+    expect(h.result.current.messages.at(-1)?.content).toContain("模型已完成");
+    await h.unmount();
+  });
+
+  test("恢复会话后重新跟踪保存的任务，即使任务离线期间已完成也会自动续跑一次", async () => {
+    const { h, pollTasks, settle } = await liveHarness(false);
+    await act(async () => h.result.current.setMessages([
+      { id: "user", role: "user", content: "生成金毛模型" },
+      { id: "owner", role: "assistant", content: "正在生成", pendingTaskIds: ["saved-job"] },
+    ]));
+    expect(pollTasks).not.toHaveBeenCalled();
+    await h.rerender({ sessionReady: true, sessionId: "session-a" });
+    expect(pollTasks).toHaveBeenCalledTimes(1);
+    expect(pollTasks.mock.calls[0]![0]).toEqual(["saved-job"]);
+    expect(h.result.current.streaming).toBe(true);
+    await h.rerender({ sessionReady: true, sessionId: "session-a" });
+    expect(pollTasks).toHaveBeenCalledTimes(1);
+    await act(async () => settle());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(streamChat.mock.calls[0]![1]).toEqual(expect.arrayContaining([
+      { role: "user", content: "生成金毛模型" },
+      expect.objectContaining({ content: expect.stringContaining("[Background tasks finished]") }),
+    ]));
+    await h.unmount();
+  });
+
+  test("等待期间主动停止，晚到的结果不能重新唤醒或在刷新后继续", async () => {
+    const { h, settle } = await liveHarness();
+    await act(async () => h.result.current.send("生成模型"));
+    await act(async () => handlersOf(0).onToolResult("start-3d-batch", "t", undefined, ["job-1"]));
+    await act(async () => handlersOf(0).onDone());
+    await act(async () => h.result.current.stopStream());
+    expect(h.result.current.streaming).toBe(false);
+    expect(h.result.current.messages.some((message) => message.pendingTaskIds?.length)).toBe(false);
+    await act(async () => settle());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    await act(async () => h.result.current.send("新的请求"));
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    await h.unmount();
+  });
+
+  test("完成结果先到、对话流随后出错时，仍然释放完成通知自动继续", async () => {
+    const { h, settle } = await liveHarness();
+    await act(async () => h.result.current.send("生成模型"));
+    await act(async () => handlersOf(0).onToolResult("start-3d-batch", "t", undefined, ["job-1"]));
+    await act(async () => settle());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    await act(async () => handlersOf(0).onError("connection lost after submission"));
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    await h.unmount();
+  });
+
+  test("自检截图尚未返回时仍在运行，截图上传后自动开启检查轮", async () => {
+    const originalFetch = globalThis.fetch;
+    const pendingAsset = deferred<Response>();
+    globalThis.fetch = mock(async (_input: unknown, init?: RequestInit) =>
+      init?.method === "POST"
+        ? Response.json({ path: "projects/proj-a/assets/dog/check.png" })
+        : pendingAsset.promise,
+    ) as unknown as typeof fetch;
+    const { h } = await liveHarness();
+    try {
+      await act(async () => h.result.current.send("检查模型"));
+      await act(async () => handlersOf(0).onTool("inspect-asset", "inspection-1", { assetSlug: "dog" }));
+      await act(async () => handlersOf(0).onDone());
+      expect(h.result.current.streaming).toBe(true);
+      expect(h.result.current.messages.at(-1)?.pendingInspectionAssetSlug).toBe("dog");
+      pendingAsset.resolve(Response.json({
+        project: { slug: "proj-a", name: "Test" },
+        assets: [{ slug: "dog", files: ["0-dog.glb"] }],
+        sources: [],
+      }));
+      await flush(20);
+      expect(h.result.current.preview?.inspection?.id).toBe("inspection-1");
+      await act(async () => h.result.current.handleInspectionCaptured("inspection-1", "aGVsbG8="));
+      await flush(20);
+      expect(streamChat).toHaveBeenCalledTimes(2);
+      expect(h.result.current.streaming).toBe(true);
+      expect(h.result.current.messages.some((message) => message.pendingInspectionAssetSlug)).toBe(false);
+      await act(async () => handlersOf(1).onDone());
+      expect(h.result.current.streaming).toBe(false);
+    } finally {
+      await h.unmount();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("恢复保存的自检，截图失败时解除等待并明确报错", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () => Response.json({
+    project: { slug: "proj-a", name: "Test" }, sources: [],
+    assets: [{ slug: "dog", files: ["0-dog.glb"] }],
+  })) as unknown as typeof fetch;
+  const { h } = await liveHarness(false);
+  try {
+    await act(async () => h.result.current.setMessages([
+      { id: "inspection", role: "assistant", content: "检查模型", pendingInspectionAssetSlug: "dog" },
+    ]));
+    await h.rerender({ sessionReady: true, sessionId: "session-a" });
+    await flush(20);
+    expect(h.result.current.streaming).toBe(true);
+    const id = h.result.current.preview?.inspection?.id;
+    expect(id).toBeDefined();
+    await act(async () => h.result.current.handleInspectionCaptured(id!, null));
+    expect(h.result.current.streaming).toBe(false);
+    expect(h.result.current.activity.state).toBe("attention");
+    expect(h.result.current.messages.some((message) => message.pendingInspectionAssetSlug)).toBe(false);
+    expect(streamChat).not.toHaveBeenCalled();
+  } finally {
+    await h.unmount();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("关闭自检预览不会留下无法完成的等待状态", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () => Response.json({
+    project: { slug: "proj-a", name: "Test" }, sources: [],
+    assets: [{ slug: "dog", files: ["0-dog.glb"] }],
+  })) as unknown as typeof fetch;
+  const { h } = await liveHarness();
+  try {
+    await act(async () => h.result.current.send("检查模型"));
+    await act(async () => handlersOf(0).onTool("inspect-asset", "inspection", { assetSlug: "dog" }));
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+    expect(h.result.current.streaming).toBe(true);
+    await act(async () => h.result.current.closePreview());
+    expect(h.result.current.streaming).toBe(false);
+    expect(h.result.current.preview).toBeNull();
+    expect(h.result.current.messages.at(-1)?.content).toContain("preview was closed");
+  } finally {
+    await h.unmount();
+    globalThis.fetch = originalFetch;
+  }
+});
