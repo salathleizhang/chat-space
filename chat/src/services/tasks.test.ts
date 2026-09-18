@@ -40,7 +40,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /** 假 FAL 3D 队列 + 假 World Labs API + 假 CDN */
-function makeFakeFetch(): typeof fetch {
+function makeFakeFetch(onWorldRequest?: (body: Record<string, unknown>) => void): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
 
@@ -54,6 +54,7 @@ function makeFakeFetch(): typeof fetch {
 
     // World Labs（提交即完成，轮询路径与 FAL 同构、由 fal.test 覆盖）
     if (url.endsWith("/worlds:generate")) {
+      onWorldRequest?.(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
       return jsonResponse({
         operation_id: "op-1",
         done: true,
@@ -226,7 +227,7 @@ describe("runProjectWorldGeneration", () => {
   test("全链路：空环境 prompt → World Labs → 全资产落盘", async () => {
     const result = await runProjectWorldGeneration(
       storage,
-      { projectSlug: "gen" },
+      { projectSlug: "gen", mode: "empty-environment" },
       { apiKey: "wlt-key", fetchFn: makeFakeFetch(), pollIntervalMs: 1 },
     );
 
@@ -254,12 +255,59 @@ describe("runProjectWorldGeneration", () => {
     // 再生成一次不会覆盖 world，而是创建独立资产并切换当前指针
     const next = await runProjectWorldGeneration(
       storage,
-      { projectSlug: "gen" },
+      { projectSlug: "gen", mode: "empty-environment" },
       { apiKey: "wlt-key", fetchFn: makeFakeFetch(), pollIntervalMs: 1 },
     );
     expect(next.worldJson).toContain("/assets/world-2/");
     expect((await requireProject(storage, "gen")).currentWorld).toBe("world-2");
     expect(await storage.exists(dir)).toBe(true);
+  });
+
+  test("直接模式无需场景分析，使用源图和原始提示词", async () => {
+    await createProject(storage, { name: "直接生成", slug: "direct-world" });
+    const sourceImage = `${projectSourceDir("direct-world")}/0-photo.png`;
+    await storage.writeBytes(sourceImage, PNG_BYTES);
+    let request: Record<string, unknown> | undefined;
+
+    const result = await runProjectWorldGeneration(
+      storage,
+      { projectSlug: "direct-world", mode: "direct", prompt: "保留图中的家具" },
+      { apiKey: "wlt-key", fetchFn: makeFakeFetch((body) => { request = body; }) },
+    );
+
+    expect(result.worldJson).toContain("/assets/world/");
+    expect(request?.world_prompt).toMatchObject({
+      type: "image",
+      text_prompt: "保留图中的家具",
+    });
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.params).toMatchObject({ image: sourceImage, prompt: "保留图中的家具" });
+  });
+
+  test("直接模式可指定只用文字，即使项目有源图", async () => {
+    let request: Record<string, unknown> | undefined;
+    const result = await runProjectWorldGeneration(
+      storage,
+      { projectSlug: "direct-world", mode: "direct", sourceImage: null, prompt: "海边小镇" },
+      { apiKey: "wlt-key", fetchFn: makeFakeFetch((body) => { request = body; }) },
+    );
+    expect(request?.world_prompt).toEqual({ type: "text", text_prompt: "海边小镇" });
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.params.image).toBeUndefined();
+  });
+
+  test("空环境模式仍要求场景分析；直接模式缺少图和文字时拒绝提交", async () => {
+    await createProject(storage, { name: "空项目", slug: "empty-world" });
+    await expect(runProjectWorldGeneration(
+      storage,
+      { projectSlug: "empty-world", mode: "empty-environment" },
+      { apiKey: "wlt-key", fetchFn: makeFakeFetch() },
+    )).rejects.toThrow("还没有场景分析");
+    await expect(runProjectWorldGeneration(
+      storage,
+      { projectSlug: "empty-world", mode: "direct", sourceImage: null },
+      { apiKey: "wlt-key", fetchFn: makeFakeFetch() },
+    )).rejects.toThrow("需要源图或文字 prompt");
   });
 });
 

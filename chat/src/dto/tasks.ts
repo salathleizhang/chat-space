@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SlugSchema } from "./library";
+import { LogicalPathSchema, SlugSchema } from "./library";
 
 /** 生成任务契约；历史 provider ID 只用于读取旧任务元数据。 */
 
@@ -94,6 +94,11 @@ export type Start3dBatchRequest = z.infer<typeof Start3dBatchRequestSchema>;
 
 export const StartWorldTaskRequestSchema = z.object({
   projectSlug: SlugSchema,
+  /** 旧客户端未传 mode 时保留原来的空环境行为。 */
+  mode: z.enum(["direct", "empty-environment"]).default("empty-environment"),
+  /** 省略使用最新源图；null 只用文字。 */
+  sourceImage: LogicalPathSchema.nullable().optional(),
+  prompt: z.string().optional(),
   extraPrompt: z.string().optional(),
   worldLabsApiKey: z.string().min(1),
 });

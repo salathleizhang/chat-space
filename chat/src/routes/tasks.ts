@@ -50,7 +50,9 @@ taskRoutes.post("/world", async (c) => {
   const req = StartWorldTaskRequestSchema.parse(withServerCredentials(await c.req.json()));
   const task = startWorldTask(req.projectSlug, {
     worldLabsApiKey: req.worldLabsApiKey,
-    extraPrompt: req.extraPrompt,
+    ...(req.mode === "direct"
+      ? { mode: "direct" as const, sourceImage: req.sourceImage, prompt: req.prompt }
+      : { mode: "empty-environment" as const, sourceImage: req.sourceImage, extraPrompt: req.extraPrompt }),
   });
   return c.json({ task }, 202);
 });

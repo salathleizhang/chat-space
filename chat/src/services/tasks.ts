@@ -207,12 +207,19 @@ export function start3dBatch(
 
 export function startWorldTask(
   projectSlug: string,
-  options: { worldLabsApiKey: string; extraPrompt?: string },
+  options: { worldLabsApiKey: string } & (
+    | { mode: "direct"; sourceImage?: string | null; prompt?: string }
+    | { mode?: "empty-environment"; sourceImage?: string | null; extraPrompt?: string }
+  ),
 ): GenerationTask {
-  return startCustomTask("world", projectSlug, "世界生成（World Labs）", (context) =>
+  const input = options.mode === "direct"
+    ? { projectSlug, mode: options.mode, sourceImage: options.sourceImage, prompt: options.prompt }
+    : { projectSlug, mode: "empty-environment" as const, sourceImage: options.sourceImage, extraPrompt: options.extraPrompt };
+  const subject = options.mode === "direct" ? "世界生成（World Labs）" : "空环境生成（World Labs）";
+  return startCustomTask("world", projectSlug, subject, (context) =>
     runProjectWorldGeneration(
       getAssetStorage(),
-      { projectSlug, extraPrompt: options.extraPrompt },
+      input,
       { apiKey: options.worldLabsApiKey },
       async (assetSlug) => {
         // 身份已提交：推进 publishing 并记录 assetSlug，让重启恢复能识别「已发布但状态未落盘」

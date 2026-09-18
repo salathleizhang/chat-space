@@ -211,13 +211,17 @@ function extOf(url: string, fallback: string): string {
   return match ? match[1]!.toLowerCase() : fallback;
 }
 
-// ---------- 项目级入口：从场景分析合成空环境世界 ----------
+// ---------- 项目级入口：直接生成或从场景分析合成空环境世界 ----------
 
-export const ProjectWorldInputSchema = z.object({
+const ProjectWorldBaseSchema = {
   projectSlug: SlugSchema,
-  sourceImage: LogicalPathSchema.optional(),
-  extraPrompt: z.string().optional(),
-});
+  /** 省略时使用最新源图；null 表示只用文字生成。 */
+  sourceImage: LogicalPathSchema.nullable().optional(),
+};
+export const ProjectWorldInputSchema = z.discriminatedUnion("mode", [
+  z.object({ ...ProjectWorldBaseSchema, mode: z.literal("direct"), prompt: z.string().optional() }),
+  z.object({ ...ProjectWorldBaseSchema, mode: z.literal("empty-environment"), extraPrompt: z.string().optional() }),
+]);
 export type ProjectWorldInput = z.infer<typeof ProjectWorldInputSchema>;
 
 /**
@@ -249,7 +253,7 @@ export function composeEmptyWorldPrompt(
   );
 }
 
-/** 世界生成的项目级入口（§4.4）：读分析 → 空环境 prompt → 默认最新源图 → 生成 */
+/** 世界生成的项目级入口：直接生成，或根据场景分析生成空环境。 */
 export async function runProjectWorldGeneration(
   storage: AssetStorage,
   rawInput: ProjectWorldInput,
@@ -259,29 +263,40 @@ export async function runProjectWorldGeneration(
   const input = ProjectWorldInputSchema.parse(rawInput);
   await requireProject(storage, input.projectSlug);
 
-  const analysisPath = projectAnalysisFile(input.projectSlug);
-  if (!(await storage.exists(analysisPath))) {
-    throw new ChatServiceError(
-      `项目「${input.projectSlug}」还没有场景分析，请先运行图片分析（uncover）`,
-      409,
-      "analysis_missing",
-    );
-  }
-  const analysis = await readJson(storage, analysisPath, SceneAnalysisSchema);
-
   let image = input.sourceImage;
-  if (!image) {
+  if (image === undefined) {
     const sourceDir = projectSourceDir(input.projectSlug);
     const latest = pickLatestSourceImage(await storage.list(sourceDir));
     if (latest) image = `${sourceDir}/${latest}`;
+  }
+
+  let prompt = input.mode === "direct" ? input.prompt : undefined;
+  if (input.mode === "empty-environment") {
+    const analysisPath = projectAnalysisFile(input.projectSlug);
+    if (!(await storage.exists(analysisPath))) {
+      throw new ChatServiceError(
+        `项目「${input.projectSlug}」还没有场景分析；生成空环境前请先分析并确认参考图对象`,
+        409,
+        "analysis_missing",
+      );
+    }
+    const analysis = await readJson(storage, analysisPath, SceneAnalysisSchema);
+    prompt = composeEmptyWorldPrompt(analysis, input.extraPrompt);
+  }
+  if (!image && !prompt?.trim()) {
+    throw new ChatServiceError(
+      "直接生成世界需要源图或文字 prompt",
+      400,
+      "worldlabs_missing_prompt",
+    );
   }
 
   return runWorldGeneration(
     storage,
     WorldGenParamsSchema.parse({
       projectSlug: input.projectSlug,
-      image,
-      prompt: composeEmptyWorldPrompt(analysis, input.extraPrompt),
+      image: image ?? undefined,
+      prompt,
     }),
     callOptions,
     onPublished,

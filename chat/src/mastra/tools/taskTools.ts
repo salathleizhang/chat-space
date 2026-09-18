@@ -1,6 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { SlugSchema } from "../../dto/library";
+import { LogicalPathSchema, SlugSchema } from "../../dto/library";
 import {
   listTasks,
   resolve3dObjects,
@@ -75,8 +75,11 @@ export const start3dBatchTool = createTool({
 export const startWorldTaskTool = createTool({
   id: "start-world-task",
   description:
-    "为当前项目启动 World Labs 场景生成任务（付费操作——启动前须经用户同意），以最新源图为底生成可探索 3D 环境",
+    "为当前项目启动 World Labs 场景生成任务（付费操作——启动前须经用户同意）。mode=direct 直接用源图和可选 prompt 生成世界，不需要图片分析；mode=empty-environment 根据已确认的场景分析去除物体，生成空环境。sourceImage 省略时使用最新源图，设为 null 时只用文字。",
   inputSchema: z.object({
+    mode: z.enum(["direct", "empty-environment"]),
+    sourceImage: LogicalPathSchema.nullable().optional(),
+    prompt: z.string().optional(),
     extraPrompt: z.string().optional(),
   }),
   execute: async (input, context) => {
@@ -86,10 +89,9 @@ export const startWorldTaskTool = createTool({
       "worldLabsApiKey",
       "本机 chat/.env 未配置 WORLDLABS_KEY",
     );
-    const task = startWorldTask(projectSlug, {
-      worldLabsApiKey,
-      extraPrompt: input.extraPrompt,
-    });
+    const task = startWorldTask(projectSlug, input.mode === "direct"
+      ? { worldLabsApiKey, mode: input.mode, sourceImage: input.sourceImage, prompt: input.prompt }
+      : { worldLabsApiKey, mode: input.mode, sourceImage: input.sourceImage, extraPrompt: input.extraPrompt });
     return { task: { id: task.id, subject: task.subject, status: task.status } };
   },
 });
