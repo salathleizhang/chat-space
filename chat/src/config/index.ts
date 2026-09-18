@@ -4,8 +4,10 @@ import { z } from "zod";
 import { DEFAULT_TRIPO_IMAGE_MODEL } from "../models/tripo";
 
 export const LLM_PROVIDER_IDS = ["volcengine"] as const;
-export const DOUBAO_LITE_SELECTION = "doubao-seed-2-0-lite-260215";
+export const GLM_FLASH_SELECTION = "glm-5-3-flash-260828";
 export const DEEPSEEK_FLASH_SELECTION = "deepseek-v4-1-flash-260910";
+export const DOUBAO_EVOLVING_SELECTION = "doubao-seed-evolving";
+export const DOUBAO_PRO_SELECTION = "doubao-seed-2-1-pro-260915";
 
 const EnvSchema = z.object({
   CHAT_PORT: z.coerce.number().int().positive().default(3901),
@@ -16,13 +18,17 @@ const EnvSchema = z.object({
   TRIPO_IMAGE_MODEL: z.string().min(1).default(DEFAULT_TRIPO_IMAGE_MODEL),
   WORLDLABS_KEY: z.string().min(1).optional(),
   VOLC_LLM_BASE_URL: z.url().default("https://ark.cn-beijing.volces.com/api/v3"),
-  VOLC_LLM_MODEL: z.string().min(1).default(DOUBAO_LITE_SELECTION),
+  VOLC_LLM_MODEL: z.string().min(1).optional(),
+  VOLC_GLM_MODEL: z.string().min(1).default(GLM_FLASH_SELECTION),
   VOLC_DEEPSEEK_MODEL: z.string().min(1).default(DEEPSEEK_FLASH_SELECTION),
+  VOLC_DOUBAO_EVOLVING_MODEL: z.string().min(1).default(DOUBAO_EVOLVING_SELECTION),
+  VOLC_DOUBAO_PRO_MODEL: z.string().min(1).default(DOUBAO_PRO_SELECTION),
   VOLC_HYPER3D_MODEL: z.string().min(1).default("hyper3d-gen2-260112"),
   VOLC_HI3D_MODEL: z.string().min(1).default("hitem3d-2-0-251223"),
 });
 
 const env = EnvSchema.parse(process.env);
+const defaultLlmModel = env.VOLC_LLM_MODEL ?? env.VOLC_GLM_MODEL;
 
 /** 工程默认保存在当前用户的 ChatSpace 目录。 */
 export function defaultLibraryRoot(home = homedir()): string {
@@ -61,8 +67,11 @@ export const config = {
   cors: { isAllowedOrigin: createAllowedOriginChecker(env.CHATSPACE_WEB_ORIGINS) },
   llm: {
     defaultBaseUrl: env.VOLC_LLM_BASE_URL,
-    defaultModel: env.VOLC_LLM_MODEL,
+    defaultModel: defaultLlmModel,
+    glmModel: env.VOLC_GLM_MODEL,
     deepseekModel: env.VOLC_DEEPSEEK_MODEL,
+    evolvingModel: env.VOLC_DOUBAO_EVOLVING_MODEL,
+    proModel: env.VOLC_DOUBAO_PRO_MODEL,
   },
   ark3d: {
     hyper3dModel: env.VOLC_HYPER3D_MODEL,
@@ -76,8 +85,22 @@ export const config = {
 /** 浏览器只能选择已配置的模型，凭证、实际模型 ID 和端点均由本机决定。 */
 export function createServerCredentialInjector(
   keys: Readonly<Record<string, string | undefined>>,
-  llm: { baseUrl: string; model: string; deepseekModel: string },
+  llm: {
+    baseUrl: string;
+    model: string;
+    glmModel: string;
+    deepseekModel: string;
+    evolvingModel: string;
+    proModel: string;
+  },
 ) {
+  const models = new Map<string, string>([
+    [GLM_FLASH_SELECTION, llm.glmModel],
+    ["glm-5.3", llm.glmModel],
+    [DEEPSEEK_FLASH_SELECTION, llm.deepseekModel],
+    [DOUBAO_EVOLVING_SELECTION, llm.evolvingModel],
+    [DOUBAO_PRO_SELECTION, llm.proModel],
+  ]);
   return (body: unknown): unknown => {
     if (!body || typeof body !== "object" || Array.isArray(body)) return body;
     const merged: Record<string, unknown> = {};
@@ -95,7 +118,7 @@ export function createServerCredentialInjector(
         apiKey: keys.volcengineApiKey ?? "",
         provider: "volcengine",
         baseUrl: llm.baseUrl,
-        model: requestedModel === DEEPSEEK_FLASH_SELECTION ? llm.deepseekModel : llm.model,
+        model: (typeof requestedModel === "string" ? models.get(requestedModel) : undefined) ?? llm.model,
       };
     }
     return merged;
@@ -104,6 +127,9 @@ export function createServerCredentialInjector(
 
 export const withServerCredentials = createServerCredentialInjector(serverKeys, {
   baseUrl: env.VOLC_LLM_BASE_URL,
-  model: env.VOLC_LLM_MODEL,
+  model: defaultLlmModel,
+  glmModel: env.VOLC_GLM_MODEL,
   deepseekModel: env.VOLC_DEEPSEEK_MODEL,
+  evolvingModel: env.VOLC_DOUBAO_EVOLVING_MODEL,
+  proModel: env.VOLC_DOUBAO_PRO_MODEL,
 });

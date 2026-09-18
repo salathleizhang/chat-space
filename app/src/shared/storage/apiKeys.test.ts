@@ -13,13 +13,13 @@ describe("server-only provider migration", () => {
   test("清除旧版浏览器密钥，不碰模型偏好", () => {
     localStorage.setItem("gabo.apiKeys", JSON.stringify({ fal: "secret" }));
     localStorage.setItem("gabo.apiKeys:v1", JSON.stringify({ volcengine: "secret" }));
-    localStorage.setItem("gabo.llmSettings:v1", JSON.stringify({ model: "doubao-seed-2-0-lite-260215" }));
+    localStorage.setItem("gabo.llmSettings:v1", JSON.stringify({ model: "glm-5-3-flash-260828" }));
     clearLegacyApiKeys();
     expect(localStorage.getItem("gabo.apiKeys")).toBeNull();
     expect(localStorage.getItem("gabo.apiKeys:v1")).toBeNull();
-    expect(loadLlmSettings().model).toBe("doubao-seed-2-0-lite-260215");
+    expect(loadLlmSettings().model).toBe("glm-5-3-flash-260828");
     expect(localStorage.getItem("gabo.llmSettings:v1")).toBeNull();
-    expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toEqual({ model: "doubao-seed-2-0-lite-260215" });
+    expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toEqual({ model: "glm-5-3-flash-260828" });
   });
 
   test("旧版不支持的模型与供应商偏好不会继续选中", () => {
@@ -31,26 +31,36 @@ describe("server-only provider migration", () => {
     expect(loadImageGenerateModelSettings().model).toBe("");
   });
 
-  test("已保存但无法访问的 GLM-5.3 选择回退到服务端默认模型", () => {
+  test("旧 GLM-5.3 选择迁移到 GLM 5.3 Flash", () => {
     localStorage.setItem("chatspace.llmSettings:v1", JSON.stringify({ model: "glm-5.3" }));
+    expect(loadLlmSettings()).toEqual({ provider: "volcengine", baseUrl: "", model: "glm-5-3-flash-260828" });
+  });
+
+  test("已移除的 Seed 2.0 Lite 回退到默认模型", () => {
+    localStorage.setItem("chatspace.llmSettings:v1", JSON.stringify({ model: "doubao-seed-2-0-lite-260215" }));
     expect(loadLlmSettings()).toEqual({ provider: "", baseUrl: "", model: "" });
   });
 
-  test("保存并恢复 DeepSeek V4.1 Flash 选择", () => {
+  test.each([
+    "glm-5-3-flash-260828",
+    "deepseek-v4-1-flash-260910",
+    "doubao-seed-evolving",
+    "doubao-seed-2-1-pro-260915",
+  ])("保存并恢复模型选择：%s", (model) => {
     expect(saveLlmSettings({
       provider: "volcengine",
       baseUrl: "https://untrusted.example/v1",
-      model: "deepseek-v4-1-flash-260910",
+      model,
     })).toBe(true);
     expect(loadLlmSettings()).toEqual({
       provider: "volcengine",
       baseUrl: "",
-      model: "deepseek-v4-1-flash-260910",
+      model,
     });
     expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toEqual({
       provider: "volcengine",
       baseUrl: "",
-      model: "deepseek-v4-1-flash-260910",
+      model,
     });
   });
 

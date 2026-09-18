@@ -23,8 +23,11 @@ describe("server credentials", () => {
     },
     {
       baseUrl: "https://ark.example/api/v3",
-      model: "doubao-seed-2-0-lite-260215",
-      deepseekModel: "deepseek-v4-1-flash-260910",
+      model: "glm-5-3-flash-260828",
+      glmModel: "ep-glm",
+      deepseekModel: "ep-deepseek",
+      evolvingModel: "ep-evolving",
+      proModel: "ep-pro",
     },
   );
 
@@ -49,38 +52,53 @@ describe("server credentials", () => {
         apiKey: "local-volc",
         provider: "volcengine",
         baseUrl: "https://ark.example/api/v3",
-        model: "doubao-seed-2-0-lite-260215",
+        model: "glm-5-3-flash-260828",
       },
     });
   });
 
-  test("允许选择火山方舟 DeepSeek V4.1 Flash，但实际配置仍由服务端注入", () => {
+  test.each([
+    ["glm-5-3-flash-260828", "ep-glm"],
+    ["glm-5.3", "ep-glm"],
+    ["deepseek-v4-1-flash-260910", "ep-deepseek"],
+    ["doubao-seed-evolving", "ep-evolving"],
+    ["doubao-seed-2-1-pro-260915", "ep-pro"],
+  ])("模型 %s 使用服务端配置的接入点", (model, endpoint) => {
     expect(inject({ llm: {
       apiKey: "browser-llm",
       baseUrl: "https://evil.example/v1",
-      model: "deepseek-v4-1-flash-260910",
+      model,
     } })).toMatchObject({
       llm: {
         apiKey: "local-volc",
         provider: "volcengine",
         baseUrl: "https://ark.example/api/v3",
-        model: "deepseek-v4-1-flash-260910",
+        model: endpoint,
       },
     });
   });
 
+  test.each(["", "doubao-seed-2-0-lite-260215", "__proto__", "ep-untrusted", null])(
+    "默认、旧模型和未知模型 %s 使用服务端默认值", (model) => {
+      expect(inject({ llm: { model } })).toMatchObject({ llm: { model: "glm-5-3-flash-260828" } });
+    },
+  );
+
   test("缺少本机配置时不接受浏览器补交密钥", () => {
     const empty = createServerCredentialInjector({}, {
       baseUrl: "https://ark.example/api/v3",
-      model: "doubao-seed-2-0-lite-260215",
-      deepseekModel: "deepseek-v4-1-flash-260910",
+      model: "glm-5-3-flash-260828",
+      glmModel: "ep-glm",
+      deepseekModel: "ep-deepseek",
+      evolvingModel: "ep-evolving",
+      proModel: "ep-pro",
     });
     expect(empty({ worldLabsApiKey: "browser-world", llm: { apiKey: "browser-llm" } })).toEqual({
       llm: {
         apiKey: "",
         provider: "volcengine",
         baseUrl: "https://ark.example/api/v3",
-        model: "doubao-seed-2-0-lite-260215",
+        model: "glm-5-3-flash-260828",
       },
     });
   });

@@ -821,7 +821,7 @@ describe("AgentDock 状态行", () => {
 });
 
 describe("AgentDock LLM 能力筛选", () => {
-  test("env 激活火山方舟时，展示 Doubao Seed 2.0 Lite 与 DeepSeek V4.1 Flash", async () => {
+  test("env 激活火山方舟时，四个模型均可选择并保存", async () => {
     globalThis.fetch = mock(async () =>
       Response.json({ llmProviders: ["volcengine"] }),
     ) as unknown as typeof fetch;
@@ -835,19 +835,29 @@ describe("AgentDock LLM 能力筛选", () => {
     ) as HTMLButtonElement;
     await act(async () => modelSelect.click());
 
-    expect(document.body.textContent).toContain("Doubao Seed 2.0 Lite");
+    expect(document.body.textContent).not.toContain("Doubao Seed 2.0 Lite");
+    expect(document.body.textContent).toContain("GLM 5.3 Flash");
+    expect(document.body.textContent).toContain("Doubao-Seed-Evolving");
+    expect(document.body.textContent).toContain("Doubao-Seed-2.1-pro");
     expect(document.body.textContent).toContain("DeepSeek V4.1 Flash");
     expect(document.body.textContent).not.toContain("GPT-4o mini");
     expect(document.body.textContent).not.toContain("Gemini 2.5 Flash");
 
-    const deepseek = Array.from(document.body.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("DeepSeek V4.1 Flash"),
-    ) as HTMLButtonElement;
-    await act(async () => deepseek.click());
-    expect(modelSelect.textContent).toContain("DeepSeek V4.1 Flash");
-    expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toMatchObject({
-      model: "deepseek-v4-1-flash-260910",
-    });
+    const choices = [
+      ["GLM 5.3 Flash", "glm-5-3-flash-260828"],
+      ["DeepSeek V4.1 Flash", "deepseek-v4-1-flash-260910"],
+      ["Doubao-Seed-Evolving", "doubao-seed-evolving"],
+      ["Doubao-Seed-2.1-pro", "doubao-seed-2-1-pro-260915"],
+    ] as const;
+    for (const [index, [label, model]] of choices.entries()) {
+      if (index > 0) await act(async () => modelSelect.click());
+      const option = Array.from(document.body.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes(label),
+      ) as HTMLButtonElement;
+      await act(async () => option.click());
+      expect(modelSelect.textContent).toContain(label);
+      expect(JSON.parse(localStorage.getItem("chatspace.llmSettings:v1")!)).toMatchObject({ model });
+    }
   });
 
   test("旧浏览器 OpenAI Key 不会激活其他模型", async () => {

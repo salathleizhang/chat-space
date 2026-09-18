@@ -19,12 +19,23 @@ bun run dev
 
 | 本机变量 | 用途 |
 | --- | --- |
-| `VOLC_KEY` | 火山方舟 Doubao Seed 2.0 Lite / DeepSeek V4.1 Flash 对话、Seedream 图片，以及 Seed3D、Hyper3D、Hi3D 模型 |
+| `VOLC_KEY` | 火山方舟 GLM 5.3 Flash / DeepSeek V4.1 Flash / Doubao-Seed-Evolving / Doubao-Seed-2.1-pro 对话、Seedream 图片，以及 Seed3D、Hyper3D、Hi3D 模型 |
 | `TRIPO_KEY` | Tripo3D 模型生成与分割 |
 | `TRIPO_IMAGE_MODEL` | Tripo3D 图生 3D 的几何模型 ID，默认 `v3.1-20260211`（v3 接口必填） |
 | `WORLDLABS_KEY` | World Labs Marble 场景 |
 
-对话模型可在 Agent 输入框的下拉菜单中选择 Doubao Seed 2.0 Lite 或 DeepSeek V4.1 Flash，默认使用 Doubao Seed 2.0 Lite。两者共用本机的 `VOLC_KEY` 和火山方舟地址 `https://ark.cn-beijing.volces.com/api/v3`。如果你的接入点使用不同的地址或模型 ID，可在本机设置 `VOLC_LLM_BASE_URL`、`VOLC_LLM_MODEL` 与 `VOLC_DEEPSEEK_MODEL`；DeepSeek V4.1 Flash 默认 ID 为 `deepseek-v4-1-flash-260910`。火山影眸 Hyper3D、数美 Hi3D 的默认模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
+对话模型下拉菜单提供四个模型：GLM 5.3 Flash、DeepSeek V4.1 Flash、Doubao-Seed-Evolving、Doubao-Seed-2.1-pro，共用本机的 `VOLC_KEY` 和火山方舟地址 `https://ark.cn-beijing.volces.com/api/v3`。自动选择默认使用 GLM 5.3 Flash；旧版 `glm-5.3` 选择会迁移到 Flash，已移除的 Seed 2.0 Lite 选择会回退到默认模型。可用 `VOLC_LLM_BASE_URL` 覆盖地址，用 `VOLC_LLM_MODEL` 单独覆盖自动选择的默认模型。四个选项的实际模型 ID 或专属接入点 ID 可分别覆盖：
+
+| 模型 | 默认 Model ID | 覆盖变量 |
+| --- | --- | --- |
+| GLM 5.3 Flash | `glm-5-3-flash-260828` | `VOLC_GLM_MODEL` |
+| DeepSeek V4.1 Flash | `deepseek-v4-1-flash-260910` | `VOLC_DEEPSEEK_MODEL` |
+| Doubao-Seed-Evolving | `doubao-seed-evolving` | `VOLC_DOUBAO_EVOLVING_MODEL` |
+| Doubao-Seed-2.1-pro | `doubao-seed-2-1-pro-260915` | `VOLC_DOUBAO_PRO_MODEL` |
+
+模型 ID 已于 2026-09-18 通过火山方舟 `/api/v3/models` 核对。修改旧版 `.env` 时，将 `VOLC_LLM_MODEL` 的 Seed 2.0 Lite 值删除或改为以上模型 ID，并重启本机服务。
+
+火山影眸 Hyper3D、数美 Hi3D 的默认模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
 
 运行检查：
 

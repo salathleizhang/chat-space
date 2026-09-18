@@ -56,11 +56,14 @@ export interface LlmModelPreset {
 
 export const LLM_MODEL_PRESETS: LlmModelPreset[] = [
   { value: "", label: "Automatically select agent model", baseUrl: "" },
-  { value: "doubao-seed-2-0-lite-260215", label: "Doubao Seed 2.0 Lite", provider: "volcengine" },
+  { value: "glm-5-3-flash-260828", label: "GLM 5.3 Flash", provider: "volcengine" },
   { value: "deepseek-v4-1-flash-260910", label: "DeepSeek V4.1 Flash", provider: "volcengine" },
+  { value: "doubao-seed-evolving", label: "Doubao-Seed-Evolving", provider: "volcengine" },
+  { value: "doubao-seed-2-1-pro-260915", label: "Doubao-Seed-2.1-pro", provider: "volcengine" },
 ];
 
 function savedLlmModel(model: unknown): string {
+  if (model === "glm-5.3") return "glm-5-3-flash-260828";
   return LLM_MODEL_PRESETS.some((preset) => preset.provider && preset.value === model)
     ? model as string
     : "";
