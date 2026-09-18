@@ -881,6 +881,18 @@ describe("AgentDock LLM 能力筛选", () => {
 });
 
 describe("AgentDock 图片生成模型选择", () => {
+  test("LLM、3D 和图片模型默认选项统一显示 Auto", async () => {
+    const { container } = await render();
+    for (const label of [
+      "Choose chat model",
+      "Choose 3D generation provider",
+      "Choose image generation model",
+    ]) {
+      const select = container.querySelector(`button[aria-label="${label}"]`);
+      expect(select?.textContent?.trim()).toBe("Auto");
+    }
+  });
+
   test("显示图片模型菜单并持久化选择", async () => {
     const { container } = await render();
     const imageModelSelect = container.querySelector(
@@ -888,7 +900,7 @@ describe("AgentDock 图片生成模型选择", () => {
     ) as HTMLButtonElement;
 
     expect(imageModelSelect).not.toBeNull();
-    expect(imageModelSelect.textContent).toContain("Automatically select image model");
+    expect(imageModelSelect.textContent).toContain("Auto");
 
     await act(async () => imageModelSelect.click());
     const seedream = Array.from(document.body.querySelectorAll("button")).find(
