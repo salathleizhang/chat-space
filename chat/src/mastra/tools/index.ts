@@ -10,10 +10,7 @@ export {
   rigModelTool,
 } from "./meshOps";
 export { generateTextureTool } from "./textureOps";
-export {
-  analyzeReferenceTool,
-  confirmReferenceAssetsTool,
-} from "./referenceAnalysis";
+export { analyzeReferenceTool } from "./referenceAnalysis";
 export { updatePlanTool } from "./planTools";
 export { analyzeSceneTool } from "./sceneAnalysis";
 export { generateReferenceImagesTool } from "./referenceImage";

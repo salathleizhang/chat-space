@@ -581,7 +581,7 @@ export async function runGenerateReferenceImages(
 export const generateReferenceImagesTool = createTool({
   id: "generate-reference-images",
   description:
-    "统一图片生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent，成功后自动绑定生成目标。mode=edit 是图生图编辑资产参考图，需要已有 assetSlug 和 prompt，结果绑定回该资产；两种参考图模式都强制完整入镜、留白和无遮挡。mode=plate 是从已确认场景参考图移除对象、生成空场景底板，不传 prompt；需先 analyze-reference + confirm-reference-assets，默认移除全部已确认对象，也可传 objectSlugs、sourceImage、extraInstructions。完整场景链路请启动 one-shot-scene Workflow，不要重复调用单步生图。",
+    "统一图片生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent，成功后自动绑定生成目标。mode=edit 是图生图编辑资产参考图，需要已有 assetSlug 和 prompt，结果绑定回该资产；两种参考图模式都强制完整入镜、留白和无遮挡。mode=plate 是从 one-shot-scene 已确认的场景参考图移除对象、生成空场景底板，不传 prompt；默认移除全部已确认对象，也可传 objectSlugs、sourceImage、extraInstructions。完整场景链路请启动 one-shot-scene Workflow，不要重复调用单步生图。",
   inputSchema: GenerateReferenceImagesToolSchema,
   execute: async (input, context) =>
     runGenerateReferenceImages(

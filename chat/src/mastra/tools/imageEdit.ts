@@ -195,7 +195,7 @@ export async function runPlateGeneration(
   const analysisPath = projectAnalysisFile(input.projectSlug);
   if (!(await storage.exists(analysisPath))) {
     throw new ChatServiceError(
-      `项目「${input.projectSlug}」还没有场景分析，请先用 analyze-reference + confirm-reference-assets 确认对象清单`,
+      `项目「${input.projectSlug}」还没有场景分析，请先用 analyze-reference 获取候选，再由 one-shot-scene Workflow 确认对象清单`,
       409,
       "analysis_missing",
     );

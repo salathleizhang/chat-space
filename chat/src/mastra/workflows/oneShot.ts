@@ -23,12 +23,18 @@ import { renderablePathsFromResult } from "../../services/modelPublishing";
 import { findRunningTask, getTask, startCustomTask } from "../../services/tasks";
 import { buildRequestContext, type RunKeys } from "../../services/workflowRuns";
 import { composePlatePrompt, runPlateGeneration } from "../tools/imageEdit";
+import { runConfirmReferenceAssets } from "../tools/referenceAnalysis";
 import { runReferenceImageEdit } from "../tools/referenceImage";
 import { setCurrentWorld } from "../tools/projectTools";
 import { startSeed3d3dBatch } from "../tools/seed3dOps";
 import { composeEmptyWorldPrompt, runProjectWorldGeneration } from "../tools/worldGen";
 
 const InputSchema = z.object({ projectSlug: SlugSchema });
+const LaunchInputSchema = z.object({
+  runId: z.uuid(),
+  selectedSlugs: z.array(SlugSchema).min(1).optional(),
+});
+const ConfirmedLaunchSchema = z.object({ projectSlug: SlugSchema });
 const ConfirmedSceneSchema = InputSchema.extend({
   sourceImage: LogicalPathSchema,
   objects: z.array(ObjectCandidateSchema).min(1),
@@ -129,7 +135,7 @@ async function waitForModelTasks(
   });
 }
 
-/** 确认记录是付费流程的入口；这份 analysis.json 只由 confirm-reference-assets 写入。 */
+/** Workflow 确认步骤写入的 analysis.json 是后续付费阶段的稳定输入。 */
 const loadConfirmedScene = createStep({
   id: "load-confirmed-scene",
   inputSchema: InputSchema,
@@ -142,7 +148,7 @@ const loadConfirmedScene = createStep({
     const analysisPath = projectAnalysisFile(inputData.projectSlug);
     if (!(await storage.exists(analysisPath))) {
       throw new ChatServiceError(
-        `项目「${inputData.projectSlug}」还没有已确认的参考图资产分析，请先用 analyze-reference + confirm-reference-assets 确认对象`,
+        `项目「${inputData.projectSlug}」还没有已确认的参考图资产分析，请先用 analyze-reference 获取候选，再把 runId 和选中的对象交给 one-shot-scene Workflow`,
         409,
         "analysis_missing",
       );
@@ -342,24 +348,37 @@ export async function runOneShotWorkflow(projectSlug: string, keys: RunKeys) {
   throw new ChatServiceError(`完整场景生成未完成：${result.status}`, 409, "one_shot_incomplete");
 }
 
-/** Agent 直接调用的 Workflow 入口：立即返回总任务，完整生成在后台运行。 */
+/** 用户确认后由 Workflow 自己落盘对象清单；同一 runId 重试时复用确认结果。 */
+const confirmSceneAssets = createStep({
+  id: "confirm-scene-assets",
+  inputSchema: LaunchInputSchema,
+  outputSchema: ConfirmedLaunchSchema,
+  execute: async ({ inputData, requestContext }) => {
+    const projectSlug = SlugSchema.parse(requestContext?.get("projectSlug"));
+    await runConfirmReferenceAssets(projectSlug, inputData);
+    return { projectSlug };
+  },
+});
+
+/** Agent 直接调用的 Workflow 入口：确认对象后立即返回总任务，完整生成在后台运行。 */
 export const oneShotSceneWorkflow = createWorkflow({
   id: "one-shot-scene-launch",
   description:
-    "已确认对象且用户同意完整付费生成后，启动完整场景生成：独立参考图、干净底板、World Labs 空环境和 Seed3D 单物体模型。只调用一次；返回总任务供进度跟踪。",
-  inputSchema: z.object({}),
+    "用户确认 analyze-reference 返回的候选对象并同意完整付费生成后调用。传入该次分析的 runId；省略 selectedSlugs 表示确认全部，传入子集则只生成所选对象。Workflow 会先保存确认清单，再启动独立参考图、干净底板、World Labs 空环境和 Seed3D 单物体模型。只调用一次；返回总任务供进度跟踪。",
+  inputSchema: LaunchInputSchema,
   outputSchema: z.object({
     task: z.object({ id: z.string(), subject: z.string(), status: z.literal("running") }),
   }),
 })
+  .then(confirmSceneAssets)
   .then(createStep({
     id: "start-one-shot-task",
-    inputSchema: z.object({}),
+    inputSchema: ConfirmedLaunchSchema,
     outputSchema: z.object({
       task: z.object({ id: z.string(), subject: z.string(), status: z.literal("running") }),
     }),
-    execute: async ({ requestContext }) => {
-      const projectSlug = SlugSchema.parse(requestContext?.get("projectSlug"));
+    execute: async ({ inputData, requestContext }) => {
+      const projectSlug = inputData.projectSlug;
       const running = findRunningTask(projectSlug, "one-shot");
       if (running) return { task: { id: running.id, subject: running.subject, status: "running" as const } };
       const keys: RunKeys = {

@@ -142,7 +142,7 @@ export async function resolve3dObjects(
     : [...bySlug.values()];
   if (objects.length === 0) {
     throw new ChatServiceError(
-      "项目里没有可生成的对象。文生单物体参考图时请给 generate-reference-images 传 assetSlug，然后直接用同一 slug 启动 3D；只有从上传的多物体场景图拆资产时才需要 analyze-reference + confirm-reference-assets",
+      "项目里没有可生成的对象。文生单物体参考图时请给 generate-reference-images 传 assetSlug，然后直接用同一 slug 启动 3D；完整场景请先用 analyze-reference 获取候选，再把确认选择交给 one-shot-scene Workflow",
       409,
       "no_objects",
     );

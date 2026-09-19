@@ -91,8 +91,6 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   analyzeSceneTool: "Analyzing current scene",
   "analyze-reference": "Analyzing reference image",
   analyzeReferenceTool: "Analyzing reference image",
-  "confirm-reference-assets": "Confirming reference assets",
-  confirmReferenceAssetsTool: "Confirming reference assets",
   "generate-plate": "Generating scene base image",
   "workflow-one-shot-scene": "Generating complete scene",
   "start-3d-batch": "Starting 3D generation",
@@ -173,7 +171,7 @@ interface UseAgentChatOptions {
  * 图片上传统一走对话（2026-07 起不再有独立的手动 uncover workflow 与
  * 「自动模式」开关）：上传后把图片和指令拼成一条带图用户消息交给 agent，
  * 只有明确进入参考图资产提取时，才依次调用 analyze-reference →
- * confirm-reference-assets → 按需 one-shot-scene Workflow；普通图片直接由多模态 agent 阅读，
+ * one-shot-scene Workflow 内确认对象并生成；普通图片直接由多模态 agent 阅读，
  * 粒度全靠对话里的指令决定。
  */
 export function useAgentChat({

@@ -18,7 +18,7 @@ describe("creator 工具可用性", () => {
     expect(Object.keys(tools)).not.toContain("edit-reference-image");
     expect(tools["analyze-scene"]).toBeDefined();
     expect(tools["analyze-reference"]).toBeUndefined();
-    expect(tools["confirm-reference-assets"]).toBeDefined();
+    expect(Object.keys(tools)).not.toContain("confirm-reference-assets");
     expect(Object.keys(tools)).not.toContain("run-one-shot");
     expect(Object.keys(tools)).not.toContain("updatePlanTool");
     expect(Object.keys(tools)).not.toContain("generateReferenceImagesTool");
@@ -28,6 +28,13 @@ describe("creator 工具可用性", () => {
     const agent = createCreatorAgent({ apiKey: "sk-test" });
     const workflows = await agent.listWorkflows();
     expect(workflows["one-shot-scene"]).toBeDefined();
+    const schema = z.toJSONSchema(
+      workflows["one-shot-scene"]!.inputSchema as z.ZodType,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown>; required?: string[] };
+    expect(schema.properties).toHaveProperty("runId");
+    expect(schema.properties).toHaveProperty("selectedSlugs");
+    expect(schema.required).toContain("runId");
     expect(Object.keys(await agent.listTools())).not.toContain("run-one-shot");
   });
 

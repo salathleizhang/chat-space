@@ -110,17 +110,20 @@ const KEYS = {
 
 const OST_IMAGE = `${projectSourceDir("ost")}/0-photo.png`;
 
-async function startSceneWorkflow(projectSlug: string) {
+async function startSceneWorkflow(
+  projectSlug: string,
+  input: { runId: string; selectedSlugs?: string[] },
+) {
   const run = await oneShotSceneWorkflow.createRun();
   const result = await run.start({
-    inputData: {},
+    inputData: input,
     requestContext: buildRequestContext({ projectSlug, ...KEYS }),
   });
   if (result.status !== "success") throw new Error(`启动 Workflow 失败：${result.status}`);
   return result.result;
 }
 
-describe("analyze-reference / confirm-reference-assets", () => {
+describe("analyze-reference / 场景确认服务", () => {
   test("真实工具入口直接接收 Creator 的视觉分析，不嵌套调用 LLM/workflow", async () => {
     const result = await analyzeReferenceTool.execute!(
       GARAGE_ANALYSIS,
@@ -276,15 +279,14 @@ describe("analyze-reference / confirm-reference-assets", () => {
     expect(await storage.exists(`${projectDir("multiple-pending")}/.analyze-reference-${first.runId}.json`)).toBe(true);
   });
 
-  test("runId 用过一次即失效，重复确认要求重新 analyze-reference", async () => {
+  test("同一 runId 重复确认时复用结果，支持 Workflow 失败后重跑", async () => {
     const started = await runAnalyzeReference("ost", {
       image: OST_IMAGE,
       analysis: GARAGE_ANALYSIS,
     });
-    await runConfirmReferenceAssets("ost", { runId: started.runId });
-    expect(
-      runConfirmReferenceAssets("ost", { runId: started.runId }),
-    ).rejects.toThrow("重新调用 analyze-reference");
+    const first = await runConfirmReferenceAssets("ost", { runId: started.runId });
+    const repeated = await runConfirmReferenceAssets("ost", { runId: started.runId });
+    expect(repeated).toEqual(first);
   });
 
   test("找不到 run 时报错", () => {
@@ -373,7 +375,7 @@ describe("one-shot-scene Workflow（确认后逐阶段完成并落盘）", () =>
     expect(events).toEqual(["image-edit", "image-edit", "world", "seed3d", "seed3d"]);
   }, 20000);
 
-  test("Agent Workflow 入口立即返回后台任务，重复调用复用运行中的任务", async () => {
+  test("Agent Workflow 首步确认对象并返回后台任务，重复调用复用确认和运行中任务", async () => {
     await createProject(storage, { name: "完整任务", slug: "one-shot-task" });
     const image = `${projectSourceDir("one-shot-task")}/0-photo.png`;
     await storage.writeBytes(image, PNG_BYTES);
@@ -381,11 +383,14 @@ describe("one-shot-scene Workflow（确认后逐阶段完成并落盘）", () =>
       image,
       analysis: GARAGE_ANALYSIS,
     });
-    await runConfirmReferenceAssets("one-shot-task", { runId: analyzed.runId });
-    const first = await startSceneWorkflow("one-shot-task");
-    const second = await startSceneWorkflow("one-shot-task");
+    const first = await startSceneWorkflow("one-shot-task", { runId: analyzed.runId });
+    const second = await startSceneWorkflow("one-shot-task", { runId: analyzed.runId });
     expect(first.task.id).toBe(second.task.id);
     expect(first.task.status).toBe("running");
+    expect(await storage.exists(`${projectDir("one-shot-task")}/analysis.json`)).toBe(true);
+    expect(
+      await storage.exists(`${projectDir("one-shot-task")}/.analyze-reference-${analyzed.runId}.json`),
+    ).toBe(false);
 
     for (let attempt = 0; attempt < 30; attempt++) {
       const task = await getTask("one-shot-task", first.task.id);

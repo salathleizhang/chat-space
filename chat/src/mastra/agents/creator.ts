@@ -6,7 +6,6 @@ import {
   analyzeSceneTool,
   analyzeReferenceTool,
   buildCadModelTool,
-  confirmReferenceAssetsTool,
   getCadSourceTool,
   generateReferenceImagesTool,
   generateTextureTool,
@@ -42,7 +41,6 @@ export function createCreatorAgent(
       ...(options.enableAnalyzeReference
         ? { "analyze-reference": analyzeReferenceTool }
         : {}),
-      "confirm-reference-assets": confirmReferenceAssetsTool,
       "start-3d-batch": start3dBatchTool,
       "start-world-task": startWorldTaskTool,
       "segment-parts": segmentPartsTool,

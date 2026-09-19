@@ -31,13 +31,13 @@ import {
  * - analyze-reference（免费）：Creator 已经在当前多模态消息里看到了参考图，直接
  *   把观察结果作为工具参数交给本地代码校验、落盘，并停在对象确认站。这里不再
  *   嵌套调用第二个 LLM，也不再为一次确认维护 Mastra workflow suspend/resume。
- * - confirm-reference-assets（免费，本身不生成任何东西）：确认对象 → 只落盘
- *   analysis.json 候选；模型成功发布前绝不创建正式资产。
+ * - one-shot-scene Workflow 的首个步骤（免费）：确认对象 → 只落盘
+ *   analysis.json 候选；模型成功发布前绝不创建正式资产。确认不再作为 Agent Tool 暴露。
  * - one-shot-scene Workflow（付费）：逐对象参考图 → 干净底板 → 空环境世界
  *   → 逐对象 3D；后台任务在全部产物落盘后才完成。
  *
- * 想要更细的控制——只生成底板、跳过场景、只挑几个对象——分别用
- * generate-reference-images(mode=plate) / start-world-task / start-3d-batch。
+ * 已有场景确认记录后，仍可用 generate-reference-images(mode=plate) /
+ * start-world-task / start-3d-batch 对产物做单步补充或重试。
  */
 
 export interface CandidateObject {
@@ -215,7 +215,48 @@ export async function runConfirmReferenceAssets(
   input: { runId?: string; selectedSlugs?: string[] },
 ): Promise<ConfirmReferenceAssetsResult> {
   const storage = getAssetStorage();
-  const pendingPath = await pendingRunPath(projectSlug, input.runId);
+  let pendingPath: string;
+  try {
+    pendingPath = await pendingRunPath(projectSlug, input.runId);
+  } catch (error) {
+    // Workflow 启动成功后会消费临时 run。重试完整流程时，同一 runId 应直接
+    // 复用已经确认的分析，而不是要求用户重新上传和确认。
+    const analysisPath = projectAnalysisFile(projectSlug);
+    if (
+      input.runId &&
+      error instanceof ChatServiceError &&
+      error.code === "run_not_found" &&
+      await storage.exists(analysisPath)
+    ) {
+      const confirmed = await readJson(storage, analysisPath, SceneAnalysisSchema);
+      const confirmation = confirmed.confirmation;
+      if (confirmation?.runId === input.runId) {
+        const requested = input.selectedSlugs
+          ? new Set(input.selectedSlugs)
+          : undefined;
+        const matchesPreviousSelection = requested
+          ? requested.size === confirmation.selectedSlugs.length &&
+            confirmation.selectedSlugs.every((slug) => requested.has(slug))
+          : confirmation.allSelected;
+        if (!matchesPreviousSelection) {
+          throw new ChatServiceError(
+            "这次参考图分析已经用另一份对象选择启动过 Workflow；如需更改选择，请重新调用 analyze-reference",
+            409,
+            "confirmation_selection_mismatch",
+          );
+        }
+        return {
+          projectSlug,
+          objects: confirmed.objects.map(({ slug, name, description }) => ({
+            slug,
+            name,
+            description,
+          })),
+        };
+      }
+    }
+    throw error;
+  }
   const pending = await readJson(
     storage,
     pendingPath,
@@ -232,6 +273,16 @@ export async function runConfirmReferenceAssets(
   const selectedSlugs = new Set(
     input.selectedSlugs ?? pending.objects.map((object) => object.slug),
   );
+  const unknownSlugs = [...selectedSlugs].filter(
+    (slug) => !pending.objects.some((object) => object.slug === slug),
+  );
+  if (unknownSlugs.length > 0) {
+    throw new ChatServiceError(
+      `对象选择不属于这次参考图分析：${unknownSlugs.join("、")}`,
+      409,
+      "unknown_selected_objects",
+    );
+  }
   const selected = pending.objects.filter((object) => selectedSlugs.has(object.slug));
   if (selected.length === 0) {
     // 空选择（[] 或全不匹配的 slug）不能静默清空 analysis.json 并消费 run——
@@ -258,6 +309,11 @@ export async function runConfirmReferenceAssets(
     }
     await writeJson(storage, projectAnalysisFile(projectSlug), SceneAnalysisSchema, {
       schemaVersion: 1,
+      confirmation: {
+        runId: pending.runId,
+        selectedSlugs: selected.map((object) => object.slug),
+        allSelected: input.selectedSlugs === undefined,
+      },
       sceneName: pending.sceneName,
       sceneDescription: pending.sceneDescription,
       environment: pending.environment,
@@ -287,7 +343,7 @@ export async function runConfirmReferenceAssets(
 export const analyzeReferenceTool = createTool({
   id: "analyze-reference",
   description:
-    "把本条用户消息明确附带的图片作为正式参考图并进入资产确认流程（免费，本地落盘，不会再调用另一个 LLM）。你已经能直接看到当前图片：请按实际画面填写场景描述，并把每件可独立拿起、独立建模的原子物品列入 objects；不要把墙、地面、地毯、天空、水面列为对象，也不要把一组家具合并成套装。只有用户明确要求拆资产或从图生成 3D 时调用；普通看图、截图排错、设计评价不调用。",
+    "把本条用户消息明确附带的图片作为完整场景生成的正式参考图，并产出等待用户确认的对象候选（免费，本地落盘，不会再调用另一个 LLM）。你已经能直接看到当前图片：请按实际画面填写场景描述，并把每件可独立拿起、独立建模的原子物品列入 objects；不要把墙、地面、地毯、天空、水面列为对象，也不要把一组家具合并成套装。用户确认后把返回的 runId 和可选 selectedSlugs 直接交给 one-shot-scene Workflow。普通看图、截图排错、设计评价不调用。",
   inputSchema: AnalyzeReferenceDraftSchema,
   execute: async (input, context) => {
     if (!referenceAnalysisAllowed(context)) {
@@ -312,19 +368,4 @@ export const analyzeReferenceTool = createTool({
       { image: images[0]!, analysis: input },
     );
   },
-});
-
-export const confirmReferenceAssetsTool = createTool({
-  id: "confirm-reference-assets",
-  description:
-    "确认 analyze-reference 从参考图提取的资产候选（免费，本身不生成任何东西）：当前项目只有一份待确认分析时可省略 runId；有多份时必须指定。省略 selectedSlugs 视为全部确认，传入子集则只对这些对象建立资产身份。确认后可按需调用单步工具，或启动 one-shot-scene Workflow 跑完整条链路。",
-  inputSchema: z.object({
-    runId: z.string().min(1).optional(),
-    selectedSlugs: z.array(z.string()).optional(),
-  }),
-  execute: async (input, context) =>
-    runConfirmReferenceAssets(
-      requireCurrentProject(context),
-      input,
-    ),
 });

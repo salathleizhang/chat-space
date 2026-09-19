@@ -100,6 +100,14 @@ export type ImageAnalysis = z.infer<typeof ImageAnalysisSchema>;
 /** 场景级合并分析（analysis.json） */
 export const SceneAnalysisSchema = z.object({
   schemaVersion: z.literal(1),
+  /** 让 Workflow 重试同一次用户确认时保持幂等；旧工程没有该字段也可继续读取。 */
+  confirmation: z
+    .object({
+      runId: z.uuid(),
+      selectedSlugs: z.array(SlugSchema).min(1),
+      allSelected: z.boolean(),
+    })
+    .optional(),
   sceneName: z.string().min(1),
   sceneDescription: z.string().min(1),
   environment: z

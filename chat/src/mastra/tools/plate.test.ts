@@ -112,7 +112,7 @@ describe("runPlateGeneration", () => {
         { volcengineApiKey: "sk-test" },
         { fetchFn: fakeFetch },
       ),
-    ).rejects.toThrow("analyze-reference + confirm-reference-assets");
+    ).rejects.toThrow("one-shot-scene Workflow");
   });
 });
 
