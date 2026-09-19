@@ -41,7 +41,6 @@ import {
 import { runAndPublishGeneratedModel, type GenerationObject } from "../../services/modelPublishing";
 import { startCustomTask } from "../../services/tasks";
 import { downloadToLibrary } from "./assetRepair";
-import { runHunyuanPartSegmentation } from "./hunyuanOps";
 import { latestAssetModel, requireProject } from "./projectTools";
 import {
   optionalContextString,
@@ -413,32 +412,12 @@ export function startTripo3dBatch(
 export const segmentPartsTool = createTool({
   id: "segment-parts",
   description:
-    "把 3D 模型拆分成语义部件（付费操作——启动前须经用户同意）。渠道：tripo 默认（Segmentation v2，任意来源资产，非 Tripo 生成的自动导入 ≤150MB）/ hunyuan（仅收 FBX 产物）。任务化返回，用 list-generation-tasks 跟进",
+    "通过 Tripo Segmentation v2 把 3D 模型拆分成语义部件（付费操作——启动前须经用户同意）。支持任意来源资产，非 Tripo 生成的模型会自动导入（≤150MB）。任务化返回，用 list-generation-tasks 跟进",
   inputSchema: z.object({
     assetSlug: SlugSchema,
-    channel: z.enum(["tripo", "hunyuan"]).default("tripo"),
   }),
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
-    if (input.channel === "hunyuan") {
-      const hunyuanKey = requireContextString(
-        context,
-        "hunyuanApiKey",
-        "缺少混元 API key（腾讯云「SecretId:SecretKey」，请用户在设置中填写）",
-      );
-      const task = startCustomTask(
-        "segment",
-        projectSlug,
-        `部件分割：${input.assetSlug}`,
-        () =>
-          runHunyuanPartSegmentation(
-            getAssetStorage(),
-            { projectSlug, assetSlug: input.assetSlug },
-            { apiKey: hunyuanKey },
-          ),
-      );
-      return { task: { id: task.id, subject: task.subject, status: task.status } };
-    }
     const apiKey = requireContextString(
       context,
       "tripo3dApiKey",

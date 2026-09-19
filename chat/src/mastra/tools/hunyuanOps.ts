@@ -551,37 +551,6 @@ export async function runHunyuanRig(
   );
 }
 
-/** 组件生成（SubmitHunyuan3DPartJob）：仅收 FBX——资产最新模型须是 FBX */
-export async function runHunyuanPartSegmentation(
-  storage: AssetStorage,
-  params: { projectSlug: string; assetSlug: string },
-  callOptions: HunyuanCallOptions,
-): Promise<HunyuanOpResult> {
-  await requireProject(storage, params.projectSlug);
-  const model = await resolveModel(storage, params.projectSlug, params.assetSlug);
-  if (model.type !== "FBX") {
-    throw new ChatServiceError(
-      `混元组件生成仅支持 FBX 输入，资产「${params.assetSlug}」最新产物是 ${model.type}——可改用 tripo 渠道，或先经 Meshy 产出 FBX`,
-      400,
-      "fbx_required",
-    );
-  }
-  return runHunyuanAssetJob(
-    storage,
-    {
-      projectSlug: params.projectSlug,
-      assetSlug: params.assetSlug,
-      submitAction: "SubmitHunyuan3DPartJob",
-      queryAction: "QueryHunyuan3DPartJob",
-      payload: { File: { Url: model.url, Type: model.type } },
-      sidecarParams: {
-        input_model_url: model.url,
-      },
-    },
-    callOptions,
-  );
-}
-
 /** 文生动作（SubmitHunyuanTo3DMotionJob）：纯文字生成 FBX 动画（1–12 秒，默认含蒙皮网格） */
 export async function runHunyuanMotion(
   storage: AssetStorage,

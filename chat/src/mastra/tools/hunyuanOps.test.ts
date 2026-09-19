@@ -8,7 +8,6 @@ import { LocalFileStorage, readJson, writeJson } from "../../services/assetStora
 import {
   runHunyuanImageTo3d,
   runHunyuanMotion,
-  runHunyuanPartSegmentation,
   runHunyuanRetopo,
   runHunyuanUvUnwrap,
   runProfileTo3d,
@@ -152,18 +151,6 @@ describe("后处理渠道函数", () => {
     expect(submit?.body.Prompt).toBe("向前走两步然后挥手");
     expect(submit?.body.Duration).toBe(6);
     expect(result.files.length).toBeGreaterThan(0);
-  });
-
-  test("组件生成：非 FBX 产物明确报错", () => {
-    const { fetchFn } = makeFakeHunyuanFetch();
-    // crate 的最新产物是 GLB（前序测试生成）
-    expect(
-      runHunyuanPartSegmentation(
-        storage,
-        { projectSlug: "hy", assetSlug: "crate" },
-        { apiKey: "sid:skey", fetchFn, pollIntervalMs: 1 },
-      ),
-    ).rejects.toThrow("仅支持 FBX");
   });
 
   test("智能拓扑：字段名 File3D + FaceLevel", async () => {

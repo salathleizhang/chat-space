@@ -14,6 +14,12 @@ describe("creator 工具可用性", () => {
     ) as { properties?: Record<string, unknown> };
     expect(textureSchema.properties).not.toHaveProperty("model");
     expect(textureSchema.properties).not.toHaveProperty("channel");
+    const segmentSchema = z.toJSONSchema(
+      (tools["segment-parts"] as unknown as { inputSchema: z.ZodType }).inputSchema,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown> };
+    expect(segmentSchema.properties).toHaveProperty("assetSlug");
+    expect(segmentSchema.properties).not.toHaveProperty("channel");
     expect(Object.keys(tools)).not.toContain("generate-plate");
     expect(Object.keys(tools)).not.toContain("edit-reference-image");
     expect(tools["analyze-scene"]).toBeDefined();
