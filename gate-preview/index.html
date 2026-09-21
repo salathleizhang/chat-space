@@ -94,13 +94,13 @@
         <path d="M7 10V8a5 5 0 0 1 9.4-2.4"/><path d="M3.5 11.5h17a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/>
       </svg>
     </div>
-    <h1>进入前请回答一个问题</h1>
-    <p class="desc">为了防止 API token 浪费，本产品仅限知道答案的人访问。回答正确即可进入，同一浏览器只需回答一次。</p>
+    <h1>Answer a question to continue</h1>
+    <p class="desc">To keep our API tokens from being wasted, this site is only open to people who know the answer. Get it right once and this browser stays unlocked.</p>
     <form id="form">
-      <label for="answer">这个网站是哪个比赛的作品？</label>
-      <input id="answer" type="text" autocomplete="off" autofocus placeholder="请输入比赛名称" />
-      <p class="error" id="error" hidden role="alert">答案不对，请再试一次。</p>
-      <button type="submit" id="submit" disabled>进入</button>
+      <label for="answer">Which hackathon is this website built for?</label>
+      <input id="answer" type="text" autocomplete="off" autofocus placeholder="Enter the hackathon name" />
+      <p class="error" id="error" hidden role="alert">That's not correct. Please try again.</p>
+      <button type="submit" id="submit" disabled>Enter</button>
     </form>
   </div>
   <script>
@@ -133,8 +133,8 @@
       document.getElementById("gate").innerHTML =
         '<div class="unlocked">' +
           '<div class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 10 18 20 6"/></svg></div>' +
-          "<h1>已解锁</h1>" +
-          '<p class="desc">这是门禁页预览。门禁已集成进 ChatSpace 前端代码，随网站一起部署：答对一次后同一浏览器不再拦截。</p>' +
+          "<h1>Unlocked</h1>" +
+          '<p class="desc">This is a preview of the gate page. The gate is built into the ChatSpace frontend and deploys with the site — answer correctly once and this browser stays unlocked.</p>' +
         "</div>";
     }
 
