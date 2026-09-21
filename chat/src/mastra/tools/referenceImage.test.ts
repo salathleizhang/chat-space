@@ -26,6 +26,7 @@ import {
   runGenerateReferenceImages,
   runReferenceImageEdit,
   runReferenceImageGeneration,
+  runReferenceImageMultiview,
 } from "./referenceImage";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-refimage-test-"));
@@ -619,5 +620,76 @@ describe("runReferenceImageEdit", () => {
       image: expect.stringContaining("data:image/png;base64,"),
       prompt: expect.stringContaining("Removal only"),
     });
+  });
+});
+
+describe("runReferenceImageMultiview", () => {
+  test("从一张参考图生成并绑定前左后右四视图", async () => {
+    await createProject(storage, { name: "多视角参考图", slug: "multiview-ref" });
+    const sourceImage = `${projectSourceDir("multiview-ref")}/0-chair.png`;
+    await storage.writeBytes(sourceImage, PNG_BYTES);
+    await writeJson(
+      storage,
+      assetIdentityFile("multiview-ref", "chair"),
+      AssetIdentitySchema,
+      {
+        schemaVersion: 1,
+        slug: "chair",
+        kind: "model",
+        name: "Chair",
+        intent: "A studio chair",
+        sourceImages: [sourceImage],
+        createdAt: new Date().toISOString(),
+      },
+    );
+
+    const calls: string[] = [];
+    const tripoFetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/v3/files")) {
+        return jsonResponse({ code: 0, data: { file_token: "file-chair" } });
+      }
+      if (url.endsWith("/generation/image-to-multiview")) {
+        return jsonResponse({ code: 0, data: { task_id: "multi-1" } });
+      }
+      if (url.endsWith("/v3/tasks/multi-1")) {
+        return jsonResponse({
+          code: 0,
+          data: {
+            status: "success",
+            output: {
+              front_view_url: "https://cdn.fake/front.png",
+              left_view_url: "https://cdn.fake/left.png",
+              back_view_url: "https://cdn.fake/back.png",
+              right_view_url: "https://cdn.fake/right.png",
+            },
+          },
+        });
+      }
+      if (url.startsWith("https://cdn.fake/")) {
+        return new Response(PNG_BYTES.buffer.slice(0), { status: 200 });
+      }
+      return jsonResponse({}, 404);
+    }) as typeof fetch;
+
+    const result = await runReferenceImageMultiview(
+      storage,
+      { projectSlug: "multiview-ref", assetSlug: "chair" },
+      "tsk-1",
+      { fetchFn: tripoFetch, pollIntervalMs: 1 },
+    );
+
+    expect(result.images).toHaveLength(4);
+    expect(Object.keys(result.referenceViews)).toEqual(["front", "left", "back", "right"]);
+    for (const path of result.images) expect(await storage.exists(path)).toBe(true);
+    const identity = await readJson(
+      storage,
+      assetIdentityFile("multiview-ref", "chair"),
+      AssetIdentitySchema,
+    );
+    expect(identity.sourceImages).toEqual(result.images);
+    expect(identity.referenceViews).toEqual(result.referenceViews);
+    expect(calls.some((url) => url.endsWith("/generation/image-to-multiview"))).toBe(true);
   });
 });

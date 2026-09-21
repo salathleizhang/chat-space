@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { LogicalPathSchema, SlugSchema } from "./library";
+import { LogicalPathSchema, ReferenceImageViewsSchema, SlugSchema } from "./library";
 
 /** 生成任务契约；历史 provider ID 只用于读取旧任务元数据。 */
 
@@ -34,6 +34,7 @@ export const Retryable3dTaskSchema = z.object({
   name: z.string().min(1),
   intent: z.string().min(1),
   sourceImages: z.array(z.string()),
+  referenceViews: ReferenceImageViewsSchema.optional(),
   provider: z.enum(BATCH_3D_PROVIDER_IDS).optional(),
   options: z.record(z.string(), z.unknown()).default({}),
 });
@@ -69,6 +70,8 @@ export const Start3dBatchRequestSchema = z
     resolution: z.enum(["1536", "1536pro"]).optional(),
     /** seed3d-direct：面数走档位（high=100 万 / medium=50 万 / low=10 万） */
     subdivisionLevel: z.enum(["high", "medium", "low"]).optional(),
+    /** Tripo：自动识别带方位的多视角图，或显式强制单图/多视角。 */
+    tripoGenerationMode: z.enum(["auto", "single", "multiview"]).default("auto"),
     tripo3dApiKey: z.string().min(1).optional(),
     seed3dApiKey: z.string().min(1).optional(),
     volcengineApiKey: z.string().min(1).optional(),

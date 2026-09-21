@@ -25,12 +25,14 @@ export const Batch3dOptionsSchema = z.object({
   resolution: z.enum(["1536", "1536pro"]).optional(),
   /** seed3d-direct：面数走档位而非精确值（high=100 万 / medium=50 万 / low=10 万） */
   subdivisionLevel: z.enum(["high", "medium", "low"]).optional(),
+  /** Tripo：auto 会在资产带有 front + 至少另一视角时自动切换多视角生成。 */
+  tripoGenerationMode: z.enum(["auto", "single", "multiview"]).default("auto"),
 });
 
 export const start3dBatchTool = createTool({
   id: "start-3d-batch",
   description:
-    "为当前项目的对象并行生成 3D 模型。可选火山方舟 Seed3D（默认）、Hyper3D Gen-2、数美 Hi3D 2.0，或 Tripo3D；付费启动前须经用户同意。Hi3D 使用 Seedream 生成或编辑的参考图 URL。返回任务 id，用 list-generation-tasks 跟进。",
+    "为当前项目的对象并行生成 3D 模型。可选火山方舟 Seed3D（默认）、Hyper3D Gen-2、数美 Hi3D 2.0，或 Tripo3D；付费启动前须经用户同意。Tripo 的 tripoGenerationMode=auto 会对带视角标记的参考图自动使用多视角生成，也可指定 single/multiview。Hi3D 使用 Seedream 生成或编辑的参考图 URL。返回任务 id，用 list-generation-tasks 跟进。",
   inputSchema: Batch3dOptionsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
@@ -42,7 +44,10 @@ export const start3dBatchTool = createTool({
         "tripo3dApiKey",
         "本机 chat/.env 未配置 TRIPO_KEY",
       );
-      const tasks = startTripo3dBatch(projectSlug, objects, { tripo3dApiKey });
+      const tasks = startTripo3dBatch(projectSlug, objects, {
+        tripo3dApiKey,
+        generationMode: options.tripoGenerationMode,
+      });
       return { tasks: tasks.map(({ id, subject, status }) => ({ id, subject, status })) };
     }
     if (provider === "hyper3d-volc" || provider === "hi3d-volc") {

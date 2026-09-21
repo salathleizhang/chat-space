@@ -120,6 +120,7 @@ export async function resolve3dObjects(
       name: candidate.name,
       intent: candidate.description,
       sourceImages: candidate.sourceImages ?? [],
+      ...(candidate.referenceViews ? { referenceViews: candidate.referenceViews } : {}),
     });
   }
   // 正式资产最后写入、优先级最高：analysis.json 在资产发布后从不清理，会残留旧的
@@ -132,6 +133,7 @@ export async function resolve3dObjects(
       name: asset.identity.name,
       intent: asset.identity.intent,
       sourceImages: asset.identity.sourceImages,
+      ...(asset.identity.referenceViews ? { referenceViews: asset.identity.referenceViews } : {}),
     });
   }
 

@@ -24,6 +24,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 /** 假 Tripo：v3 上传 → file_token；STS + S3 直传；v3 能力端点 → task_id → success + CDN */
 function makeFakeTripoFetch() {
   const calls: { url: string; body?: unknown }[] = [];
+  let uploadCount = 0;
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith("https://cdn.fake/")) {
@@ -45,6 +46,7 @@ function makeFakeTripoFetch() {
       });
     }
     if (url.endsWith("/files")) {
+      uploadCount += 1;
       const uploaded = init?.body instanceof FormData ? init.body.get("file") : null;
       calls.push({
         url,
@@ -52,7 +54,7 @@ function makeFakeTripoFetch() {
           ? { name: uploaded.name, bytes: [...new Uint8Array(await uploaded.arrayBuffer())] }
           : undefined,
       });
-      return jsonResponse({ code: 0, data: { file_token: "ft-1" } });
+      return jsonResponse({ code: 0, data: { file_token: `ft-${uploadCount}` } });
     }
     if (url.startsWith("https://s3.fake/") && init?.method === "PUT") {
       calls.push({ url });
@@ -61,6 +63,10 @@ function makeFakeTripoFetch() {
     if (url.endsWith("/generation/image-to-model")) {
       calls.push({ url, body: JSON.parse(String(init?.body)) });
       return jsonResponse({ code: 0, data: { task_id: "gen-1" } });
+    }
+    if (url.endsWith("/generation/multiview-to-model")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "gen-multi-1" } });
     }
     if (url.endsWith("/models/import")) {
       calls.push({ url, body: JSON.parse(String(init?.body)) });
@@ -178,6 +184,35 @@ describe("runTripoImageTo3d", () => {
     expect(sidecar.provider).toBe("tripo");
     expect(sidecar.providerTaskId).toBe("gen-1");
     expect(sidecar.status).toBe("succeeded");
+  });
+
+  test("有已标注的前后视图时 auto 使用 multiview-to-model", async () => {
+    const front = `${projectSourceDir("tp")}/1-crate-front.png`;
+    const back = `${projectSourceDir("tp")}/1-crate-back.png`;
+    await storage.writeBytes(front, PNG_BYTES);
+    await storage.writeBytes(back, new Uint8Array([...PNG_BYTES, 1]));
+    const { fetchFn, calls } = makeFakeTripoFetch();
+
+    const result = await runTripoImageTo3d(
+      storage,
+      {
+        projectSlug: "tp",
+        assetSlug: "crate-multiview",
+        referenceViews: { front, back },
+        generationMode: "auto",
+      },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+
+    expect(calls.some((call) => call.url.endsWith("/generation/image-to-model"))).toBe(false);
+    const createCall = calls.find((call) => call.url.endsWith("/generation/multiview-to-model"));
+    expect(createCall?.body).toEqual({
+      inputs: [{ front: "ft-1" }, { back: "ft-2" }],
+      model: "v3.1-20260211",
+    });
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.model).toBe("v3/generation/multiview-to-model");
+    expect(sidecar.params.generation_mode).toBe("multiview");
   });
 });
 

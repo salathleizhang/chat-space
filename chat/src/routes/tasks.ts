@@ -31,6 +31,7 @@ taskRoutes.post("/3d", async (c) => {
     ? startTripo3dBatch(req.projectSlug, objects, {
       tripo3dApiKey: req.tripo3dApiKey!,
       imageModel: config.tripo.imageModel,
+      generationMode: req.tripoGenerationMode,
     })
     : req.provider === "hyper3d-volc" || req.provider === "hi3d-volc"
       ? startArk3dBatch(req.provider, req.projectSlug, objects, {
@@ -86,6 +87,7 @@ taskRoutes.post("/:taskId/retry", async (c) => {
     name: retry.name,
     intent: retry.intent,
     sourceImages: retry.sourceImages,
+    ...(retry.referenceViews ? { referenceViews: retry.referenceViews } : {}),
   };
   const options = retry.options;
   const provider = retry.provider;
@@ -98,6 +100,10 @@ taskRoutes.post("/:taskId/retry", async (c) => {
       ? startTripo3dBatch(req.projectSlug, [object], {
           tripo3dApiKey: req.tripo3dApiKey ?? "",
           imageModel: config.tripo.imageModel,
+          generationMode:
+            options.generationMode === "single" || options.generationMode === "multiview"
+              ? options.generationMode
+              : "auto",
         })
       : provider === "hyper3d-volc" || provider === "hi3d-volc"
         ? startArk3dBatch(provider, req.projectSlug, [object], {

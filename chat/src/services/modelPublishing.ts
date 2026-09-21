@@ -4,7 +4,7 @@ import {
   assetIdentityFile,
   projectTaskWorkDir,
 } from "../common/libraryPaths";
-import { AssetIdentitySchema } from "../dto/library";
+import { AssetIdentitySchema, type ReferenceImageViews } from "../dto/library";
 import { readJson, writeJson, type AssetStorage } from "./assetStorage";
 import { mutateCandidates } from "./candidateRegistry";
 
@@ -28,6 +28,7 @@ export interface GenerationObject {
   name: string;
   intent: string;
   sourceImages: string[];
+  referenceViews?: ReferenceImageViews;
 }
 
 class StagedAssetStorage implements AssetStorage {
@@ -109,6 +110,7 @@ export async function publishGeneratedModel(
     name: object.name,
     intent: object.intent,
     sourceImages: object.sourceImages,
+    ...(object.referenceViews ? { referenceViews: object.referenceViews } : {}),
     createdAt: new Date().toISOString(),
   });
 }

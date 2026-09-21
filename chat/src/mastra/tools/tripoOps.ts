@@ -16,8 +16,10 @@ import {
 import {
   AssetIdentitySchema,
   LogicalPathSchema,
+  ReferenceImageViewsSchema,
   RequestSidecarSchema,
   SlugSchema,
+  type ReferenceImageViews,
   type RequestSidecar,
 } from "../../dto/library";
 import { extractMeshyFileUrls } from "../../models/meshy";
@@ -25,6 +27,7 @@ import { convertModel } from "../../services/modelConvert";
 import {
   createTripoImageToModelTask,
   createTripoImportModelTask,
+  createTripoMultiviewToModelTask,
   createTripoSegmentTask,
   createTripoV3Task,
   uploadTripoFile,
@@ -56,24 +59,31 @@ import {
 
 const TRIPO_PROVIDER = "tripo";
 
-/** 参考图解析（单图）：显式 > 身份绑定 > 最新源图 */
-async function resolveSingleImage(
+/** 单图与已标注多视角一起解析；普通的多张 sourceImages 不会被误判为四视图。 */
+async function resolveTripoImages(
   storage: AssetStorage,
   projectSlug: string,
   assetSlug: string,
-  explicit?: string,
-): Promise<string> {
-  if (explicit) {
-    if (!(await storage.exists(explicit))) {
-      throw new ChatServiceError(`参考图不存在：${explicit}`, 404, "input_image_missing");
+  explicitImage?: string,
+  explicitViews?: ReferenceImageViews,
+): Promise<{ image: string; referenceViews?: ReferenceImageViews }> {
+  if (explicitImage) {
+    if (!(await storage.exists(explicitImage))) {
+      throw new ChatServiceError(`参考图不存在：${explicitImage}`, 404, "input_image_missing");
     }
-    return explicit;
+    return { image: explicitImage, ...(explicitViews ? { referenceViews: explicitViews } : {}) };
   }
   const identityPath = assetIdentityFile(projectSlug, assetSlug);
   if (await storage.exists(identityPath)) {
     const identity = await readJson(storage, identityPath, AssetIdentitySchema);
+    const views = explicitViews ?? identity.referenceViews;
+    if (views?.front && await storage.exists(views.front)) {
+      return { image: views.front, referenceViews: views };
+    }
     for (const image of identity.sourceImages) {
-      if (await storage.exists(image)) return image;
+      if (await storage.exists(image)) {
+        return { image, ...(views ? { referenceViews: views } : {}) };
+      }
     }
   }
   const sourceDir = projectSourceDir(projectSlug);
@@ -85,7 +95,7 @@ async function resolveSingleImage(
       "reference_image_missing",
     );
   }
-  return `${sourceDir}/${latest}`;
+  return { image: `${sourceDir}/${latest}`, ...(explicitViews ? { referenceViews: explicitViews } : {}) };
 }
 
 export interface TripoOpResult {
@@ -130,6 +140,8 @@ export const TripoGenParamsSchema = z.object({
   projectSlug: SlugSchema,
   assetSlug: SlugSchema,
   image: LogicalPathSchema.optional(),
+  referenceViews: ReferenceImageViewsSchema.optional(),
+  generationMode: z.enum(["auto", "single", "multiview"]).default("auto"),
 });
 export type TripoGenParams = z.input<typeof TripoGenParamsSchema>;
 
@@ -141,12 +153,30 @@ export async function runTripoImageTo3d(
 ): Promise<TripoOpResult> {
   const params = TripoGenParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
-  const image = await resolveSingleImage(
+  const resolved = await resolveTripoImages(
     storage,
     params.projectSlug,
     params.assetSlug,
     params.image,
+    params.referenceViews,
   );
+  const availableViews = params.generationMode === "single"
+    ? []
+    : await Promise.all(
+        (["front", "left", "back", "right"] as const).map(async (view) => {
+          const path = resolved.referenceViews?.[view];
+          return path && await storage.exists(path) ? ([view, path] as const) : null;
+        }),
+      ).then((entries) => entries.filter((entry): entry is readonly ["front" | "left" | "back" | "right", string] => Boolean(entry)));
+  const hasValidMultiview = availableViews.some(([view]) => view === "front") && availableViews.length >= 2;
+  if (params.generationMode === "multiview" && !hasValidMultiview) {
+    throw new ChatServiceError(
+      "多视角 3D 生成需要已标注的 front 视图和至少另一个视图；请先生成多角度参考图",
+      409,
+      "reference_multiview_missing",
+    );
+  }
+  const useMultiview = params.generationMode !== "single" && hasValidMultiview;
 
   const dir = assetDir(params.projectSlug, params.assetSlug);
   const index = nextIndex(await storage.list(dir));
@@ -158,8 +188,12 @@ export async function runTripoImageTo3d(
     index,
     slug: params.assetSlug,
     provider: TRIPO_PROVIDER,
-    model: "v3/generation/image-to-model",
-    params: { image },
+    model: useMultiview
+      ? "v3/generation/multiview-to-model"
+      : "v3/generation/image-to-model",
+    params: useMultiview
+      ? { generation_mode: "multiview", reference_views: Object.fromEntries(availableViews) }
+      : { generation_mode: "single", image: resolved.image },
     status: "queued",
     outputs: [],
     createdAt: now(),
@@ -173,12 +207,28 @@ export async function runTripoImageTo3d(
   await saveSidecar();
 
   try {
-    const fileToken = await uploadTripoFile(
-      image.split("/").pop()!,
-      await storage.readBytes(image),
-      callOptions,
-    );
-    const taskId = await createTripoImageToModelTask(fileToken, callOptions);
+    const taskId = useMultiview
+      ? await (async () => {
+          const uploaded = await Promise.all(
+            availableViews.map(async ([view, path]) => [
+              view,
+              await uploadTripoFile(
+                path.split("/").pop()!,
+                await storage.readBytes(path),
+                callOptions,
+              ),
+            ] as const),
+          );
+          return createTripoMultiviewToModelTask(Object.fromEntries(uploaded), callOptions);
+        })()
+      : await (async () => {
+          const fileToken = await uploadTripoFile(
+            resolved.image.split("/").pop()!,
+            await storage.readBytes(resolved.image),
+            callOptions,
+          );
+          return createTripoImageToModelTask(fileToken, callOptions);
+        })();
     sidecar.providerTaskId = taskId;
     sidecar.status = "running";
     await saveSidecar();
@@ -375,7 +425,11 @@ export async function runTripoSegmentation(
 export function startTripo3dBatch(
   projectSlug: string,
   objects: GenerationObject[],
-  options: { tripo3dApiKey: string; imageModel?: string },
+  options: {
+    tripo3dApiKey: string;
+    imageModel?: string;
+    generationMode?: "auto" | "single" | "multiview";
+  },
 ) {
   return objects.map((object) =>
     startCustomTask(
@@ -387,7 +441,13 @@ export function startTripo3dBatch(
           getAssetStorage(), projectSlug, task.id, object, task.setPhase,
           (target) => runTripoImageTo3d(
             target,
-            { projectSlug, assetSlug: object.slug, image: object.sourceImages[0] },
+            {
+              projectSlug,
+              assetSlug: object.slug,
+              image: object.sourceImages[0],
+              referenceViews: object.referenceViews,
+              generationMode: options.generationMode ?? "auto",
+            },
             { apiKey: options.tripo3dApiKey, imageModel: options.imageModel },
           ),
         ),
@@ -399,8 +459,9 @@ export function startTripo3dBatch(
           name: object.name,
           intent: object.intent,
           sourceImages: object.sourceImages,
+          ...(object.referenceViews ? { referenceViews: object.referenceViews } : {}),
           provider: "tripo-direct",
-          options: {},
+          options: { generationMode: options.generationMode ?? "auto" },
         },
       },
     ),

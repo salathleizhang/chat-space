@@ -74,9 +74,19 @@ export const ObjectCandidateSchema = z.object({
 });
 export type ObjectCandidate = z.infer<typeof ObjectCandidateSchema>;
 
+/** Tripo 多视角输入的标准方位；路径仍同时保存在 sourceImages 以兼容其他供应商。 */
+export const ReferenceImageViewsSchema = z.object({
+  front: LogicalPathSchema.optional(),
+  left: LogicalPathSchema.optional(),
+  back: LogicalPathSchema.optional(),
+  right: LogicalPathSchema.optional(),
+});
+export type ReferenceImageViews = z.infer<typeof ReferenceImageViewsSchema>;
+
 /** 尚未发布为正式资产的生成对象：来自场景确认，或文生单物体参考图的明确目标。 */
 export const ConfirmedObjectSchema = ObjectCandidateSchema.extend({
   sourceImages: z.array(LogicalPathSchema).optional(),
+  referenceViews: ReferenceImageViewsSchema.optional(),
 });
 export type ConfirmedObject = z.infer<typeof ConfirmedObjectSchema>;
 
@@ -133,6 +143,8 @@ export const AssetIdentitySchema = z.object({
   /** 生成意图：描述这个资产"应该是什么" */
   intent: z.string().min(1),
   sourceImages: z.array(LogicalPathSchema),
+  /** 已确认的多视角方位；省略表示 sourceImages 只是普通参考图集合。 */
+  referenceViews: ReferenceImageViewsSchema.optional(),
   createdAt: z.iso.datetime(),
 });
 export type AssetIdentity = z.infer<typeof AssetIdentitySchema>;

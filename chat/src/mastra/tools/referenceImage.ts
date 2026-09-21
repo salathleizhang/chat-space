@@ -17,6 +17,7 @@ import {
   RequestSidecarSchema,
   SceneAnalysisSchema,
   SlugSchema,
+  type ReferenceImageViews,
   type RequestSidecar,
 } from "../../dto/library";
 import {
@@ -32,6 +33,11 @@ import {
   type ImageProviderKeys,
   type ReferenceImageCanvas,
 } from "../../models/images";
+import {
+  createTripoV3Task,
+  uploadTripoFile,
+  waitForTripoTask,
+} from "../../models/tripo";
 import {
   getAssetStorage,
   readAsDataUri,
@@ -89,22 +95,36 @@ interface GenOptions {
 }
 
 /** 参考图既可绑定已发布资产，也可绑定尚未生成的确认对象。 */
-async function readReferenceOwnerImages(
+async function readReferenceOwner(
   storage: AssetStorage,
   projectSlug: string,
   slug: string,
-): Promise<string[] | null> {
+): Promise<{ images: string[]; referenceViews?: ReferenceImageViews } | null> {
   const identityPath = assetIdentityFile(projectSlug, slug);
   if (await storage.exists(identityPath)) {
-    return (await readJson(storage, identityPath, AssetIdentitySchema)).sourceImages;
+    const identity = await readJson(storage, identityPath, AssetIdentitySchema);
+    return {
+      images: identity.sourceImages,
+      ...(identity.referenceViews ? { referenceViews: identity.referenceViews } : {}),
+    };
   }
   const candidates = await readCandidates(storage, projectSlug);
   const candidateMatch = candidates.objects.find((object) => object.slug === slug);
-  if (candidateMatch) return candidateMatch.sourceImages ?? null;
+  if (candidateMatch) {
+    return {
+      images: candidateMatch.sourceImages ?? [],
+      ...(candidateMatch.referenceViews ? { referenceViews: candidateMatch.referenceViews } : {}),
+    };
+  }
   const analysisPath = projectAnalysisFile(projectSlug);
   if (!(await storage.exists(analysisPath))) return null;
   const analysis = await readJson(storage, analysisPath, SceneAnalysisSchema);
-  return analysis.objects.find((object) => object.slug === slug)?.sourceImages ?? null;
+  const object = analysis.objects.find((candidate) => candidate.slug === slug);
+  if (!object) return null;
+  return {
+    images: object.sourceImages ?? [],
+    ...(object.referenceViews ? { referenceViews: object.referenceViews } : {}),
+  };
 }
 
 async function bindReferenceImages(
@@ -113,11 +133,17 @@ async function bindReferenceImages(
   slug: string,
   images: string[],
   createTarget?: { name: string; description: string },
+  referenceViews?: ReferenceImageViews,
 ): Promise<void> {
   const identityPath = assetIdentityFile(projectSlug, slug);
   if (await storage.exists(identityPath)) {
     const identity = await readJson(storage, identityPath, AssetIdentitySchema);
-    await writeJson(storage, identityPath, AssetIdentitySchema, { ...identity, sourceImages: images });
+    const { referenceViews: _oldViews, ...identityWithoutViews } = identity;
+    await writeJson(storage, identityPath, AssetIdentitySchema, {
+      ...identityWithoutViews,
+      sourceImages: images,
+      ...(referenceViews ? { referenceViews } : {}),
+    });
     return;
   }
   const updated = await mutateCandidates(storage, projectSlug, (candidates) => {
@@ -125,7 +151,12 @@ async function bindReferenceImages(
     const objects = candidates.objects.map((object) => {
       if (object.slug !== slug) return object;
       found = true;
-      return { ...object, sourceImages: images };
+      const { referenceViews: _oldViews, ...objectWithoutViews } = object;
+      return {
+        ...objectWithoutViews,
+        sourceImages: images,
+        ...(referenceViews ? { referenceViews } : {}),
+      };
     });
     if (!found) return undefined;
     return { ...candidates, objects, updatedAt: new Date().toISOString() };
@@ -139,7 +170,12 @@ async function bindReferenceImages(
     const objects = analysis.objects.map((object) => {
       if (object.slug !== slug) return object;
       found = true;
-      return { ...object, sourceImages: images };
+      const { referenceViews: _oldViews, ...objectWithoutViews } = object;
+      return {
+        ...objectWithoutViews,
+        sourceImages: images,
+        ...(referenceViews ? { referenceViews } : {}),
+      };
     });
     if (found) {
       await writeJson(storage, analysisPath, SceneAnalysisSchema, { ...analysis, objects });
@@ -152,7 +188,15 @@ async function bindReferenceImages(
   }
   await mutateCandidates(storage, projectSlug, (candidates) => ({
     ...candidates,
-    objects: [...candidates.objects, { slug, ...createTarget, sourceImages: images }],
+    objects: [
+      ...candidates.objects,
+      {
+        slug,
+        ...createTarget,
+        sourceImages: images,
+        ...(referenceViews ? { referenceViews } : {}),
+      },
+    ],
     updatedAt: new Date().toISOString(),
   }));
 }
@@ -347,6 +391,157 @@ export async function runReferenceImageGeneration(
   }
 }
 
+// ---------- 单图扩展为标准四视图（Tripo image-to-multiview） ----------
+
+export const MultiviewReferenceImageParamsSchema = z.object({
+  projectSlug: SlugSchema,
+  assetSlug: SlugSchema,
+  /** 省略时优先使用该目标已有 front 视图，否则使用第一张有效参考图。 */
+  sourceImage: LogicalPathSchema.optional(),
+});
+export type MultiviewReferenceImageParams = z.input<
+  typeof MultiviewReferenceImageParamsSchema
+>;
+
+export interface MultiviewReferenceImageResult {
+  images: string[];
+  referenceViews: Required<ReferenceImageViews>;
+  sidecar: string;
+  channel: "tripo";
+}
+
+const TRIPO_MULTIVIEW_OUTPUTS = [
+  ["front", "front_view_url"],
+  ["left", "left_view_url"],
+  ["back", "back_view_url"],
+  ["right", "right_view_url"],
+] as const;
+
+/** 从目标的一张干净参考图生成前/左/后/右四视图，并把方位元数据绑定回目标。 */
+export async function runReferenceImageMultiview(
+  storage: AssetStorage,
+  rawParams: MultiviewReferenceImageParams,
+  apiKey: string,
+  options: GenOptions = {},
+): Promise<MultiviewReferenceImageResult> {
+  const params = MultiviewReferenceImageParamsSchema.parse(rawParams);
+  await requireProject(storage, params.projectSlug);
+  await assertReferenceTargetWritable(storage, params.projectSlug, params.assetSlug);
+  const owner = await readReferenceOwner(storage, params.projectSlug, params.assetSlug);
+  if (!owner) {
+    throw new ChatServiceError(
+      `资产或确认对象「${params.assetSlug}」不存在，无法生成多角度参考图`,
+      404,
+      "asset_not_found",
+    );
+  }
+
+  const candidates = [
+    params.sourceImage,
+    owner.referenceViews?.front,
+    ...owner.images,
+  ].filter((path): path is string => Boolean(path));
+  let sourceImage: string | undefined;
+  for (const candidate of candidates) {
+    if (await storage.exists(candidate)) {
+      sourceImage = candidate;
+      break;
+    }
+  }
+  if (!sourceImage) {
+    throw new ChatServiceError(
+      `资产「${params.assetSlug}」还没有参考图，请先用 generate-reference-images 生成`,
+      409,
+      "reference_image_missing",
+    );
+  }
+
+  const sourceDir = projectSourceDir(params.projectSlug);
+  const slug = `${params.assetSlug}-ref-multiview`;
+  const now = () => new Date().toISOString();
+  const sidecarFor = (index: number): RequestSidecar => ({
+    schemaVersion: 1,
+    index,
+    slug,
+    provider: "tripo",
+    model: "v3/generation/image-to-multiview",
+    params: { asset_slug: params.assetSlug, input_image: sourceImage },
+    status: "queued",
+    outputs: [],
+    createdAt: now(),
+    updatedAt: now(),
+  });
+  const index = await reserveIndex(storage, sourceDir, slug, (candidate) =>
+    JSON.stringify(sidecarFor(candidate), null, 2),
+  );
+  const sidecarPath = `${sourceDir}/${formatRequestSidecarName(index, slug)}`;
+  const sidecar = sidecarFor(index);
+  const saveSidecar = () =>
+    writeJson(storage, sidecarPath, RequestSidecarSchema, {
+      ...sidecar,
+      updatedAt: now(),
+    });
+  await saveSidecar();
+
+  try {
+    const fileToken = await uploadTripoFile(
+      sourceImage.split("/").pop()!,
+      await storage.readBytes(sourceImage),
+      { apiKey, fetchFn: options.fetchFn, pollIntervalMs: options.pollIntervalMs },
+    );
+    const taskId = await createTripoV3Task(
+      "/generation/image-to-multiview",
+      { input: fileToken },
+      { apiKey, fetchFn: options.fetchFn, pollIntervalMs: options.pollIntervalMs },
+    );
+    sidecar.providerTaskId = taskId;
+    sidecar.status = "running";
+    await saveSidecar();
+
+    const task = await waitForTripoTask(taskId, {
+      apiKey,
+      fetchFn: options.fetchFn,
+      pollIntervalMs: options.pollIntervalMs,
+    });
+    const output = (task.output ?? {}) as Record<string, unknown>;
+    const referenceViews: Partial<ReferenceImageViews> = {};
+    const images: string[] = [];
+    for (const [view, outputKey] of TRIPO_MULTIVIEW_OUTPUTS) {
+      const url = output[outputKey];
+      if (typeof url !== "string" || !url) {
+        throw new ChatServiceError(
+          `Tripo 多角度结果缺少 ${outputKey}`,
+          502,
+          "tripo_multiview_incomplete",
+        );
+      }
+      const path = `${sourceDir}/${formatIndexedName(index, `${slug}-${view}`, extFromUrl(url))}`;
+      await downloadToLibrary(storage, url, path, { fetchFn: options.fetchFn });
+      referenceViews[view] = path;
+      images.push(path);
+      sidecar.outputs.push({ path, providerUrl: url });
+    }
+
+    const completeViews = referenceViews as Required<ReferenceImageViews>;
+    await bindReferenceImages(
+      storage,
+      params.projectSlug,
+      params.assetSlug,
+      images,
+      undefined,
+      completeViews,
+    );
+    sidecar.status = "succeeded";
+    await saveSidecar();
+    return { images, referenceViews: completeViews, sidecar: sidecarPath, channel: "tripo" };
+  } catch (err) {
+    sidecar.status = "failed";
+    sidecar.error = toErrorMessage(err);
+    await saveSidecar();
+    throw err;
+  }
+}
+
 // ---------- 编辑参考图（间接编辑 3D 模型：改图 → 重新生成，见 docs 讨论） ----------
 
 /**
@@ -380,12 +575,12 @@ export async function runReferenceImageEdit(
   const params = EditReferenceImageParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
 
-  const ownerImages = await readReferenceOwnerImages(
+  const owner = await readReferenceOwner(
     storage,
     params.projectSlug,
     params.assetSlug,
   );
-  if (!ownerImages) {
+  if (!owner) {
     throw new ChatServiceError(
       `资产或确认对象「${params.assetSlug}」不存在，无法编辑参考图`,
       404,
@@ -393,7 +588,7 @@ export async function runReferenceImageEdit(
     );
   }
   const existingImages: string[] = [];
-  for (const image of ownerImages) {
+  for (const image of owner.images) {
     if (await storage.exists(image)) existingImages.push(image);
   }
   if (existingImages.length === 0) {
@@ -484,7 +679,13 @@ export async function runReferenceImageEdit(
 
 // ---------- 统一工具入口 + Mastra 包装 ----------
 
-function providerKeysFromContext(context: Parameters<typeof optionalContextString>[0]): ImageProviderKeys {
+export interface ReferenceProviderKeys extends ImageProviderKeys {
+  tripo3dApiKey?: string;
+}
+
+function providerKeysFromContext(
+  context: Parameters<typeof optionalContextString>[0],
+): ReferenceProviderKeys {
   return {
     volcengineApiKey:
       optionalContextString(context, "volcengineApiKey") ??
@@ -492,6 +693,7 @@ function providerKeysFromContext(context: Parameters<typeof optionalContextStrin
     googleApiKey: optionalContextString(context, "googleApiKey"),
     openaiApiKey: optionalContextString(context, "openaiApiKey"),
     openrouterApiKey: optionalContextString(context, "openrouterApiKey"),
+    tripo3dApiKey: optionalContextString(context, "tripo3dApiKey"),
   };
 }
 
@@ -501,6 +703,9 @@ export const GenerateReferenceImagesInputSchema = z.union([
   }),
   EditReferenceImageParamsSchema.omit({ projectSlug: true }).extend({
     mode: z.literal("edit"),
+  }),
+  MultiviewReferenceImageParamsSchema.omit({ projectSlug: true }).extend({
+    mode: z.literal("multiview"),
   }),
   PlateInputSchema.omit({ projectSlug: true }).extend({
     mode: z.literal("plate"),
@@ -516,11 +721,10 @@ export type GenerateReferenceImagesInput = z.input<
  * `{ anyOf: [...] }`，火山方舟的 DeepSeek 接入点会直接拒绝整轮请求：
  * `tools.N.function.parameters must be a JSON Schema of type object`
  * （Doubao 接入点恰好容忍 anyOf，所以只有切到 DeepSeek 才暴露）。
- * 因此工具层把 generate/edit/plate 合并成一个扁平对象；分支必填约束仍由上面的
- * union 在执行层校验，模型看到的字段与三种模式的实际入参保持一致。
+ * 因此工具层把各模式合并成一个扁平对象；分支必填约束仍由上面的 union 在执行层校验。
  */
 export const GenerateReferenceImagesToolSchema = z.object({
-  mode: z.enum(["generate", "edit", "plate"]).default("generate"),
+  mode: z.enum(["generate", "edit", "multiview", "plate"]).default("generate"),
   /** generate/edit 必填；plate 的移除指令由已确认的对象清单自动组装。 */
   prompt: z.string().min(1).optional(),
   model: z.enum(IMAGE_GENERATE_MODEL_IDS).default("seedream"),
@@ -537,12 +741,12 @@ export const GenerateReferenceImagesToolSchema = z.object({
   extraInstructions: z.string().optional(),
 });
 
-/** 三种模式归一成 images 数组，方便 SSE 统一展示新图片。 */
+/** 各模式归一成 images 数组，方便 SSE 统一展示新图片。 */
 export async function runGenerateReferenceImages(
   storage: AssetStorage,
   projectSlug: string,
   rawInput: GenerateReferenceImagesInput,
-  keys: ImageProviderKeys,
+  keys: ReferenceProviderKeys,
   options: GenOptions = {},
 ) {
   const input = GenerateReferenceImagesInputSchema.parse(rawInput);
@@ -568,6 +772,22 @@ export async function runGenerateReferenceImages(
       channel: result.channel,
     };
   }
+  if (input.mode === "multiview") {
+    if (!keys.tripo3dApiKey) {
+      throw new ChatServiceError(
+        "本机 chat/.env 未配置 TRIPO_KEY",
+        409,
+        "provider_key_missing",
+      );
+    }
+    const result = await runReferenceImageMultiview(
+      storage,
+      { ...input, projectSlug },
+      keys.tripo3dApiKey,
+      options,
+    );
+    return { mode: "multiview" as const, ...result };
+  }
 
   const result = await runReferenceImageGeneration(
     storage,
@@ -581,7 +801,7 @@ export async function runGenerateReferenceImages(
 export const generateReferenceImagesTool = createTool({
   id: "generate-reference-images",
   description:
-    "统一图片生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent，成功后自动绑定生成目标。mode=edit 是图生图编辑资产参考图，需要已有 assetSlug 和 prompt，结果绑定回该资产；两种参考图模式都强制完整入镜、留白和无遮挡。mode=plate 是从 one-shot-scene 已确认的场景参考图移除对象、生成空场景底板，不传 prompt；默认移除全部已确认对象，也可传 objectSlugs、sourceImage、extraInstructions。完整场景链路请启动 one-shot-scene Workflow，不要重复调用单步生图。",
+    "统一图片生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent。mode=edit 是图生图编辑资产参考图。mode=multiview 使用 Tripo 把目标已有的一张干净参考图扩展为前/左/后/右四视图，需要 assetSlug，可用 sourceImage 指定输入；结果带视角标记并供 Tripo 多视角 3D 生成。mode=plate 是从已确认的场景参考图移除对象、生成空场景底板。完整场景链路请启动 one-shot-scene Workflow。",
   inputSchema: GenerateReferenceImagesToolSchema,
   execute: async (input, context) =>
     runGenerateReferenceImages(

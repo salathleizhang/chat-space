@@ -81,6 +81,31 @@ export function createTripoImageToModelTask(
   );
 }
 
+export type TripoView = "front" | "left" | "back" | "right";
+
+/** 多视角图生 3D：front 必须存在，且总计至少两个视角。 */
+export function createTripoMultiviewToModelTask(
+  inputs: Partial<Record<TripoView, string>>,
+  options: TripoCallOptions,
+): Promise<string> {
+  const orderedViews: TripoView[] = ["front", "left", "back", "right"];
+  const payloadInputs = orderedViews.flatMap((view) =>
+    inputs[view] ? [{ [view]: inputs[view] }] : [],
+  );
+  if (!inputs.front || payloadInputs.length < 2) {
+    throw new ChatServiceError(
+      "Tripo 多视角生成至少需要 front 和另一个视角",
+      400,
+      "tripo_multiview_invalid",
+    );
+  }
+  return createTripoV3Task(
+    "/generation/multiview-to-model",
+    { inputs: payloadInputs, model: options.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL },
+    options,
+  );
+}
+
 /** 把上传好的模型文件登记成 Tripo 任务（后续分割/贴图等后处理的链头） */
 export function createTripoImportModelTask(
   fileToken: string,
