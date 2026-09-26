@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   deriveLibraryAssets,
   fetchProjectState,
+  type AssetMaterial,
   type AssetTransform,
   type LibraryAsset,
   type ProjectPlan,
@@ -10,11 +11,12 @@ import {
 
 /** 没有 scene.json 时共用同一个空表，免得每次重扫都造新引用触发下游重算 */
 const NO_TRANSFORMS: Record<string, AssetTransform> = {};
+const NO_MATERIALS: Record<string, AssetMaterial> = {};
 
 /**
  * 当前项目名 + 派生计划状态 + 资产列表（ModelList 与 Viewport 共用的共享场景数据源）
- * + 磁盘上的场景摆放（scene.json，本地改动的叠加见 `useSceneTransforms`）；
- * 项目不存在时重定向回项目列表。
+ * + 磁盘上的场景摆放与材质覆盖（scene.json，本地改动的叠加见 `useSceneTransforms` /
+ * `useAssetMaterials`）；项目不存在时重定向回项目列表。
  */
 export function useProjectState(
   projectSlug: string,
@@ -30,6 +32,7 @@ export function useProjectState(
     currentSkybox?: string;
     currentWorld?: string;
     sceneTransforms: Record<string, AssetTransform>;
+    sceneMaterials: Record<string, AssetMaterial>;
   }>(() => ({
     projectName: "",
     projectError: null,
@@ -37,6 +40,7 @@ export function useProjectState(
     assets: [],
     referenceImages: [],
     sceneTransforms: NO_TRANSFORMS,
+    sceneMaterials: NO_MATERIALS,
   }));
 
   useEffect(() => {
@@ -63,6 +67,7 @@ export function useProjectState(
           currentSkybox: state.project.currentSkybox,
           currentWorld: state.project.currentWorld,
           sceneTransforms: state.scene?.transforms ?? NO_TRANSFORMS,
+          sceneMaterials: state.scene?.materials ?? NO_MATERIALS,
         });
       })
       .catch((err: unknown) => {

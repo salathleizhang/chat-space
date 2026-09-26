@@ -30,7 +30,7 @@ import {
 } from "react";
 import * as THREE from "three";
 import { useEnvironmentTexture } from "../../shared/lib/envTexture";
-import type { AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
+import type { AssetMaterial, AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
 import { libraryUrl, selectProjectSkybox } from "../../shared/lib/libraryApi";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
 import { Badge, Panel, ToolbarButton, Tooltip } from "../../shared/ui";
@@ -63,6 +63,8 @@ interface ViewportProps {
   currentWorld?: string;
   /** 用户用 gizmo 调过的资产摆放（按 assetSlug，来自 scene.json）；没记录的走网格默认位 */
   transforms?: Record<string, AssetTransform>;
+  /** 右侧栏改过的材质覆盖（按 assetSlug，来自 scene.json 的 materials 表）；没记录的渲染原材质 */
+  materials?: Record<string, AssetMaterial>;
   /**
    * 拖拽期间的实时摆放表。**由上层创建并注入**：右侧栏要订阅同一份表才能让数字跟着手走，
    * 所以它不能住在这里（见 liveTransforms.ts）。
@@ -170,6 +172,8 @@ interface SceneContentsProps {
   /** 天空盒资产重扫代次；原位修复后递增，纳入错误边界 resetKey 以清掉旧的拒绝缓存 */
   skyboxRevision: number;
   selectedIds: ReadonlySet<string>;
+  /** 材质覆盖表（按 assetSlug），与 transforms 一样来自上层共享快照 */
+  materials: Record<string, AssetMaterial>;
   /** 跨窗格共享的实时摆放表（gizmo 拖拽期间用，见 PlacedAsset 与 TransformGizmo 说明） */
   live: LiveTransforms;
   /** 当前选中且可变换的资产；空数组即不渲染 gizmo */
@@ -206,6 +210,7 @@ const CLICK_DRAG_TOLERANCE_PX = 2;
 const PlacedAsset = memo(function PlacedAsset({
   asset,
   placement,
+  material,
   live,
   highlight,
   onSelect,
@@ -215,6 +220,8 @@ const PlacedAsset = memo(function PlacedAsset({
   asset: LibraryAsset;
   /** 网格默认位，或用户 gizmo 调过后落在 scene.json 里的摆放（见 scenePlacement.ts） */
   placement: AssetPlacement;
+  /** 该资产的材质覆盖；undefined 即渲染供应商原材质 */
+  material?: AssetMaterial;
   /** 跨窗格共享的实时摆放表：gizmo 拖拽期间由本组件每帧读取（见下方说明） */
   live: LiveTransforms;
   highlight: "none" | "hover" | "selected";
@@ -276,7 +283,7 @@ const PlacedAsset = memo(function PlacedAsset({
           : undefined
       }
     >
-      <ModelMesh asset={asset} highlight={highlight} />
+      <ModelMesh asset={asset} highlight={highlight} material={material} />
     </group>
   );
 });
@@ -295,6 +302,7 @@ function SceneContents({
   skyboxUrl,
   skyboxRevision,
   selectedIds,
+  materials,
   live,
   gizmoMembers,
   transformMode,
@@ -363,6 +371,7 @@ function SceneContents({
             <PlacedAsset
               asset={asset}
               placement={placement}
+              material={materials[asset.assetSlug]}
               live={live}
               highlight={
                 selectedIds.has(asset.id)
@@ -408,6 +417,9 @@ function SceneContents({
 }
 
 const DEFAULT_SKYBOX_URL = "/env/sky.exr";
+/** 没有材质覆盖时的共用空表，免得每次渲染造新引用戳穿 PlacedAsset 的 memo */
+const NO_MATERIALS: Record<string, AssetMaterial> = {};
+
 export const Viewport = memo(function Viewport({
   assets,
   focusedId,
@@ -415,6 +427,7 @@ export const Viewport = memo(function Viewport({
   currentSkybox,
   currentWorld,
   transforms,
+  materials = NO_MATERIALS,
   live,
   onTransformCommit,
   onSelectAsset,
@@ -646,6 +659,7 @@ export const Viewport = memo(function Viewport({
             skyboxUrl={skyboxUrl}
             skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
             selectedIds={selectedIds}
+            materials={materials}
             live={live}
             gizmoMembers={gizmoMembers}
             transformMode={transformMode}
@@ -664,6 +678,7 @@ export const Viewport = memo(function Viewport({
                 skyboxUrl={skyboxUrl}
                 skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
                 selectedIds={selectedIds}
+                materials={materials}
                 live={live}
                 gizmoMembers={gizmoMembers}
                 transformMode={transformMode}

@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AgentDock } from "../../widgets/AgentDock";
 import type { LiveTransforms } from "../../widgets/Viewport/liveTransforms";
-import type { LibraryAsset } from "../../shared/lib/libraryApi";
+import type { AssetMaterial, LibraryAsset, Vec3 } from "../../shared/lib/libraryApi";
 import {
   activateEnvironmentAsset,
   deleteAsset,
@@ -17,13 +17,16 @@ import {
 } from "../../shared/lib/workflowClient";
 import { Button, Panel, Tooltip } from "../../shared/ui";
 import { ImageGallery } from "../../widgets/ImageGallery";
+import { Inspector } from "../../widgets/Inspector";
 import { ModelList } from "../../widgets/ModelList";
 import { ThumbnailRenderer } from "../../widgets/ModelList/ThumbnailRenderer";
 import { useThumbnailQueue } from "../../widgets/ModelList/useThumbnailQueue";
 import { Sidebar, type SectionId } from "../../widgets/Sidebar";
 import { Viewport } from "../../widgets/Viewport";
 import { createLiveTransforms } from "../../widgets/Viewport/liveTransforms";
+import { computeSceneLayout } from "../../widgets/Viewport/scenePlacement";
 import { useAgentChat } from "./useAgentChat";
+import { useAssetMaterials } from "./useAssetMaterials";
 import { useChatMessages } from "./useChatMessages";
 import { useProjectState } from "./useProjectState";
 import { useSceneTransforms } from "./useSceneTransforms";
@@ -112,6 +115,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     currentSkybox,
     currentWorld,
     sceneTransforms,
+    sceneMaterials,
   } = useProjectState(projectSlug, refreshKey);
   const selectedAssets = useMemo(
     () => assets.filter((asset) => selectedIds.has(asset.id)),
@@ -165,6 +169,57 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     sceneTransforms,
     handleSceneSaveError,
   );
+  /** 右侧栏改过的材质覆盖：同一份 scene.json 的另一张表，离散编辑所以不做防抖 */
+  const handleMaterialSaveError = useCallback(
+    (message: string) => reportError(`Failed to save material: ${message}`),
+    [reportError],
+  );
+  const { materials, setMaterial, dropMaterial } = useAssetMaterials(
+    projectSlug,
+    sceneMaterials,
+    handleMaterialSaveError,
+  );
+
+  /**
+   * 右侧栏只服务"一个模型的详情"：多选时语义变成"整组"，与用户要的"选中单个模型时出现"
+   * 不符，所以多选直接不出栏。判定与 Viewport 的 placedAssets 同源——world 走高斯泼溅背景、
+   * 天空盒没有模型产物，两者都没有 position/rotate/scale 可谈。
+   */
+  const inspectorAsset = useMemo(() => {
+    if (selectedAssets.length !== 1) return null;
+    const [asset] = selectedAssets;
+    if (!asset || asset.kind === "world" || !asset.modelPath) return null;
+    return asset;
+  }, [selectedAssets]);
+  /**
+   * 栏里显示的必须是**生效摆放**，不是 scene.json 里那一条——没被 gizmo 调过的资产在
+   * scene.json 里根本没有记录，它的位置是 `computeSceneLayout` 按创建顺序派生的网格位。
+   * 直接读 `transforms[slug]` 会让未摆过的资产显示成全 0/单位值，而视口里它明明在网格上。
+   */
+  const inspectorTransform = useMemo(
+    () => (inspectorAsset ? computeSceneLayout(assets, transforms).get(inspectorAsset.id) : undefined),
+    [assets, inspectorAsset, transforms],
+  );
+  const handleInspectorTransform = useCallback(
+    (next: { position: Vec3; rotation: Vec3; scale: Vec3 }) => {
+      if (!inspectorAsset) return;
+      commitTransforms({ [inspectorAsset.assetSlug]: next });
+    },
+    [commitTransforms, inspectorAsset],
+  );
+  const handleInspectorMaterial = useCallback(
+    (next: AssetMaterial) => {
+      if (!inspectorAsset) return;
+      setMaterial(inspectorAsset.assetSlug, next);
+    },
+    [inspectorAsset, setMaterial],
+  );
+  /** 换贴图能挑的工程图片：生成的参考图 + 这个资产自己的源图（去重，源图常与参考图重合） */
+  const inspectorImages = useMemo(() => {
+    if (!inspectorAsset) return [];
+    return [...new Set([...referenceImages, ...inspectorAsset.sourceImages])];
+  }, [inspectorAsset, referenceImages]);
+
   const { tasks, pollTasks, onThumbnailGenerated } = useTaskPolling({
     projectSlug,
     enabled: sessionReady,
@@ -282,9 +337,10 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
       });
       closePreviewFor(asset.id);
       dropTransform(asset.assetSlug);
+      dropMaterial(asset.assetSlug);
       bumpRefresh();
     },
-    [projectSlug, bumpRefresh, closePreviewFor, dropTransform, flushPendingSave],
+    [projectSlug, bumpRefresh, closePreviewFor, dropTransform, dropMaterial, flushPendingSave],
   );
 
   /** 悬浮资产详情里的“启用”：天空盒与 World 各自维护一个项目级当前指针 */
@@ -305,6 +361,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         currentSkybox={currentSkybox}
         currentWorld={currentWorld}
         transforms={transforms}
+        materials={materials}
         live={live}
         onTransformCommit={commitTransforms}
         onSelectAsset={selectAsset}
@@ -362,12 +419,32 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           />
         )}
       </div>
+      {inspectorAsset && inspectorTransform && (
+        <div className="absolute top-4 right-4 z-10 animate-chrome-enter">
+          <Inspector
+            asset={inspectorAsset}
+            transform={inspectorTransform}
+            onTransformChange={handleInspectorTransform}
+            live={live}
+            material={materials[inspectorAsset.assetSlug]}
+            onMaterialChange={handleInspectorMaterial}
+            images={inspectorImages}
+          />
+        </div>
+      )}
       {preview && (
-        <div className="absolute top-4 right-4 z-20 animate-chrome-enter">
+        /*
+          预览小窗与右侧栏抢同一个角落。选中态下右侧栏常驻（w-64 + 16px 边距 = 17rem），
+          所以预览窗在栏位出现时整体左移，两个 chrome 面板永远不叠在一起。
+        */
+        <div
+          className={`absolute top-4 z-20 animate-chrome-enter ${inspectorAsset ? "right-[18rem]" : "right-4"}`}
+        >
           <Suspense fallback={null}>
             <ModelPreviewWindow
               asset={preview.asset}
               transform={transforms[preview.asset.assetSlug]}
+              material={materials[preview.asset.assetSlug]}
               inspection={preview.inspection}
               onClose={closePreview}
               onInspectionCaptured={handleInspectionCaptured}
