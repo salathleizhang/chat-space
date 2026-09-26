@@ -31,7 +31,7 @@ import {
 import * as THREE from "three";
 import { useEnvironmentTexture } from "../../shared/lib/envTexture";
 import type { AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
-import { libraryUrl } from "../../shared/lib/libraryApi";
+import { libraryUrl, selectProjectSkybox } from "../../shared/lib/libraryApi";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
 import { Badge, Panel, ToolbarButton, Tooltip } from "../../shared/ui";
 import type { CameraTarget } from "./CameraRig";
@@ -481,9 +481,7 @@ export const Viewport = memo(function Viewport({
     [assets],
   );
   const layout = useMemo(() => computeSceneLayout(assets, transforms), [assets, transforms]);
-  const skyboxAsset = currentSkybox
-    ? assets.find((a) => a.kind === "skybox" && a.assetSlug === currentSkybox && a.hdrPath)
-    : undefined;
+  const skyboxAsset = selectProjectSkybox(assets, currentSkybox);
   const skyboxUrl = skyboxAsset?.hdrPath ? libraryUrl(skyboxAsset.hdrPath) : DEFAULT_SKYBOX_URL;
 
   const isFocusable = focusedId != null && focusedId !== worldAsset?.id;

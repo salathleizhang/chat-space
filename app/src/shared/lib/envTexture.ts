@@ -12,13 +12,18 @@ import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
  * `public/env/sky.exr` 才是 EXR——写死 EXRLoader 的话，用户真生成过天空盒之后
  * 视口背景球会解析失败（曾经的现象）。
  *
- * 分派规则与 drei `useEnvironment` 保持一致（exr → EXRLoader，其余 → RGBELoader），
+ * 分派规则是 exr → EXRLoader、hdr → RGBELoader、普通图片 → TextureLoader。
  * 这样视口背景、IBL 与缩略图命中的是 `useLoader` 缓存里同一个条目，再由下方的
- * `useEnvironmentTexture` 跨 Canvas 引用计数，避免仍有使用者时提前释放。
+ * `useEnvironmentTexture` 跨 Canvas 引用计数，避免仍有使用者时提前释放；普通图片
+ * 额外使用 sRGB 色彩空间，避免图片模型生成的天空盒偏暗。
  */
-export function envLoaderFor(url: string): typeof EXRLoader | typeof RGBELoader {
+export function envLoaderFor(
+  url: string,
+): typeof EXRLoader | typeof RGBELoader | typeof THREE.TextureLoader {
   const ext = url.split("?")[0]?.split(".").pop()?.toLowerCase();
-  return ext === "exr" ? EXRLoader : RGBELoader;
+  if (ext === "exr") return EXRLoader;
+  if (ext === "hdr") return RGBELoader;
+  return THREE.TextureLoader;
 }
 
 interface TextureLease {
@@ -41,7 +46,8 @@ export function useEnvironmentTexture(url: string): THREE.Texture {
 
   // 与 drei useEnvironment 对齐；Environment 的 map 模式不会替我们设置这两项。
   texture.mapping = THREE.EquirectangularReflectionMapping;
-  texture.colorSpace = THREE.LinearSRGBColorSpace;
+  texture.colorSpace =
+    loader === THREE.TextureLoader ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
 
   useEffect(() => {
     let lease = textureLeases.get(url);

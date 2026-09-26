@@ -145,7 +145,7 @@ export interface LibraryAsset {
   mtlPath: string | null;
   /** 最新一代高斯泼溅（spz）逻辑路径，无则 null（world 资产优先渲染它） */
   spzPath: string | null;
-  /** 最新一代 HDR 环境贴图逻辑路径，无则 null（skybox 资产用它做视口环境） */
+  /** 最新一代环境贴图逻辑路径；兼容 HDR/EXR 与图片模型编辑出的 PNG/JPG/WebP。 */
   hdrPath: string | null;
   /** 最新一代的全部模型文件（部件分割等一次生成多文件时 >1），逻辑路径 */
   modelPaths: string[];
@@ -162,6 +162,18 @@ export interface LibraryAsset {
   createdAt: string | null;
   /** 当前项目扫描代次；同路径 repair 后用于重新挂载错误边界并清除旧拒绝缓存。 */
   resourceRevision?: number;
+}
+
+/** 项目级天空盒是单例：显式当前项优先，旧项目无指针时采用最近创建的一项。 */
+export function selectProjectSkybox(
+  assets: LibraryAsset[],
+  currentSkybox?: string,
+): LibraryAsset | null {
+  const skyboxes = assets.filter((asset) => asset.kind === "skybox" && asset.hdrPath);
+  return skyboxes.find((asset) => asset.assetSlug === currentSkybox) ??
+    skyboxes.reduce<LibraryAsset | null>((latest, asset) =>
+      !latest || (asset.createdAt ?? "") > (latest.createdAt ?? "") ? asset : latest,
+    null);
 }
 
 function latestByExt(files: string[], ext: string): string | null {
@@ -182,8 +194,20 @@ function latestByExt(files: string[], ext: string): string | null {
   return best?.name ?? null;
 }
 
+function latestEnvironment(files: string[]): string | null {
+  const supported = new Set(["hdr", "exr", "png", "jpg", "jpeg", "webp"]);
+  let best: { index: number; name: string } | null = null;
+  for (const name of files) {
+    const match = /^(\d+)-.*\.([^.]+)$/.exec(name);
+    if (!match || !supported.has(match[2]!.toLowerCase())) continue;
+    const index = Number(match[1]);
+    if (!best || index > best.index) best = { index, name };
+  }
+  return best?.name ?? null;
+}
+
 const MODEL_FILE_RE = /^(\d+)-.*\.(glb|gltf|obj|fbx)$/i;
-const PART_SEGMENT_OPERATIONS = new Set(["v3/mesh/segment"]);
+const PART_SEGMENT_OPERATIONS = new Set(["v3/mesh/segment", "SubmitHunyuan3DPartJob"]);
 
 /** 最新一代的全部模型文件（部件分割等一次生成多个部件时全部列出） */
 function latestModelFiles(files: string[]): string[] {
@@ -253,7 +277,7 @@ export function deriveLibraryAssets(
     const modelFiles = latestModelFiles(visible);
     const isPartGeneration = PART_SEGMENT_OPERATIONS.has(asset.latestModelOperation ?? "");
     const spz = latestByExt(visible, "spz");
-    const hdr = latestByExt(visible, "hdr");
+    const hdr = asset.identity?.kind === "skybox" ? latestEnvironment(visible) : null;
     const mtl = model?.ext === "obj" ? findAuxFile(visible, "mtl") : null;
     // 缩略图是隐藏文件（`.` 前缀），刻意不在 visible 里找——它不算资产产物。
     // 源产物取"这个资产拿什么渲缩略图"：模型资产是主产物模型，天空盒没有模型、

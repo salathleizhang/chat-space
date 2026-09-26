@@ -12,6 +12,7 @@ import {
   EXPORT_FORMAT_LABELS,
   EXPORT_FORMATS,
   exportAssetsBatch,
+  selectProjectSkybox,
   type ExportFormat,
   type LibraryAsset,
 } from "../../shared/lib/libraryApi";
@@ -353,16 +354,20 @@ export const ModelList = memo(function ModelList({
     };
   }, [assets]);
   const defaultSkybox = useMemo(() => defaultSkyboxAsset(projectSlug), [projectSlug]);
-  // 资产库顺序就是产品语义：全部天空盒在顶部、普通资产居中、全部 World 在最底部。
+  const projectSkybox = useMemo(
+    () => selectProjectSkybox(skyboxAssets, currentSkybox),
+    [currentSkybox, skyboxAssets],
+  );
+  // 天空盒是项目级单例：有生成结果就只显示它，否则只显示内置默认槽位。
   // “场景”入口暂时保留，仍只列 World，未来可升级为真正的场景配置管理器。
   const visibleAssets = useMemo(
     () =>
       section === "assets"
-        ? [defaultSkybox, ...skyboxAssets, ...regularAssets, ...worldAssets]
+        ? [projectSkybox ?? defaultSkybox, ...regularAssets, ...worldAssets]
         : section === "scenes"
           ? worldAssets
           : [],
-    [defaultSkybox, regularAssets, section, skyboxAssets, worldAssets],
+    [defaultSkybox, projectSkybox, regularAssets, section, worldAssets],
   );
   const activeWorldSlug = currentWorld ?? worldAssets[0]?.assetSlug;
   const count = section === "tasks" ? tasks.length : visibleAssets.length;
@@ -561,8 +566,8 @@ export const ModelList = memo(function ModelList({
             const isEnvironmentActive =
               (isSkybox &&
                 (asset.assetSlug === DEFAULT_SKYBOX_SLUG
-                  ? !currentSkybox
-                  : asset.assetSlug === currentSkybox)) ||
+                  ? !projectSkybox
+                  : asset.assetSlug === projectSkybox?.assetSlug)) ||
               (asset.kind === "world" && asset.assetSlug === activeWorldSlug);
             const isRowSelected = isAssetsSection
               ? selectedIds.has(asset.id)

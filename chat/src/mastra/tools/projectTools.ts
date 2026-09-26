@@ -493,7 +493,8 @@ export async function importLocalModel(
  * 缩略图对应的产物文件名格式（索引命名的可渲染产物）。
  * hdr/exr 是天空盒——它没有模型产物，app 端渲的是一个贴了该环境贴图的球。
  */
-const THUMB_SOURCE_RE = /^\d+-[^/\\]*\.(glb|gltf|obj|fbx|hdr|exr)$/i;
+const STANDARD_THUMB_SOURCE_RE = /^\d+-[^/\\]*\.(glb|gltf|obj|fbx|hdr|exr)$/i;
+const SKYBOX_RASTER_THUMB_SOURCE_RE = /^\d+-[^/\\]*\.(png|jpe?g|webp)$/i;
 
 /**
  * 缩略图落盘名：`.thumb-<产物文件名去扩展名>.png`。
@@ -524,7 +525,15 @@ export async function saveAssetThumbnail(
   SlugSchema.parse(params.projectSlug);
   SlugSchema.parse(params.assetSlug);
   await requireProject(storage, params.projectSlug);
-  if (!THUMB_SOURCE_RE.test(params.sourceFile)) {
+  let validSource = STANDARD_THUMB_SOURCE_RE.test(params.sourceFile);
+  if (!validSource && SKYBOX_RASTER_THUMB_SOURCE_RE.test(params.sourceFile)) {
+    const identityPath = assetIdentityFile(params.projectSlug, params.assetSlug);
+    if (await storage.exists(identityPath)) {
+      const identity = await readJson(storage, identityPath, AssetIdentitySchema);
+      validSource = identity.kind === "skybox";
+    }
+  }
+  if (!validSource) {
     throw new ChatServiceError(
       `缩略图源产物名不合法：${params.sourceFile}`,
       400,

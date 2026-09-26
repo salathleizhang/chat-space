@@ -173,6 +173,24 @@ describe("saveAssetThumbnail", () => {
       bytes: PNG_BYTES,
     });
     expect(path).toBe(`${skyDir}/.thumb-1-sky.png`);
+
+    await writeJson(storage, assetIdentityFile("demo", "sky"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "sky",
+      kind: "skybox",
+      name: "Sky",
+      intent: "edited skybox",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    await storage.writeBytes(`${skyDir}/2-sky.png`, PNG_BYTES);
+    const edited = await saveAssetThumbnail(storage, {
+      projectSlug: "demo",
+      assetSlug: "sky",
+      sourceFile: "2-sky.png",
+      bytes: PNG_BYTES,
+    });
+    expect(edited.path).toBe(`${skyDir}/.thumb-2-sky.png`);
   });
 
   test("拒绝路径注入型源产物名、非模型后缀、空内容与不存在的源产物", async () => {
