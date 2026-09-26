@@ -432,8 +432,21 @@ const MessageHistory = memo(function MessageHistory({
     pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
   };
 
+  /** 展开是明确的「我要看最新」：重置贴底判定，别把折叠前的旧滚动位置带过来。 */
   useEffect(() => {
     if (!expanded) return;
+    pinnedRef.current = true;
+  }, [expanded]);
+
+  /**
+   * 新消息进来时贴底。注意 `messages` / `activity` 在流式输出期间是每来一个增量就换一次
+   * 引用（onDelta → appendTo，setActivity 也每次新建对象），所以这个 effect 在生成过程中
+   * 会以极高频率重跑。它必须和下面的 ResizeObserver 一样尊重 pinnedRef：否则用户往上翻，
+   * 下一个 token 就把他拽回底部，表现为「滑一会儿就自己弹回去」。
+   */
+  useEffect(() => {
+    if (!expanded) return;
+    if (!pinnedRef.current) return;
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [expanded, messages, activity]);
 

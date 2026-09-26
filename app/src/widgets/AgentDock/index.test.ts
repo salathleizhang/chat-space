@@ -1193,3 +1193,109 @@ describe("AgentDock 3D 模型选择", () => {
     expect(threeDSelect.textContent).toContain("Tripo 3.1");
   });
 });
+
+/**
+ * 生成过程中用户往上翻会被「弹回底部」：`messages`/`activity` 在流式期间每个增量都换引用，
+ * 贴底 effect 每次都跑。它必须尊重用户已经翻上去这个事实。
+ */
+describe("AgentDock 历史滚动", () => {
+  const historyOf = (c: HTMLElement) =>
+    c.querySelector("#agent-dock-history") as HTMLElement;
+
+  /** happy-dom 里定高容器的几何恒为 0，钉住才能测「离底还有多远」。 */
+  function pinGeometry(node: HTMLElement, scrollHeight: number, clientHeight: number) {
+    Object.defineProperty(node, "scrollHeight", {
+      value: scrollHeight,
+      configurable: true,
+    });
+    Object.defineProperty(node, "clientHeight", {
+      value: clientHeight,
+      configurable: true,
+    });
+  }
+
+  async function scrollTo(node: HTMLElement, scrollTop: number) {
+    await act(async () => {
+      node.scrollTop = scrollTop;
+      node.dispatchEvent(new Event("scroll"));
+    });
+  }
+
+  function stubScrollIntoView() {
+    const calls = mock(() => {});
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = calls as never;
+    return {
+      calls,
+      restore: () => {
+        Element.prototype.scrollIntoView = original;
+      },
+    };
+  }
+
+  test("用户翻上去之后，流式增量不再把他拽回底部", async () => {
+    const history_messages = [
+      { id: "u1", role: "user" as const, content: "生成一把椅子" },
+    ];
+    const { container, root } = await render({
+      initiallyExpanded: true,
+      messages: history_messages,
+    });
+    const history = historyOf(container);
+    pinGeometry(history, 1000, 300);
+
+    const stub = stubScrollIntoView();
+    try {
+      await scrollTo(history, 0);
+      stub.calls.mockClear();
+
+      // 生成中：每来一个 token 都会换一次 messages 引用
+      await rerender(root, {
+        initiallyExpanded: true,
+        streaming: true,
+        activity: { state: "working", message: "Responding" },
+        messages: [
+          ...history_messages,
+          { id: "a1", role: "assistant", content: "正在" },
+        ],
+      });
+
+      expect(stub.calls).not.toHaveBeenCalled();
+      expect(history.scrollTop).toBe(0);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  test("本来就贴着底部时继续跟随流式增量", async () => {
+    const history_messages = [
+      { id: "u1", role: "user" as const, content: "生成一把椅子" },
+    ];
+    const { container, root } = await render({
+      initiallyExpanded: true,
+      messages: history_messages,
+    });
+    const history = historyOf(container);
+    pinGeometry(history, 1000, 300);
+
+    const stub = stubScrollIntoView();
+    try {
+      await scrollTo(history, 700); // 1000 - 300，正贴底
+      stub.calls.mockClear();
+
+      await rerender(root, {
+        initiallyExpanded: true,
+        streaming: true,
+        activity: { state: "working", message: "Responding" },
+        messages: [
+          ...history_messages,
+          { id: "a1", role: "assistant", content: "正在" },
+        ],
+      });
+
+      expect(stub.calls).toHaveBeenCalled();
+    } finally {
+      stub.restore();
+    }
+  });
+});
