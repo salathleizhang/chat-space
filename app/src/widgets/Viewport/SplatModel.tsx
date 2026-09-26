@@ -2,6 +2,8 @@ import { extend, useThree } from "@react-three/fiber";
 import { PackedSplats, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
+import type { WorldSemantics } from "../../shared/lib/libraryApi";
+import { worldTransform } from "./worldTransform";
 
 /**
  * 已知边界：`@sparkjsdev/spark` 把自己的 three.js 内嵌进了 `dist/spark.module.js`
@@ -90,15 +92,22 @@ function useSharedSplats(url: string): PackedSplats {
   return resource.splats;
 }
 
-function SharedSplatScene({ url }: { url: string }) {
+function SharedSplatScene({ url, semantics }: { url: string; semantics: WorldSemantics }) {
   const renderer = useThree((state) => state.gl);
   const packedSplats = useSharedSplats(url);
   const sparkArgs = useMemo(() => ({ renderer }), [renderer]);
   const splatArgs = useMemo(() => ({ packedSplats }), [packedSplats]);
+  const transform = useMemo(() => worldTransform(semantics), [semantics]);
   return (
     <SparkRendererEl args={[sparkArgs]}>
-      {/* PackedSplats 归模块级租约所有；窗格卸载不能让单个 SplatMesh dispose 它。 */}
-      <SplatMeshEl args={[splatArgs]} dispose={null} />
+      {/*
+        World Labs 的 +Y 朝下，不套这层变换整个世界就是倒的。参数来自世界响应的
+        semantics_metadata；collider 那边用的是同一份（见 worldTransform）。
+      */}
+      <group position={transform.position} rotation={transform.rotation} scale={transform.scale}>
+        {/* PackedSplats 归模块级租约所有；窗格卸载不能让单个 SplatMesh dispose 它。 */}
+        <SplatMeshEl args={[splatArgs]} dispose={null} />
+      </group>
     </SparkRendererEl>
   );
 }
@@ -107,7 +116,13 @@ function SharedSplatScene({ url }: { url: string }) {
  * 高斯泼溅（spz）渲染。资源 promise 显式抛给 Suspense，网络/解码异常显式抛给错误边界；
  * 首次失败清理共享拒绝缓存并重试一次，永久错误保持局部隔离而不会形成未处理 Promise。
  */
-export default function SplatModel({ url }: { url: string }) {
+export default function SplatModel({
+  url,
+  semantics,
+}: {
+  url: string;
+  semantics: WorldSemantics;
+}) {
   const [attempt, setAttempt] = useState(0);
   const retriedRef = useRef(false);
   const handleError = useCallback(() => {
@@ -128,7 +143,7 @@ export default function SplatModel({ url }: { url: string }) {
       onError={handleError}
     >
       <Suspense fallback={null}>
-        <SharedSplatScene url={url} />
+        <SharedSplatScene url={url} semantics={semantics} />
       </Suspense>
     </ResettableErrorBoundary>
   );

@@ -5,6 +5,7 @@ import { BoundingBoxIcon } from "@phosphor-icons/react/BoundingBox";
 import { CubeIcon } from "@phosphor-icons/react/Cube";
 import { GlobeSimpleIcon } from "@phosphor-icons/react/GlobeSimple";
 import { GridFourIcon } from "@phosphor-icons/react/GridFour";
+import { MountainsIcon } from "@phosphor-icons/react/Mountains";
 import { PerspectiveIcon } from "@phosphor-icons/react/Perspective";
 import { PersonSimpleWalkIcon } from "@phosphor-icons/react/PersonSimpleWalk";
 import { SquareIcon } from "@phosphor-icons/react/Square";
@@ -49,6 +50,7 @@ import {
   type TransformSpace,
 } from "./TransformGizmo";
 import { ViewportPane } from "./ViewportPane";
+import WorldColliderMesh from "./WorldColliderMesh";
 
 interface ViewportProps {
   /** 项目全部资产：共享场景一次性渲染，不再按选中切换 */
@@ -167,6 +169,8 @@ interface SceneContentsProps {
   placedAssets: LibraryAsset[];
   layout: Map<string, AssetPlacement>;
   showGrid: boolean;
+  /** 是否把 world 的 collider 网格渲染成地形参照线框（见 WorldColliderMesh） */
+  showWorldCollider: boolean;
   /** 环境贴图 URL：当前天空盒资产的 HDR，无则回退写死的默认 sky.exr */
   skyboxUrl: string;
   /** 天空盒资产重扫代次；原位修复后递增，纳入错误边界 resetKey 以清掉旧的拒绝缓存 */
@@ -299,6 +303,7 @@ function SceneContents({
   placedAssets,
   layout,
   showGrid,
+  showWorldCollider,
   skyboxUrl,
   skyboxRevision,
   selectedIds,
@@ -350,7 +355,7 @@ function SceneContents({
         等它加载完再一起回来（旧模型命中 loader 缓存，看起来就像"全部重载了一遍"）。
         拆成每资产一个边界后，挂起只影响新来的那一个。
       */}
-      {worldAsset?.spzPath && (
+      {worldAsset?.spzPath && worldAsset.worldSemantics && (
         <ResettableErrorBoundary
           resetKey={`${worldAsset.spzPath}|${worldAsset.resourceRevision ?? 0}`}
           fallback={null}
@@ -359,6 +364,25 @@ function SceneContents({
             <SplatModel
               key={`${worldAsset.spzPath}|${worldAsset.resourceRevision ?? 0}`}
               url={libraryUrl(worldAsset.spzPath)}
+              semantics={worldAsset.worldSemantics}
+            />
+          </Suspense>
+        </ResettableErrorBoundary>
+      )}
+      {/*
+        world 的 collider 网格，只作地形参照（见 WorldColliderMesh）。必须与泼溅用
+        同一份 worldTransform：World Labs 的 +Y 朝下，两者不一起翻就会互相错位。
+      */}
+      {showWorldCollider && worldAsset?.modelPath && worldAsset.worldSemantics && (
+        <ResettableErrorBoundary
+          resetKey={`${worldAsset.modelPath}|${worldAsset.resourceRevision ?? 0}`}
+          fallback={null}
+        >
+          <Suspense fallback={null}>
+            <WorldColliderMesh
+              key={`${worldAsset.modelPath}|${worldAsset.resourceRevision ?? 0}`}
+              url={libraryUrl(worldAsset.modelPath)}
+              semantics={worldAsset.worldSemantics}
             />
           </Suspense>
         </ResettableErrorBoundary>
@@ -437,6 +461,8 @@ export const Viewport = memo(function Viewport({
 }: ViewportProps) {
   const [mode, setMode] = useState<ViewMode>("orbit");
   const [showGrid, setShowGrid] = useState(true);
+  /** world 的地形参照线框：默认开，方便看清 collider 与泼溅是否对齐、把模型摆到地面上 */
+  const [showWorldCollider, setShowWorldCollider] = useState(true);
   const [paneLayout, setPaneLayout] = useState<LayoutMode>(1);
   const [transformMode, setTransformMode] = useState<TransformMode>("translate");
   const [transformSpace, setTransformSpace] = useState<TransformSpace>("world");
@@ -656,6 +682,7 @@ export const Viewport = memo(function Viewport({
             placedAssets={placedAssets}
             layout={layout}
             showGrid={false}
+            showWorldCollider={false}
             skyboxUrl={skyboxUrl}
             skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
             selectedIds={selectedIds}
@@ -675,6 +702,7 @@ export const Viewport = memo(function Viewport({
                 placedAssets={placedAssets}
                 layout={layout}
                 showGrid={showGrid}
+                showWorldCollider={showWorldCollider}
                 skyboxUrl={skyboxUrl}
                 skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
                 selectedIds={selectedIds}
@@ -800,6 +828,27 @@ export const Viewport = memo(function Viewport({
                 icon={GridFourIcon}
                 aria-label={showGrid ? "Hide grid" : "Show grid"}
                 onClick={() => setShowGrid((g) => !g)}
+              />
+            </Tooltip>
+          )}
+          {!firstPerson && worldAsset?.modelPath && worldAsset.worldSemantics && (
+            <Tooltip
+              content={
+                showWorldCollider
+                  ? "Hide world terrain (collider mesh)"
+                  : "Show world terrain (collider mesh)"
+              }
+              side="top"
+            >
+              <ToolbarButton
+                selected={showWorldCollider}
+                icon={MountainsIcon}
+                aria-label={
+                  showWorldCollider
+                    ? "Hide world terrain (collider mesh)"
+                    : "Show world terrain (collider mesh)"
+                }
+                onClick={() => setShowWorldCollider((v) => !v)}
               />
             </Tooltip>
           )}

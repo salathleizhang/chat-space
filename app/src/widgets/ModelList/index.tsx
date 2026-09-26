@@ -141,6 +141,7 @@ function defaultSkyboxAsset(projectSlug: string): LibraryAsset {
     modelExt: null,
     mtlPath: null,
     spzPath: null,
+    worldSemantics: null,
     hdrPath: null,
     modelPaths: [],
     sourceImages: [],

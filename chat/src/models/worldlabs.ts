@@ -50,9 +50,54 @@ export interface MarbleWorldResponse {
     mesh?: { collider_mesh_url?: string };
     imagery?: { pano_url?: string };
     thumbnail_url?: string;
-    splats?: { spz_urls?: Record<string, string> };
+    splats?: {
+      spz_urls?: Record<string, string>;
+      semantics_metadata?: MarbleSemanticsMetadata;
+    };
   };
   [key: string]: unknown;
+}
+
+/**
+ * World Labs 世界的语义元数据。字段名是供应商的 snake_case，原样保留以便和
+ * `N-world.json` 对照；app 侧要用的三个值由 `extractWorldSemantics` 归一化。
+ */
+export interface MarbleSemanticsMetadata {
+  metric_scale_factor?: number;
+  ground_plane_offset?: number;
+  flip_y?: boolean;
+}
+
+/**
+ * 渲染一个世界必须的三个对齐参数。
+ *
+ * **World Labs 的坐标系是 +Y 朝下**：实测其 collider 网格 94.7% 的顶点法线指向 −Y
+ * （地面法线本该指向"上"）。所以原样丢进 Y-up 的 three.js 场景，整个世界是倒过来的。
+ *
+ * 这三个值是「画面」（spz 泼溅）与「物理」（collider 网格）**共同**的对齐契约，必须
+ * 同时套在两者上，缺一个都会错位：只翻转不缩放会小 2.6 倍并陷进地里。
+ *
+ * `flipY` 缺省 **true**：Marble 取默认值时不会返回 `flip_y` 字段，「字段缺失」不等于
+ * 「不用翻转」。上游 image-blaster 的 `flip_y ?? true` 是同一个约定。
+ */
+export interface WorldSemantics {
+  /** 绕 X 轴转 π，把 −Y 变成"上" */
+  flipY: boolean;
+  /** 统一缩放，让场景是真实米制 */
+  metricScaleFactor: number;
+  /** Y 平移，把地面抬到 y=0 */
+  groundPlaneOffset: number;
+}
+
+export function extractWorldSemantics(response: MarbleWorldResponse): WorldSemantics {
+  const meta = response.assets?.splats?.semantics_metadata ?? {};
+  const finite = (value: unknown, fallback: number): number =>
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return {
+    flipY: typeof meta.flip_y === "boolean" ? meta.flip_y : true,
+    metricScaleFactor: finite(meta.metric_scale_factor, 1),
+    groundPlaneOffset: finite(meta.ground_plane_offset, 0),
+  };
 }
 
 function headers(apiKey: string): Record<string, string> {

@@ -14,6 +14,31 @@ export interface ProjectSummary {
   updatedAt: string;
 }
 
+/**
+ * World Labs 世界的渲染对齐参数（来自世界响应的 `assets.splats.semantics_metadata`）。
+ *
+ * World Labs 的坐标系是 **+Y 朝下**（实测 collider 网格 94.7% 的法线指向 −Y），原样渲染
+ * 整个世界是倒过来的。这三个值是泼溅画面与 collider 网格**共同**的契约，必须同时套上。
+ */
+export interface WorldSemantics {
+  /** 绕 X 轴转 π，把 −Y 变成"上" */
+  flipY: boolean;
+  /** 统一缩放，让场景是真实米制 */
+  metricScaleFactor: number;
+  /** Y 平移，把地面抬到 y=0 */
+  groundPlaneOffset: number;
+}
+
+/**
+ * 缺省值。`flipY` 必须是 **true**：Marble 取默认值时不会返回 `flip_y`，
+ * 「字段缺失」不等于「不用翻转」（与上游 image-blaster 的 `flip_y ?? true` 同约定）。
+ */
+export const DEFAULT_WORLD_SEMANTICS: WorldSemantics = {
+  flipY: true,
+  metricScaleFactor: 1,
+  groundPlaneOffset: 0,
+};
+
 export interface AssetState {
   slug: string;
   identity?: {
@@ -27,6 +52,8 @@ export interface AssetState {
   files: string[];
   /** 生成当前最新模型代次的操作；用于区分多部件与同模型多格式。 */
   latestModelOperation?: string;
+  /** world 资产的对齐参数；旧状态或读不到世界 JSON 时缺省。 */
+  worldSemantics?: WorldSemantics;
 }
 
 export type PlanStepStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -172,6 +199,11 @@ export interface LibraryAsset {
   mtlPath: string | null;
   /** 最新一代高斯泼溅（spz）逻辑路径，无则 null（world 资产优先渲染它） */
   spzPath: string | null;
+  /**
+   * world 资产的渲染对齐参数（翻转/缩放/地面偏移）。非 world 资产为 null；
+   * 旧状态读不到时为缺省值，见 DEFAULT_WORLD_SEMANTICS。
+   */
+  worldSemantics: WorldSemantics | null;
   /** 最新一代环境贴图逻辑路径；兼容 HDR/EXR 与图片模型编辑出的 PNG/JPG/WebP。 */
   hdrPath: string | null;
   /** 最新一代的全部模型文件（部件分割等一次生成多文件时 >1），逻辑路径 */
@@ -321,6 +353,10 @@ export function deriveLibraryAssets(
       modelExt: model?.ext ?? null,
       mtlPath: mtl ? `${dir}/${mtl}` : null,
       spzPath: spz ? `${dir}/${spz}` : null,
+      worldSemantics:
+        (asset.identity?.kind ?? "other") === "world"
+          ? asset.worldSemantics ?? DEFAULT_WORLD_SEMANTICS
+          : null,
       hdrPath: hdr ? `${dir}/${hdr}` : null,
       // 多格式输出（同一模型同时给 GLB/FBX/OBJ）只能渲染优选主文件；只有侧写明确
       // 标记为部件分割时，同索引的多个模型才是需要一起组成资产的独立部件。

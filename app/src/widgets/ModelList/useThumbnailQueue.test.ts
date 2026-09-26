@@ -22,6 +22,7 @@ function modelAsset(projectSlug: string, version: number, hasThumbnail = false):
     modelExt: "glb",
     mtlPath: null,
     spzPath: null,
+    worldSemantics: null,
     hdrPath: null,
     modelPaths: [modelPath],
     sourceImages: [],

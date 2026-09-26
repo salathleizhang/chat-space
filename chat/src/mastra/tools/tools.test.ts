@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
+import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
 import { AssetIdentitySchema, RequestSidecarSchema } from "../../dto/library";
 import {
   LocalFileStorage,
@@ -71,6 +71,61 @@ describe("projectTools", () => {
     expect(createProject(storage, { name: "Demo", slug: "demo" })).rejects.toThrow(
       "已存在",
     );
+  });
+
+  test("world 资产带上渲染对齐参数；flip_y 缺失时缺省翻转", async () => {
+    await createProject(storage, { name: "World Semantics", slug: "world-semantics" });
+    const dir = assetDir("world-semantics", "world");
+    await writeJson(storage, assetIdentityFile("world-semantics", "world"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "world",
+      kind: "world",
+      name: "world",
+      intent: "test world",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    // 真实响应就长这样：有缩放与地面偏移，但**没有** flip_y（Marble 取默认值时省略）
+    await storage.writeText(
+      `${dir}/0-world.json`,
+      JSON.stringify({
+        world_id: "w-1",
+        assets: {
+          splats: {
+            semantics_metadata: {
+              metric_scale_factor: 2.6222534,
+              ground_plane_offset: 1.5924374,
+            },
+          },
+        },
+      }),
+    );
+
+    const state = await getProjectState(storage, "world-semantics");
+    expect(state.assets.find((a) => a.slug === "world")?.worldSemantics).toEqual({
+      flipY: true,
+      metricScaleFactor: 2.6222534,
+      groundPlaneOffset: 1.5924374,
+    });
+  });
+
+  test("非 world 资产不带对齐参数；世界 JSON 损坏也不拖垮项目状态", async () => {
+    await createProject(storage, { name: "Broken World", slug: "broken-world" });
+    const dir = assetDir("broken-world", "world");
+    await writeJson(storage, assetIdentityFile("broken-world", "world"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "world",
+      kind: "world",
+      name: "world",
+      intent: "test world",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    await storage.writeText(`${dir}/0-world.json`, "{ not json");
+
+    const state = await getProjectState(storage, "broken-world");
+    // 读不出来就不给字段，由 app 用缺省值兜底（缺省同样是翻转）
+    expect(state.assets.find((a) => a.slug === "world")?.worldSemantics).toBeUndefined();
   });
 
   test("项目状态只列出为 3D 生成的参考图", async () => {

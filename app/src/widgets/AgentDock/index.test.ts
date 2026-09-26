@@ -28,6 +28,7 @@ const CHAIR: LibraryAsset = {
   modelExt: "glb",
   mtlPath: null,
   spzPath: null,
+  worldSemantics: null,
   hdrPath: null,
   modelPaths: ["projects/demo/assets/chair/0-chair.glb"],
   sourceImages: [],

@@ -16,6 +16,7 @@ const EMPTY_ASSET: LibraryAsset = {
   modelExt: null,
   mtlPath: null,
   spzPath: null,
+  worldSemantics: null,
   hdrPath: null,
   modelPaths: [],
   sourceImages: [],

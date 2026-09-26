@@ -41,6 +41,11 @@ import {
 } from "../../services/assetStorage";
 import { readCandidates } from "../../services/candidateRegistry";
 import { publishGeneratedModel } from "../../services/modelPublishing";
+import {
+  extractWorldSemantics,
+  type MarbleWorldResponse,
+  type WorldSemantics,
+} from "../../models/worldlabs";
 
 export { slugify } from "../../common/slug";
 import { slugify } from "../../common/slug";
@@ -190,6 +195,11 @@ export interface AssetState {
   nextIndex: number;
   /** 生成当前最新模型代次的操作；app 用它区分“多部件”与“同模型多格式”。 */
   latestModelOperation?: string;
+  /**
+   * world 资产的渲染对齐参数（来自 `N-<slug>.json` 的 semantics_metadata）。
+   * World Labs 的坐标系是 +Y 朝下，app 必须靠它把泼溅和 collider 一起翻正。
+   */
+  worldSemantics?: WorldSemantics;
 }
 
 export interface ProjectState {
@@ -246,6 +256,38 @@ async function latestModelOperation(
 }
 
 /** 派生状态完全来自目录扫描——磁盘即数据库（决策 2） */
+/**
+ * 读世界响应里最新的那代 JSON，取出渲染对齐参数。
+ *
+ * 世界响应是供应商原样落盘的 blob（`N-<assetSlug>.json`），这里只读语义元数据那一段。
+ * 读不到就不给 app 字段，由 app 用同一套缺省值兜底（缺省 flipY=true 是关键，见
+ * models/worldlabs.ts 的 extractWorldSemantics）。
+ */
+async function readWorldSemantics(
+  storage: AssetStorage,
+  projectSlug: string,
+  assetSlug: string,
+  files: string[],
+): Promise<WorldSemantics | undefined> {
+  let latest: { name: string; index: number } | undefined;
+  for (const name of files) {
+    const match = /^(\d+)-(.+)\.json$/.exec(name);
+    if (!match || match[2] !== assetSlug) continue;
+    const index = Number(match[1]);
+    if (!latest || index > latest.index) latest = { name, index };
+  }
+  if (!latest) return undefined;
+  try {
+    const response = JSON.parse(
+      await storage.readText(`${assetDir(projectSlug, assetSlug)}/${latest.name}`),
+    ) as MarbleWorldResponse;
+    return extractWorldSemantics(response);
+  } catch {
+    // 损坏或半截的世界 JSON 不该拖垮整个项目状态：app 会退回缺省值。
+    return undefined;
+  }
+}
+
 export async function getProjectState(
   storage: AssetStorage,
   slug: string,
@@ -268,12 +310,17 @@ export async function getProjectState(
     ) {
       continue;
     }
+    const worldSemantics =
+      identity.kind === "world"
+        ? await readWorldSemantics(storage, slug, assetSlug, files)
+        : undefined;
     assets.push({
       slug: assetSlug,
       identity,
       files,
       nextIndex: nextIndex(files),
       latestModelOperation: await latestModelOperation(storage, slug, assetSlug, files),
+      ...(worldSemantics ? { worldSemantics } : {}),
     });
   }
 
