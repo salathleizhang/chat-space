@@ -1,7 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { ChatServiceError } from "../../common/errors";
-import { DOWNLOAD_REQUEST_TIMEOUT_MS, fetchWithTimeout, isTimeoutError } from "../../common/http";
+import { downloadBytesWithRetry } from "../../common/download";
 import { parseRequestSidecarName } from "../../common/indexedFiles";
 import {
   assetDir,
@@ -24,39 +23,24 @@ import {
 
 export interface DownloadOptions {
   fetchFn?: typeof fetch;
+  /** 单次尝试的预算；默认 DOWNLOAD_REQUEST_TIMEOUT_MS */
+  requestTimeoutMs?: number;
+  /** 尝试次数（含首次）；默认 DOWNLOAD_MAX_ATTEMPTS */
+  maxAttempts?: number;
 }
 
-/** 显式下载：把远程文件写进资产库（磁盘优先的执行者） */
+/**
+ * 显式下载：把远程文件写进资产库（磁盘优先的执行者）。
+ *
+ * 重试与断点续传都在 `downloadBytesWithRetry` 里：链路抖一下不该让整条任务白跑。
+ */
 export async function downloadToLibrary(
   storage: AssetStorage,
   url: string,
   targetPath: string,
   options: DownloadOptions = {},
 ): Promise<void> {
-  const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchWithTimeout(
-    fetchFn,
-    url,
-    undefined,
-    DOWNLOAD_REQUEST_TIMEOUT_MS,
-    "产物下载",
-  );
-  if (!response.ok) {
-    throw new ChatServiceError(
-      `下载失败（${response.status}）：${url}`,
-      502,
-      "download_failed",
-    );
-  }
-  try {
-    // 超时信号覆盖响应体读取：连接不断但不传数据时也要在这里中止，不能无限等。
-    await storage.writeBytes(targetPath, new Uint8Array(await response.arrayBuffer()));
-  } catch (error) {
-    if (isTimeoutError(error)) {
-      throw new ChatServiceError(`产物下载超时：${url}`, 504, "download_timeout");
-    }
-    throw error;
-  }
+  await storage.writeBytes(targetPath, await downloadBytesWithRetry(url, options));
 }
 
 export interface RepairReport {
