@@ -362,6 +362,19 @@ describe("writePlan", () => {
     ]);
   });
 
+  test("普通进度更新不能改标题；改名必须走 replan", async () => {
+    expect(
+      writePlan(storage, "demo", {
+        title: "换一个说法",
+        steps: [{ id: "batch-3d", status: "in_progress" }],
+      }),
+    ).rejects.toThrow("不能改计划标题");
+
+    const state = await getProjectState(storage, "demo");
+    expect(state.plan?.title).toBe("一图成场景");
+    expect(state.plan?.revision).toBe(1);
+  });
+
   test("继续执行不能改写步骤；显式 replan 才能换结构并记录原因", async () => {
     expect(
       writePlan(storage, "demo", {

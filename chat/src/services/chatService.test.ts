@@ -11,6 +11,7 @@ import {
   hasExplicitReferenceAnalysisIntent,
   imagePathsFromToolResult,
   listPendingGenerationTargets,
+  planContextText,
   planFromToolResult,
   taskIdsFromToolResult,
   toResumeMessage,
@@ -203,6 +204,36 @@ describe("planFromToolResult", () => {
     });
     expect(planFromToolResult("start-3d-batch", result)).toBeUndefined();
     expect(planFromToolResult("update-plan", { plan: { bad: true } })).toBeUndefined();
+  });
+});
+
+describe("planContextText", () => {
+  const plan = {
+    schemaVersion: 1 as const,
+    revision: 2,
+    title: "三只动物换绿色服装",
+    steps: [
+      { id: "s1", content: "取得付费同意", status: "completed" as const },
+      { id: "s2", content: "编辑参考图", status: "in_progress" as const },
+    ],
+    updatedAt: new Date().toISOString(),
+  };
+
+  test("把当前标题交给模型，普通更新才不必靠撞 409 才知道标题不可改", () => {
+    expect(planContextText(plan)).toContain("「三只动物换绿色服装」");
+  });
+
+  test("写明只推进度，并保留步骤 id、状态与内容", () => {
+    const text = planContextText(plan);
+    expect(text).toContain("只传已有步骤 id 与新 status");
+    expect(text).toContain("计划标题、步骤 id 和步骤内容都保持不变");
+    expect(text).toContain("mode=replan");
+    expect(text).toContain("- [completed] s1: 取得付费同意");
+    expect(text).toContain("- [in_progress] s2: 编辑参考图");
+  });
+
+  test("无标题的旧计划也有可读的占位", () => {
+    expect(planContextText({ ...plan, title: undefined })).toContain("（无标题）");
   });
 });
 

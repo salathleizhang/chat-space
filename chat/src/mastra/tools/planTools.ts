@@ -33,7 +33,9 @@ const PlanPatchStepSchema = z.object({
 export const PlanInputSchema = z.object({
   /** update 只改已有步骤状态；replan 才允许替换结构。首次调用自动创建。 */
   mode: z.enum(["update", "replan"]).default("update"),
+  /** 只在首次创建或 replan 时传；update 传与当前不同的标题会被拒绝，普通进度更新不改计划身份。 */
   title: z.string().optional(),
+  /** replan 必填，说明为什么推翻原结构；update 不要传。 */
   reason: z.string().min(1).optional(),
   steps: z.array(PlanPatchStepSchema).min(1),
 });
@@ -130,7 +132,7 @@ export async function writePlan(
 export const updatePlanTool = createTool({
   id: "update-plan",
   description:
-    "维护当前项目的执行计划：首次调用传完整步骤创建计划；之后默认 mode=update，只传已有稳定 id 与新 status，原结构会保留。只有用户改变目标或事实证明原路线不可行时才用 mode=replan，并填写 reason 与完整新步骤。计划不会被自动执行，执行仍由你逐步调用其他工具完成",
+    "维护当前项目的执行计划：首次调用传 title 与完整步骤创建计划；之后默认 mode=update，只传已有稳定 id 与新 status，不要传 title，也不要改写步骤 content——普通进度更新只推进度。只有用户改变目标或事实证明原路线不可行时才用 mode=replan，并填写 reason 与完整新步骤。计划不会被自动执行，执行仍由你逐步调用其他工具完成",
   inputSchema: PlanInputSchema,
   execute: async (input, context) => {
     const plan = await writePlan(getAssetStorage(), requireCurrentProject(context), input);

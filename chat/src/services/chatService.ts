@@ -165,6 +165,20 @@ export function taskIdsFromToolResult(result: unknown): string[] | undefined {
   return ids.length > 0 ? ids : undefined;
 }
 
+/**
+ * 计划注入 agent 上下文的文本。标题必须出现在这里：模型读不到 plan.json，
+ * 只有上下文给出当前标题，"普通进度更新不得改标题"才是它可遵守的约束，
+ * 而不是一条只能靠撞 409 才发现的隐藏规则。
+ */
+export function planContextText(plan: ProjectPlan): string {
+  return [
+    `当前会话执行计划：${plan.title ? `「${plan.title}」` : "（无标题）"}，v${plan.revision}。` +
+      "继续执行时 update-plan 只传已有步骤 id 与新 status：计划标题、步骤 id 和步骤内容都保持不变；" +
+      "只有用户改变目标或事实证明原路线不可行时，才用 mode=replan 并填写 reason。",
+    ...plan.steps.map((step) => `- [${step.status}] ${step.id}: ${step.content}`),
+  ].join("\n");
+}
+
 /** 只接受 update-plan 返回且通过契约校验的完整计划。 */
 export function planFromToolResult(
   toolName: string,
@@ -361,13 +375,7 @@ export async function* streamChat(
               .join("、")
           : "无"
       }。已有参考图的待生成对象可直接用同一 slug 调 start-3d-batch，不要重新生成或分析图片。`,
-      ...(currentPlan
-        ? [
-            `当前会话执行计划（v${currentPlan.revision}，继续执行时保持步骤 id 与内容不变）：\n${currentPlan.steps
-              .map((step) => `- [${step.status}] ${step.id}: ${step.content}`)
-              .join("\n")}`,
-          ]
-        : []),
+      ...(currentPlan ? [planContextText(currentPlan)] : []),
       "若用户消息带有“本条消息明确选中的资产”，它们是该条指令的主要目标，代词优先指向它们；" +
         "未带资产附件时，再根据完整资产名录和对话判断，无法唯一确定才向用户确认。",
       ...(threeDSelection
