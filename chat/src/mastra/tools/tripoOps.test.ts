@@ -10,7 +10,15 @@ import {
   writeJson,
 } from "../../services/assetStorage";
 import { createProject, getProjectState } from "./projectTools";
-import { runTripoImageTo3d, runTripoSegmentation, runTripoTexture } from "./tripoOps";
+import {
+  runTripoAnimationRetarget,
+  runTripoCharacter,
+  runTripoImageTo3d,
+  runTripoRetopology,
+  runTripoRig,
+  runTripoSegmentation,
+  runTripoTexture,
+} from "./tripoOps";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-tripo-test-"));
 const storage = new LocalFileStorage(root);
@@ -79,6 +87,18 @@ function makeFakeTripoFetch() {
     if (url.endsWith("/models/texture")) {
       calls.push({ url, body: JSON.parse(String(init?.body)) });
       return jsonResponse({ code: 0, data: { task_id: "tex-1" } });
+    }
+    if (url.endsWith("/mesh/decimate")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "retopo-1" } });
+    }
+    if (url.endsWith("/animations/rig")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "rig-1" } });
+    }
+    if (url.endsWith("/animations/retarget")) {
+      calls.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ code: 0, data: { task_id: "anim-1" } });
     }
     if (url.includes("/v3/tasks/seg-1")) {
       return jsonResponse({
@@ -274,5 +294,106 @@ describe("runTripoSegmentation", () => {
         { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
       ),
     ).rejects.toThrow("没有模型文件");
+  });
+});
+
+describe("Tripo v3 mesh and animation capabilities", () => {
+  test("智能重拓扑使用 /mesh/decimate 并校验 quad 面数上限", async () => {
+    const dir = assetDir("tp", "retopo-crate");
+    await storage.writeBytes(`${dir}/0-retopo-crate.glb`, GLB_BYTES);
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoRetopology(
+      storage,
+      {
+        projectSlug: "tp",
+        assetSlug: "retopo-crate",
+        faceLimit: 8_000,
+        quad: true,
+      },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+
+    const call = calls.find((entry) => entry.url.endsWith("/mesh/decimate"));
+    expect(call?.body).toEqual({
+      input: "imp-1",
+      model: "v2.0",
+      face_limit: 8_000,
+      quad: true,
+      bake: true,
+    });
+    expect(result.files.length).toBeGreaterThan(0);
+    expect(
+      runTripoRetopology(
+        storage,
+        { projectSlug: "tp", assetSlug: "retopo-crate", faceLimit: 10_001, quad: true },
+        { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+      ),
+    ).rejects.toThrow("500–10000");
+  });
+
+  test("非人形绑骨自动选 v2.5，动作只引用最近的 Tripo 绑骨任务", async () => {
+    const dir = assetDir("tp", "bird");
+    await storage.writeBytes(`${dir}/0-bird.glb`, GLB_BYTES);
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    await runTripoRig(
+      storage,
+      { projectSlug: "tp", assetSlug: "bird", rigType: "avian", spec: "tripo" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+    const rigCall = calls.find((entry) => entry.url.endsWith("/animations/rig"));
+    expect(rigCall?.body).toEqual({
+      input: "imp-1",
+      model: "v2.5-20260210",
+      out_format: "glb",
+      rig_type: "avian",
+      spec: "tripo",
+    });
+
+    await runTripoAnimationRetarget(
+      storage,
+      {
+        projectSlug: "tp",
+        assetSlug: "bird",
+        animation: "preset:walk",
+        animateInPlace: true,
+      },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+    const animationCall = calls.find((entry) => entry.url.endsWith("/animations/retarget"));
+    expect(animationCall?.body).toEqual({
+      input: "rig-1",
+      animation: "preset:walk",
+      out_format: "glb",
+      bake_animation: true,
+      export_with_geometry: true,
+      animate_in_place: true,
+    });
+  });
+
+  test("人物生成组合 image-to-model 与 biped rig，并发布正式资产", async () => {
+    const image = `${projectSourceDir("tp")}/0-photo.png`;
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoCharacter(
+      storage,
+      { projectSlug: "tp", assetSlug: "tripo-hero", image, spec: "mixamo" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+
+    expect(calls.some((entry) => entry.url.endsWith("/generation/image-to-model"))).toBe(true);
+    const rigCall = calls.find((entry) => entry.url.endsWith("/animations/rig"));
+    expect(rigCall?.body).toEqual({
+      input: "gen-1",
+      model: "v1.0-20240301",
+      out_format: "glb",
+      rig_type: "biped",
+      spec: "mixamo",
+    });
+    expect(result.tripoTaskId).toBe("rig-1");
+    const identity = await readJson(
+      storage,
+      assetIdentityFile("tp", "tripo-hero"),
+      AssetIdentitySchema,
+    );
+    expect(identity.sourceImages).toEqual([image]);
   });
 });

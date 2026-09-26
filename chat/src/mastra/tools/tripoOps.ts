@@ -1,6 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
+import { extractFileUrls } from "../../common/fileUrls";
 import {
   formatIndexedName,
   formatRequestSidecarName,
@@ -22,7 +23,6 @@ import {
   type ReferenceImageViews,
   type RequestSidecar,
 } from "../../dto/library";
-import { extractMeshyFileUrls } from "../../models/meshy";
 import { convertModel } from "../../services/modelConvert";
 import {
   createTripoImageToModelTask,
@@ -41,7 +41,11 @@ import {
   writeJson,
   type AssetStorage,
 } from "../../services/assetStorage";
-import { runAndPublishGeneratedModel, type GenerationObject } from "../../services/modelPublishing";
+import {
+  publishGeneratedModel,
+  runAndPublishGeneratedModel,
+  type GenerationObject,
+} from "../../services/modelPublishing";
 import { startCustomTask } from "../../services/tasks";
 import { downloadToLibrary } from "./assetRepair";
 import { latestAssetModel, requireProject } from "./projectTools";
@@ -115,7 +119,7 @@ async function landTripoOutputs(
   taskData: Record<string, unknown>,
   fetchFn?: typeof fetch,
 ): Promise<string[]> {
-  const refs = extractMeshyFileUrls(taskData);
+  const refs = extractFileUrls(taskData);
   const seen = new Set<string>();
   const files: string[] = [];
   for (const ref of refs) {
@@ -282,6 +286,41 @@ async function findLatestTripoTaskId(
       `资产「${assetSlug}」没有 Tripo 任务记录`,
       409,
       "tripo_task_missing",
+    );
+  }
+  return best.taskId;
+}
+
+/** 动作重定向必须引用绑骨任务，而不是任意最新 Tripo 后处理任务。 */
+async function findLatestTripoRigTaskId(
+  storage: AssetStorage,
+  projectSlug: string,
+  assetSlug: string,
+): Promise<string> {
+  const dir = assetDir(projectSlug, assetSlug);
+  let best: { index: number; taskId: string } | null = null;
+  for (const name of await storage.list(dir)) {
+    if (!parseRequestSidecarName(name)) continue;
+    try {
+      const sidecar = await readJson(storage, `${dir}/${name}`, RequestSidecarSchema);
+      if (
+        sidecar.provider === TRIPO_PROVIDER &&
+        sidecar.model === "/animations/rig" &&
+        sidecar.status === "succeeded" &&
+        sidecar.providerTaskId &&
+        (!best || sidecar.index > best.index)
+      ) {
+        best = { index: sidecar.index, taskId: sidecar.providerTaskId };
+      }
+    } catch {
+      // 坏侧写不阻塞扫描
+    }
+  }
+  if (!best) {
+    throw new ChatServiceError(
+      `资产「${assetSlug}」还没有成功的 Tripo 绑骨记录，请先用 rig-model(channel=tripo) 绑骨`,
+      409,
+      "tripo_rig_missing",
     );
   }
   return best.taskId;
@@ -561,10 +600,81 @@ export async function runTripoRig(
     assetSlug: string;
     rigType?: "biped" | "quadruped" | "hexapod" | "octopod" | "avian" | "serpentine" | "aquatic";
     spec?: "tripo" | "mixamo";
+    model?: "v1.0-20240301" | "v2.5-20260210";
+    outFormat?: "glb" | "fbx";
   },
   callOptions: TripoCallOptions,
 ): Promise<TripoOpResult> {
   await requireProject(storage, params.projectSlug);
+  const originalTaskId = await ensureTripoTaskId(
+    storage,
+    params.projectSlug,
+    params.assetSlug,
+    callOptions,
+  );
+  const model = params.model ?? (
+    params.rigType && params.rigType !== "biped"
+      ? "v2.5-20260210"
+      : "v1.0-20240301"
+  );
+  if (model === "v1.0-20240301" && params.rigType && params.rigType !== "biped") {
+    throw new ChatServiceError(
+      "Tripo v1.0 绑骨只支持 biped；非人形骨架请使用 v2.5-20260210",
+      400,
+      "tripo_rig_model_mismatch",
+    );
+  }
+  return runTripoV3Job(
+    storage,
+    {
+      projectSlug: params.projectSlug,
+      assetSlug: params.assetSlug,
+      path: "/animations/rig",
+      body: {
+        input: originalTaskId,
+        model,
+        out_format: params.outFormat ?? "glb",
+        ...(params.rigType ? { rig_type: params.rigType } : {}),
+        ...(params.spec ? { spec: params.spec } : {}),
+      },
+      sidecarParams: {
+        original_model_task_id: originalTaskId,
+        model,
+        out_format: params.outFormat ?? "glb",
+        ...(params.rigType ? { rig_type: params.rigType } : {}),
+        ...(params.spec ? { spec: params.spec } : {}),
+      },
+    },
+    callOptions,
+  );
+}
+
+/** Tripo v3 智能重拓扑/减面（POST /mesh/decimate）。 */
+export async function runTripoRetopology(
+  storage: AssetStorage,
+  params: {
+    projectSlug: string;
+    assetSlug: string;
+    faceLimit?: number;
+    quad?: boolean;
+    bake?: boolean;
+    model?: "v2.0" | "v1.0";
+  },
+  callOptions: TripoCallOptions,
+): Promise<TripoOpResult> {
+  await requireProject(storage, params.projectSlug);
+  const model = params.model ?? "v2.0";
+  const quad = params.quad ?? false;
+  if (params.faceLimit !== undefined) {
+    const max = quad ? 10_000 : 20_000;
+    if (params.faceLimit < 500 || params.faceLimit > max) {
+      throw new ChatServiceError(
+        `Tripo ${quad ? "四边面" : "三角面"}目标面数须在 500–${max} 之间`,
+        400,
+        "tripo_face_limit_invalid",
+      );
+    }
+  }
   const originalTaskId = await ensureTripoTaskId(
     storage,
     params.projectSlug,
@@ -576,22 +686,171 @@ export async function runTripoRig(
     {
       projectSlug: params.projectSlug,
       assetSlug: params.assetSlug,
-      path: "/animations/rig",
+      path: "/mesh/decimate",
       body: {
         input: originalTaskId,
-        out_format: "glb",
-        ...(params.rigType ? { rig_type: params.rigType } : {}),
-        ...(params.spec ? { spec: params.spec } : {}),
+        model,
+        ...(params.faceLimit !== undefined ? { face_limit: params.faceLimit } : {}),
+        quad,
+        ...(model === "v2.0" ? { bake: params.bake ?? true } : {}),
       },
       sidecarParams: {
         original_model_task_id: originalTaskId,
-        ...(params.rigType ? { rig_type: params.rigType } : {}),
-        ...(params.spec ? { spec: params.spec } : {}),
+        model,
+        ...(params.faceLimit !== undefined ? { face_limit: params.faceLimit } : {}),
+        quad,
+        ...(model === "v2.0" ? { bake: params.bake ?? true } : {}),
       },
     },
     callOptions,
   );
 }
+
+/** 把 Tripo 预设动作重定向到最近一次 Tripo 绑骨任务。 */
+export async function runTripoAnimationRetarget(
+  storage: AssetStorage,
+  params: {
+    projectSlug: string;
+    assetSlug: string;
+    animation: string;
+    outFormat?: "glb" | "fbx";
+    bakeAnimation?: boolean;
+    exportWithGeometry?: boolean;
+    animateInPlace?: boolean;
+  },
+  callOptions: TripoCallOptions,
+): Promise<TripoOpResult> {
+  await requireProject(storage, params.projectSlug);
+  if (!params.animation.startsWith("preset:")) {
+    throw new ChatServiceError(
+      "Tripo 动作必须使用 preset: 开头的官方预设标识",
+      400,
+      "tripo_animation_invalid",
+    );
+  }
+  const rigTaskId = await findLatestTripoRigTaskId(
+    storage,
+    params.projectSlug,
+    params.assetSlug,
+  );
+  return runTripoV3Job(
+    storage,
+    {
+      projectSlug: params.projectSlug,
+      assetSlug: params.assetSlug,
+      path: "/animations/retarget",
+      body: {
+        input: rigTaskId,
+        animation: params.animation,
+        out_format: params.outFormat ?? "glb",
+        bake_animation: params.bakeAnimation ?? true,
+        export_with_geometry: params.exportWithGeometry ?? true,
+        animate_in_place: params.animateInPlace ?? false,
+      },
+      sidecarParams: {
+        rig_task_id: rigTaskId,
+        animation: params.animation,
+        out_format: params.outFormat ?? "glb",
+        bake_animation: params.bakeAnimation ?? true,
+        export_with_geometry: params.exportWithGeometry ?? true,
+        animate_in_place: params.animateInPlace ?? false,
+      },
+    },
+    callOptions,
+  );
+}
+
+/** Tripo 没有单独的人物端点；以图生 3D → biped 绑骨组合成带骨骼人物。 */
+export async function runTripoCharacter(
+  storage: AssetStorage,
+  params: {
+    projectSlug: string;
+    assetSlug: string;
+    image?: string;
+    spec?: "tripo" | "mixamo";
+    rigModel?: "v1.0-20240301" | "v2.5-20260210";
+  },
+  callOptions: TripoCallOptions,
+): Promise<TripoOpResult> {
+  await requireProject(storage, params.projectSlug);
+  const resolved = await resolveTripoImages(
+    storage,
+    params.projectSlug,
+    params.assetSlug,
+    params.image,
+  );
+  await runTripoImageTo3d(
+    storage,
+    {
+      projectSlug: params.projectSlug,
+      assetSlug: params.assetSlug,
+      image: resolved.image,
+      generationMode: "single",
+    },
+    callOptions,
+  );
+  const result = await runTripoRig(
+    storage,
+    {
+      projectSlug: params.projectSlug,
+      assetSlug: params.assetSlug,
+      rigType: "biped",
+      spec: params.spec,
+      model: params.rigModel,
+    },
+    callOptions,
+  );
+  await publishGeneratedModel(
+    storage,
+    params.projectSlug,
+    {
+      slug: params.assetSlug,
+      name: params.assetSlug,
+      intent: `Rigged 3D character of ${params.assetSlug}`,
+      sourceImages: [resolved.image],
+    },
+    result,
+  );
+  return result;
+}
+
+export const generateCharacterTool = createTool({
+  id: "generate-character",
+  description:
+    "通过 Tripo 参考图生 3D 后自动执行 biped 绑骨，生成带骨骼的 3D 人物（两次付费操作——启动前须经用户同意）。任务化返回",
+  inputSchema: z.object({
+    assetSlug: SlugSchema,
+    image: LogicalPathSchema.optional(),
+    spec: z.enum(["tripo", "mixamo"]).optional(),
+    tripoRigModel: z.enum(["v1.0-20240301", "v2.5-20260210"]).optional(),
+  }),
+  execute: async (input, context) => {
+    const projectSlug = requireCurrentProject(context);
+    const apiKey = requireContextString(
+      context,
+      "tripo3dApiKey",
+      "本机 chat/.env 未配置 TRIPO_KEY",
+    );
+    const task = startCustomTask(
+      "character",
+      projectSlug,
+      `3D 人物生成（Tripo）：${input.assetSlug}`,
+      () =>
+        runTripoCharacter(
+          getAssetStorage(),
+          {
+            projectSlug,
+            assetSlug: input.assetSlug,
+            image: input.image,
+            spec: input.spec,
+            rigModel: input.tripoRigModel,
+          },
+          { apiKey },
+        ),
+    );
+    return { task: { id: task.id, subject: task.subject, status: task.status } };
+  },
+});
 
 /** v3 通用：提交 → 轮询 /v3/tasks → 产物落盘（与分割同构） */
 async function runTripoV3Job(
