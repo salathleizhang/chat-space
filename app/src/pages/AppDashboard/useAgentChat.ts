@@ -43,7 +43,6 @@ function llmConfig(): LlmRequestConfig {
 
 /** 启动即返回、靠 useTaskPolling 逐个回报的生成任务工具 */
 const TASK_STARTING_TOOLS = new Set([
-  "workflow-one-shot-scene",
   "start-scene-job",
   "revise-scene-job",
   "retry-scene-job-nodes",
@@ -106,7 +105,6 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "analyze-reference": "Analyzing reference image",
   analyzeReferenceTool: "Analyzing reference image",
   "generate-plate": "Generating scene base image",
-  "workflow-one-shot-scene": "Generating complete scene",
   "start-scene-job": "Generating complete scene",
   "revise-scene-job": "Updating complete scene",
   "retry-scene-job-nodes": "Rebuilding scene outputs",

@@ -63,18 +63,14 @@ describe("creator 工具可用性", () => {
     expect(tools["analyze-scene"]).toBeDefined();
     expect(tools["analyze-reference"]).toBeUndefined();
     expect(Object.keys(tools)).not.toContain("confirm-reference-assets");
-    expect(Object.keys(tools)).not.toContain("run-one-shot");
     expect(Object.keys(tools)).not.toContain("updatePlanTool");
     expect(Object.keys(tools)).not.toContain("generateReferenceImagesTool");
   });
 
-  test("新完整场景以 SceneJob 工具启动，旧 Workflow 不再向 Agent 暴露", async () => {
+  test("完整场景通过 SceneJob 工具启动", async () => {
     const agent = createCreatorAgent({ apiKey: "sk-test" });
-    const workflows = await agent.listWorkflows();
-    expect(workflows["one-shot-scene"]).toBeUndefined();
     const tools = await agent.listTools();
     expect(tools["start-scene-job"]).toBeDefined();
-    expect(Object.keys(tools)).not.toContain("run-one-shot");
   });
 
   test("当前消息有图且明确要求参考图分析时才提供 analyze-reference", async () => {

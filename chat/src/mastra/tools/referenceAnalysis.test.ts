@@ -8,7 +8,7 @@ import {
   projectDir,
   projectSourceDir,
 } from "../../common/libraryPaths";
-import { CandidateRegistrySchema, RequestSidecarSchema, SlugSchema } from "../../dto/library";
+import { CandidateRegistrySchema, SlugSchema } from "../../dto/library";
 import {
   LocalFileStorage,
   readJson,
@@ -18,7 +18,6 @@ import { clearTasks, getTask } from "../../services/tasks";
 import { readSceneJob } from "../../services/sceneJobs";
 import { createAndStartSceneJob } from "../../services/sceneJobRunner";
 import { buildRequestContext } from "../../services/workflowRuns";
-import { oneShotSceneWorkflow, runOneShotWorkflow } from "../workflows/oneShot";
 import { createProject } from "./projectTools";
 import {
   analyzeReferenceTool,
@@ -34,8 +33,6 @@ const realFetch = globalThis.fetch;
 const requests: { world: Record<string, unknown>[]; seed3d: Record<string, unknown>[] } = {
   world: [], seed3d: [],
 };
-const events: string[] = [];
-let failNextSeed3d = false;
 const GARAGE_ANALYSIS = {
   sceneName: "车库",
   sceneDescription: "老旧车库内部",
@@ -59,23 +56,16 @@ function installFakeFetch() {
       return new Response(PNG_BYTES.buffer.slice(0), { status: 200 });
     }
     if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
-      events.push("seed3d");
       requests.seed3d.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
-      if (failNextSeed3d) {
-        failNextSeed3d = false;
-        return jsonResponse({ error: "temporary failure" }, 503);
-      }
       return jsonResponse({ id: `seed-${requests.seed3d.length}` });
     }
     if (url.includes("/contents/generations/tasks/")) {
       return jsonResponse({ status: "succeeded", file_url: "https://cdn.fake/model.glb" });
     }
     if (url.endsWith("/images/generations")) {
-      events.push("image-edit");
       return jsonResponse({ data: [{ url: "https://cdn.fake/out.png" }] });
     }
     if (url.endsWith("/worlds:generate")) {
-      events.push("world");
       requests.world.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
       return jsonResponse({
         operation_id: "op-tool",
@@ -111,19 +101,6 @@ const KEYS = {
 };
 
 const OST_IMAGE = `${projectSourceDir("ost")}/0-photo.png`;
-
-async function startSceneWorkflow(
-  projectSlug: string,
-  input: { runId: string; selectedSlugs?: string[] },
-) {
-  const run = await oneShotSceneWorkflow.createRun();
-  const result = await run.start({
-    inputData: input,
-    requestContext: buildRequestContext({ projectSlug, ...KEYS }),
-  });
-  if (result.status !== "success") throw new Error(`启动 Workflow 失败：${result.status}`);
-  return result.result;
-}
 
 describe("analyze-reference / 场景确认服务", () => {
   test("真实工具入口直接接收 Creator 的视觉分析，不嵌套调用 LLM/workflow", async () => {
@@ -281,7 +258,7 @@ describe("analyze-reference / 场景确认服务", () => {
     expect(await storage.exists(`${projectDir("multiple-pending")}/.analyze-reference-${first.runId}.json`)).toBe(true);
   });
 
-  test("同一 runId 重复确认时复用结果，支持 Workflow 失败后重跑", async () => {
+  test("同一 runId 重复确认时复用结果，支持 SceneJob 中断后恢复", async () => {
     const started = await runAnalyzeReference("ost", {
       image: OST_IMAGE,
       analysis: GARAGE_ANALYSIS,
@@ -296,115 +273,6 @@ describe("analyze-reference / 场景确认服务", () => {
       runConfirmReferenceAssets("ost", { runId: "gone" }),
     ).rejects.toThrow("重新调用 analyze-reference");
   });
-});
-
-describe("one-shot-scene Workflow（确认后逐阶段完成并落盘）", () => {
-  test("没有参考图分析时报错，指引先跑 analyze-reference", () => {
-    expect(runOneShotWorkflow("no-analysis-yet", KEYS)).rejects.toThrow(
-      "先用 analyze-reference",
-    );
-  });
-
-  test("确认对象后：独立参考图 → 底板 → 世界 → 单物体模型", async () => {
-    const started = await runAnalyzeReference("ost", {
-      image: OST_IMAGE,
-      analysis: GARAGE_ANALYSIS,
-    });
-    await runConfirmReferenceAssets("ost", { runId: started.runId });
-
-    events.length = 0;
-    const completed = await runOneShotWorkflow("ost", KEYS);
-    expect(completed.references).toHaveLength(1);
-    expect(completed.references[0]?.image).toContain(`${completed.references[0]?.slug}-ref`);
-    expect(completed.plate).toContain("plate.png");
-    expect(completed.worldJson).toContain("world.json");
-    expect(completed.models[0]?.slug).toBe(completed.references[0]?.slug);
-    expect(await storage.exists(completed.models[0]!.files[0]!)).toBe(true);
-    expect(events).toEqual(["image-edit", "image-edit", "world", "seed3d"]);
-    const worldPrompt = requests.world.at(-1)?.world_prompt as Record<string, unknown>;
-    expect(worldPrompt.type).toBe("image");
-    const worldDir = completed.worldJson.slice(0, completed.worldJson.lastIndexOf("/"));
-    const worldSidecarName = (await storage.list(worldDir)).find((name) => name.endsWith("request.json"))!;
-    const worldSidecar = await readJson(storage, `${worldDir}/${worldSidecarName}`, RequestSidecarSchema);
-    expect(worldSidecar.params.image).toBe(completed.plate);
-    const modelDir = assetDir("ost", completed.models[0]!.slug);
-    const modelSidecarName = (await storage.list(modelDir)).find((name) => name.endsWith("request.json"))!;
-    const modelSidecar = await readJson(storage, `${modelDir}/${modelSidecarName}`, RequestSidecarSchema);
-    expect(modelSidecar.params.image).toBe(completed.references[0]?.image);
-    expect(requests.seed3d).toHaveLength(1);
-
-    const repeated = await runOneShotWorkflow("ost", KEYS);
-    expect(repeated).toEqual(completed);
-    expect(events).toEqual(["image-edit", "image-edit", "world", "seed3d"]);
-  }, 20000);
-
-  test("缺少生成 key 时在任何付费步骤前失败", async () => {
-    const analysis = {
-      sceneName: "书房",
-      sceneDescription: "安静的书房",
-      environment: {},
-      observations: "有一本书",
-      objects: [{ slug: "book", name: "书", description: "精装书" }],
-    };
-    await createProject(storage, { name: "无 key 项目", slug: "no-keys" });
-    await storage.writeBytes(`${projectSourceDir("no-keys")}/0-photo.png`, PNG_BYTES);
-
-    const noKeysImage = `${projectSourceDir("no-keys")}/0-photo.png`;
-    const started = await runAnalyzeReference(
-      "no-keys",
-      { image: noKeysImage, analysis },
-    );
-    await runConfirmReferenceAssets("no-keys", { runId: started.runId });
-
-    await expect(runOneShotWorkflow("no-keys", { llm: { apiKey: "sk-llm" } })).rejects.toThrow("VOLC_KEY");
-    expect(await storage.exists(`${projectSourceDir("no-keys")}/1-plate.png`)).toBe(false);
-  });
-
-  test("模型阶段失败后重跑，只重试失败阶段", async () => {
-    await createProject(storage, { name: "模型重试", slug: "model-retry" });
-    const image = `${projectSourceDir("model-retry")}/0-photo.png`;
-    await storage.writeBytes(image, PNG_BYTES);
-    const analyzed = await runAnalyzeReference("model-retry", { image, analysis: GARAGE_ANALYSIS });
-    await runConfirmReferenceAssets("model-retry", { runId: analyzed.runId });
-
-    events.length = 0;
-    failNextSeed3d = true;
-    await expect(runOneShotWorkflow("model-retry", KEYS)).rejects.toThrow("generate-object-models");
-    expect(events).toEqual(["image-edit", "image-edit", "world", "seed3d"]);
-
-    const completed = await runOneShotWorkflow("model-retry", KEYS);
-    expect(completed.models).toHaveLength(1);
-    expect(events).toEqual(["image-edit", "image-edit", "world", "seed3d", "seed3d"]);
-  }, 20000);
-
-  test("Agent Workflow 首步确认对象并返回后台任务，重复调用复用确认和运行中任务", async () => {
-    await createProject(storage, { name: "完整任务", slug: "one-shot-task" });
-    const image = `${projectSourceDir("one-shot-task")}/0-photo.png`;
-    await storage.writeBytes(image, PNG_BYTES);
-    const analyzed = await runAnalyzeReference("one-shot-task", {
-      image,
-      analysis: GARAGE_ANALYSIS,
-    });
-    const first = await startSceneWorkflow("one-shot-task", { runId: analyzed.runId });
-    const second = await startSceneWorkflow("one-shot-task", { runId: analyzed.runId });
-    expect(first.task.id).toBe(second.task.id);
-    expect(first.task.status).toBe("running");
-    expect(await storage.exists(`${projectDir("one-shot-task")}/analysis.json`)).toBe(true);
-    expect(
-      await storage.exists(`${projectDir("one-shot-task")}/.analyze-reference-${analyzed.runId}.json`),
-    ).toBe(false);
-
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const task = await getTask("one-shot-task", first.task.id);
-      if (task?.status !== "running") {
-        expect(task?.status).toBe("succeeded");
-        expect((task?.result as { models?: unknown[] })?.models).toHaveLength(1);
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error("完整场景后台任务未完成");
-  }, 20000);
 });
 
 describe("SceneJob（可修订 DAG 调度）", () => {

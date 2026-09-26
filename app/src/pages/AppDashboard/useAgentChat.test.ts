@@ -450,22 +450,22 @@ describe("useAgentChat 并发不变量", () => {
     await h.unmount();
   });
 
-  test("one-shot-scene Workflow 的总任务完成后自动继续会话", async () => {
+  test("SceneJob 的总任务完成后自动继续会话", async () => {
     const { mount, pollTasks } = harness();
     const h = await mount();
     await act(async () => h.result.current.send("生成完整场景"));
     await act(async () =>
-      handlersOf(0).onToolResult("workflow-one-shot-scene", "workflow-one-shot", undefined, ["one-shot-task"]),
+      handlersOf(0).onToolResult("start-scene-job", "start-scene-job", undefined, ["scene-job-task"]),
     );
-    expect(pollTasks.mock.calls[0]![0]).toEqual(["one-shot-task"]);
+    expect(pollTasks.mock.calls[0]![0]).toEqual(["scene-job-task"]);
     await act(async () => handlersOf(0).onDone());
 
     const onSettled = pollTasks.mock.calls[0]![1] as (value: unknown) => void;
     await act(async () =>
       onSettled({
         tasks: [{
-          id: "one-shot-task",
-          workflowId: "one-shot",
+          id: "scene-job-task",
+          workflowId: "scene-job:test",
           projectSlug: "proj-a",
           subject: "完整场景生成",
           status: "succeeded",

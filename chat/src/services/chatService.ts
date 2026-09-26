@@ -57,7 +57,7 @@ export function hasExplicitReferenceAnalysisIntent(message: ChatMessage): boolea
 
   return [
     /analyze-reference/,
-    /run-one-shot|one-shot-scene|image-blast|uncover/,
+    /image-blast|uncover/,
     /(完整|一键|自动).{0,12}(场景|世界).{0,16}(生成|建模|3d|三维)/,
     /(一键|自动).{0,12}(生成|制作).{0,12}(完整)?(场景|世界)/,
     /(生成|制作|创建|做成).{0,12}完整.{0,12}(场景|世界)/,
