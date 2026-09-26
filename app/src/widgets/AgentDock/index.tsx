@@ -47,6 +47,7 @@ import {
 } from "../../shared/storage/apiKeys";
 import { PlanCard } from "./PlanCard";
 import { AgentAutoTurnCard } from "./AgentAutoTurnCard";
+import { AgentMarkdown } from "./AgentMarkdown";
 import { AskUserCard } from "./AskUserCard";
 import { GeneratedMessageImages } from "./GeneratedMessageImages";
 import { LiquidMetalSendButton } from "./LiquidMetalSendButton";
@@ -612,10 +613,14 @@ const MessageHistory = memo(function MessageHistory({
                               ? "text-signal"
                               : "text-ink-subtle"
                           }`
-                        : "whitespace-pre-wrap"
+                        : ""
                     }`}
                   >
-                    {row.kind === "tool" ? row.activity.label : row.text}
+                    {row.kind === "tool" ? (
+                      row.activity.label
+                    ) : (
+                      <AgentMarkdown>{row.text}</AgentMarkdown>
+                    )}
                   </div>
                 </div>
               );
@@ -623,7 +628,7 @@ const MessageHistory = memo(function MessageHistory({
           </div>
         )}
         {toolActivities.length === 0 && !isCurrentStream && message.content ? (
-          <div className="whitespace-pre-wrap">{message.content}</div>
+          <AgentMarkdown>{message.content}</AgentMarkdown>
         ) : null}
         {message.images && message.images.length > 0 && (
           <GeneratedMessageImages paths={message.images} />

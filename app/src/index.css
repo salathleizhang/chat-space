@@ -183,6 +183,121 @@
     background-color: var(--color-ink-subtle);
   }
 
+  /* Agent 自由文本遵循一个克制的 Markdown 子集。结构层级由语义标签表达，
+     视觉上保持聊天正文而不是文档编辑器，避免模型的小标题和列表撑散时间线。 */
+  .agent-markdown > :first-child {
+    margin-top: 0;
+  }
+
+  .agent-markdown > :last-child {
+    margin-bottom: 0;
+  }
+
+  .agent-markdown p {
+    margin-block: 0.55rem;
+  }
+
+  .agent-markdown h1,
+  .agent-markdown h2,
+  .agent-markdown h3,
+  .agent-markdown h4,
+  .agent-markdown h5,
+  .agent-markdown h6 {
+    margin-block: 0.9rem 0.35rem;
+    color: var(--color-ink-strong);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+
+  .agent-markdown ul,
+  .agent-markdown ol {
+    margin-block: 0.55rem;
+    padding-left: 1.25rem;
+  }
+
+  .agent-markdown ul {
+    list-style: disc;
+  }
+
+  .agent-markdown ol {
+    list-style: decimal;
+  }
+
+  .agent-markdown li {
+    margin-block: 0.2rem;
+    padding-left: 0.15rem;
+  }
+
+  .agent-markdown li::marker {
+    color: var(--color-ink-faint);
+  }
+
+  .agent-markdown li > p {
+    margin-block: 0;
+  }
+
+  .agent-markdown strong {
+    color: var(--color-ink-strong);
+    font-weight: 600;
+  }
+
+  .agent-markdown :not(pre) > code {
+    border: 1px solid var(--color-hairline);
+    border-radius: 0.35rem;
+    background: var(--color-field);
+    padding: 0.08rem 0.3rem;
+    color: var(--color-ink-strong);
+    font-size: 0.82em;
+  }
+
+  .agent-markdown pre {
+    margin-block: 0.65rem;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-control);
+    background: var(--color-field);
+    padding: 0.75rem;
+    color: var(--color-ink);
+    font-size: 0.75rem;
+    line-height: 1.6;
+  }
+
+  .agent-markdown blockquote {
+    margin-block: 0.65rem;
+    border-left: 2px solid var(--color-ink-faint);
+    padding-left: 0.75rem;
+    color: var(--color-ink-subtle);
+  }
+
+  .agent-markdown hr {
+    margin-block: 0.8rem;
+    border: 0;
+    border-top: 1px solid var(--color-hairline);
+  }
+
+  .agent-markdown th,
+  .agent-markdown td {
+    border-bottom: 1px solid var(--color-hairline);
+    padding: 0.5rem 0.65rem;
+    vertical-align: top;
+  }
+
+  .agent-markdown th {
+    color: var(--color-ink-strong);
+    font-weight: 600;
+  }
+
+  .agent-markdown tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .agent-markdown input[type="checkbox"] {
+    margin-right: 0.4rem;
+    accent-color: var(--color-accent);
+  }
+
   /* 左下导航与右下视口控制共用的圆形按钮。选中态参考圆形工具栏：
      更亮的填充 + 一圈浅描边 + 从边缘向内收的高光，不靠改变圆角表达状态。 */
   .toolbar-button {
