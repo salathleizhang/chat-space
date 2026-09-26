@@ -26,6 +26,16 @@ export const TaskPhaseSchema = z.enum([
   "failed",
 ]);
 
+/**
+ * 生成流程能主动推进的阶段。
+ *
+ * 长流程必须边走边报：2026-09-26 的 World Labs 世界生成整整 53 分钟都停在 `queued`
+ * （phase 只在全部下载完后的 onPublished 才推进），看板和 Agent 都只能看到「还在跑」，
+ * 用户因此反复追问。每个阶段都要落一次，进度才是可见的。
+ */
+export const GenerationPhaseSchema = z.enum(["generating", "downloading", "publishing"]);
+export type GenerationPhase = z.infer<typeof GenerationPhaseSchema>;
+
 export const Retryable3dTaskSchema = z.object({
   kind: z.literal("3d"),
   assetSlug: SlugSchema,

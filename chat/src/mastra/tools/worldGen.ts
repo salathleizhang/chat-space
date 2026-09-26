@@ -21,6 +21,7 @@ import {
   type RequestSidecar,
   type SceneAnalysis,
 } from "../../dto/library";
+import type { GenerationPhase } from "../../dto/tasks";
 import {
   extractWorldAssetUrls,
   MARBLE_MODEL,
@@ -69,6 +70,8 @@ export async function runWorldGeneration(
   callOptions: WorldLabsOptions,
   /** 身份提交后回调（供任务化在「已发布但状态未落盘」的崩溃窗口前回写 assetSlug） */
   onPublished?: (assetSlug: string) => void | Promise<void>,
+  /** 阶段推进回调：让任务 phase 从 queued 一路可见地走到 publishing */
+  onPhase?: (phase: GenerationPhase) => void | Promise<void>,
 ): Promise<WorldGenResult> {
   const parsed = WorldGenParamsSchema.parse(rawParams);
   await requireProject(storage, parsed.projectSlug);
@@ -130,6 +133,8 @@ export async function runWorldGeneration(
     sidecar.status = "running";
     sidecar.providerTaskId = operationId;
     await saveSidecar();
+    // 世界生成是长轮询：先报 generating，别让任务一直停在 queued。
+    await onPhase?.("generating");
     const response = done
       ? (submittedResponse ??
         (() => {
@@ -148,6 +153,8 @@ export async function runWorldGeneration(
 
     const urls = extractWorldAssetUrls(response);
     const files: string[] = [];
+    // 产物可能几十 MB（pano + 多档 splat），下载阶段单独可见。
+    await onPhase?.("downloading");
     const download = async (url: string, fileName: string) => {
       const path = `${dir}/${fileName}`;
       await downloadToLibrary(storage, url, path, { fetchFn: callOptions.fetchFn });
@@ -259,6 +266,7 @@ export async function runProjectWorldGeneration(
   rawInput: ProjectWorldInput,
   callOptions: WorldLabsOptions,
   onPublished?: (assetSlug: string) => void | Promise<void>,
+  onPhase?: (phase: GenerationPhase) => void | Promise<void>,
 ): Promise<WorldGenResult> {
   const input = ProjectWorldInputSchema.parse(rawInput);
   await requireProject(storage, input.projectSlug);
@@ -300,5 +308,6 @@ export async function runProjectWorldGeneration(
     }),
     callOptions,
     onPublished,
+    onPhase,
   );
 }

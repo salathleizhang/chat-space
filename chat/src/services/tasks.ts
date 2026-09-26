@@ -205,18 +205,25 @@ export function startWorldTask(
     ? { projectSlug, mode: options.mode, sourceImage: options.sourceImage, prompt: options.prompt }
     : { projectSlug, mode: "empty-environment" as const, sourceImage: options.sourceImage, extraPrompt: options.extraPrompt };
   const subject = options.mode === "direct" ? "世界生成（World Labs）" : "空环境生成（World Labs）";
-  return startCustomTask("world", projectSlug, subject, (context) =>
-    runProjectWorldGeneration(
+  return startCustomTask("world", projectSlug, subject, async (context) => {
+    // 一开工就离开 queued：世界生成是长轮询，phase 必须能一路看见。
+    await context.setPhase("generating");
+    return runProjectWorldGeneration(
       getAssetStorage(),
       input,
-      { apiKey: options.worldLabsApiKey },
+      {
+        apiKey: options.worldLabsApiKey,
+        // 每次轮询都刷新一次任务：进度可见，卡死看门狗也能区分「在动」和「没动」。
+        onStatus: () => context.setPhase("generating"),
+      },
       async (assetSlug) => {
         // 身份已提交：推进 publishing 并记录 assetSlug，让重启恢复能识别「已发布但状态未落盘」
         await context.setPhase("publishing");
         await context.setAssetSlug(assetSlug);
       },
-    ),
-  );
+      (phase) => context.setPhase(phase),
+    );
+  });
 }
 
 export function startSkyboxTask(
@@ -228,8 +235,9 @@ export function startSkyboxTask(
     skyboxSlug?: string;
   },
 ): GenerationTask {
-  return startCustomTask("skybox", projectSlug, "天空盒生成（Blockade Labs）", (context) =>
-    runSkyboxGeneration(
+  return startCustomTask("skybox", projectSlug, "天空盒生成（Blockade Labs）", async (context) => {
+    await context.setPhase("generating");
+    return runSkyboxGeneration(
       getAssetStorage(),
       {
         projectSlug,
@@ -237,13 +245,17 @@ export function startSkyboxTask(
         prompt: options.prompt,
         styleId: options.styleId,
       },
-      { apiKey: options.blockadeLabsApiKey },
+      {
+        apiKey: options.blockadeLabsApiKey,
+        onStatus: () => context.setPhase("generating"),
+      },
       async (assetSlug) => {
         await context.setPhase("publishing");
         await context.setAssetSlug(assetSlug);
       },
-    ),
-  );
+      (phase) => context.setPhase(phase),
+    );
+  });
 }
 
 export async function listTasks(projectSlug?: string): Promise<GenerationTask[]> {

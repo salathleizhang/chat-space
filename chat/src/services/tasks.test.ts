@@ -216,6 +216,22 @@ describe("runProjectWorldGeneration", () => {
       { apiKey: "wlt-key", fetchFn: makeFakeFetch() },
     )).rejects.toThrow("需要源图或文字 prompt");
   });
+
+  test("阶段回调按 generating → downloading 推进：进度可见，不再长时间停在 queued", async () => {
+    const phases: string[] = [];
+    const result = await runProjectWorldGeneration(
+      storage,
+      { projectSlug: "gen", mode: "empty-environment" },
+      { apiKey: "wlt-key", fetchFn: makeFakeFetch(), pollIntervalMs: 1 },
+      undefined,
+      (phase) => {
+        phases.push(phase);
+      },
+    );
+
+    expect(phases).toEqual(["generating", "downloading"]);
+    expect(result.files).toHaveLength(4);
+  });
 });
 
 describe("并行任务服务", () => {

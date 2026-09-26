@@ -14,6 +14,7 @@ import {
   SlugSchema,
   type RequestSidecar,
 } from "../../dto/library";
+import type { GenerationPhase } from "../../dto/tasks";
 import {
   pollSkyboxExport,
   pollSkyboxGenerate,
@@ -324,6 +325,8 @@ export async function runSkyboxGeneration(
   callOptions: BlockadeLabsOptions,
   /** 身份提交后回调（供任务化在「已发布但状态未落盘」的崩溃窗口前回写 assetSlug） */
   onPublished?: (assetSlug: string) => void | Promise<void>,
+  /** 阶段推进回调：让任务 phase 从 queued 一路可见地走到 publishing */
+  onPhase?: (phase: GenerationPhase) => void | Promise<void>,
 ): Promise<SkyboxGenResult> {
   const parsed = SkyboxGenParamsSchema.parse(rawParams);
   await requireProject(storage, parsed.projectSlug);
@@ -377,6 +380,7 @@ export async function runSkyboxGeneration(
 
     const pano = await pollSkyboxGenerate(submitted.requestId, callOptions);
     panoPath = `${dir}/${formatIndexedName(genIndex, params.skyboxSlug, "png")}`;
+    await onPhase?.("downloading");
     await downloadToLibrary(storage, pano.fileUrl, panoPath, { fetchFn: callOptions.fetchFn });
     genSidecar.status = "succeeded";
     genSidecar.outputs = [{ path: panoPath, providerUrl: pano.fileUrl }];
@@ -421,6 +425,7 @@ export async function runSkyboxGeneration(
 
     const hdr = await pollSkyboxExport(exportId, callOptions);
     hdrPath = `${dir}/${formatIndexedName(exportIndex, params.skyboxSlug, "hdr")}`;
+    await onPhase?.("downloading");
     await downloadToLibrary(storage, hdr.fileUrl, hdrPath, { fetchFn: callOptions.fetchFn });
     exportSidecar.status = "succeeded";
     exportSidecar.outputs = [{ path: hdrPath, providerUrl: hdr.fileUrl }];

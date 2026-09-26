@@ -150,12 +150,20 @@ taskRoutes.post("/resume", async (c) => {
     "resume",
     req.projectSlug,
     `续跑：${req.sidecarPath.split("/").pop()}`,
-    () =>
-      resumeGeneration(getAssetStorage(), req.sidecarPath, {
-        worldLabsApiKey: req.worldLabsApiKey,
-        tripo3dApiKey: req.tripo3dApiKey,
-        seed3dApiKey: req.seed3dApiKey,
-      }),
+    async (context) => {
+      // 续跑同样是长流程（轮询 + 下载几十 MB）：报阶段，别让看板只看到 queued。
+      await context.setPhase("generating");
+      return resumeGeneration(
+        getAssetStorage(),
+        req.sidecarPath,
+        {
+          worldLabsApiKey: req.worldLabsApiKey,
+          tripo3dApiKey: req.tripo3dApiKey,
+          seed3dApiKey: req.seed3dApiKey,
+        },
+        (phase) => context.setPhase(phase),
+      );
+    },
   );
   return c.json({ task }, 202);
 });

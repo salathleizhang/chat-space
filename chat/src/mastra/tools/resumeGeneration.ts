@@ -8,15 +8,18 @@ import {
 } from "../../common/indexedFiles";
 import {
   assetDir,
+  assetIdentityFile,
   projectAssetsDir,
   projectSourceDir,
 } from "../../common/libraryPaths";
 import {
+  AssetIdentitySchema,
   LogicalPathSchema,
   RequestSidecarSchema,
   isResumableSidecar,
   type RequestSidecar,
 } from "../../dto/library";
+import type { GenerationPhase } from "../../dto/tasks";
 import { pollSkyboxExport, pollSkyboxGenerate } from "../../models/blockadelabs";
 import { waitForHunyuanJob } from "../../models/hunyuan";
 import { extractSeed3dFileUrls, waitForSeed3dTask } from "../../models/seed3d";
@@ -32,6 +35,7 @@ import {
   type AssetStorage,
 } from "../../services/assetStorage";
 import { downloadToLibrary } from "./assetRepair";
+import { setCurrentSkybox, setCurrentWorld } from "./projectTools";
 import {
   optionalContextString,
   requireCurrentProject,
@@ -67,6 +71,74 @@ export interface ResumableEntry {
   slug: string;
   status: string;
   hasProviderTaskId: boolean;
+}
+
+/** 从侧写逻辑路径取项目 slug：projects/<projectSlug>/assets/<assetSlug>/.N-…-request.json */
+function projectSlugOf(sidecarPath: string): string {
+  const parts = sidecarPath.split("/");
+  const slug = parts[0] === "projects" ? parts[1] : undefined;
+  if (!slug) {
+    throw new ChatServiceError(
+      `无法从侧写路径解析出项目：${sidecarPath}`,
+      400,
+      "invalid_sidecar_path",
+    );
+  }
+  return slug;
+}
+
+/**
+ * 世界续跑成功后必须登记资产身份与当前世界指针。
+ *
+ * 只把文件落盘是不够的：项目状态是从 `assets/<slug>/asset.json` 读出来的，缺了身份，
+ * 世界在界面里根本不存在——2026-09-26 的 World Labs 任务失败后走续跑就会踩到这个坑。
+ * 语义与 runWorldGeneration 的收尾保持一致。
+ */
+async function registerResumedWorld(
+  storage: AssetStorage,
+  projectSlug: string,
+  sidecar: RequestSidecar,
+): Promise<void> {
+  const identityPath = assetIdentityFile(projectSlug, sidecar.slug);
+  if (await storage.exists(identityPath)) {
+    // 已经登记过：这是「补齐旧侧写文件」，不要去动用户可能已经切走的当前世界指针。
+    return;
+  }
+  const prompt = typeof sidecar.params.prompt === "string" ? sidecar.params.prompt : undefined;
+  const image = typeof sidecar.params.image === "string" ? sidecar.params.image : undefined;
+  await writeJson(storage, identityPath, AssetIdentitySchema, {
+    schemaVersion: 1,
+    slug: sidecar.slug,
+    kind: "world",
+    name: sidecar.slug,
+    intent: prompt ?? "Explorable 3D environment generated from source image",
+    sourceImages: image ? [image] : [],
+    createdAt: new Date().toISOString(),
+  });
+  await setCurrentWorld(storage, projectSlug, sidecar.slug);
+}
+
+/** 天空盒导出续跑成功后的资产登记；与 runSkyboxGeneration 的收尾保持一致。 */
+async function registerResumedSkybox(
+  storage: AssetStorage,
+  projectSlug: string,
+  sidecar: RequestSidecar,
+): Promise<void> {
+  const identityPath = assetIdentityFile(projectSlug, sidecar.slug);
+  if (await storage.exists(identityPath)) return;
+  await writeJson(storage, identityPath, AssetIdentitySchema, {
+    schemaVersion: 1,
+    slug: sidecar.slug,
+    kind: "skybox",
+    name: sidecar.slug,
+    intent:
+      typeof sidecar.params.prompt === "string" && sidecar.params.prompt
+        ? sidecar.params.prompt
+        : sidecar.slug,
+    sourceImages: [],
+    createdAt: new Date().toISOString(),
+  });
+  await setCurrentSkybox(storage, projectSlug, sidecar.slug);
 }
 
 async function scanDir(
@@ -125,6 +197,11 @@ export async function resumeGeneration(
   storage: AssetStorage,
   sidecarPath: string,
   keys: ResumeKeys,
+  /**
+   * 阶段推进回调。续跑也是长流程（轮询 + 下载几十 MB），不报阶段的话任务会全程停在
+   * `queued`，看板上跟「卡死」长得一模一样——2026-09-26 的世界生成正是被这个坑到。
+   */
+  onPhase?: (phase: GenerationPhase) => void | Promise<void>,
 ): Promise<ResumeResult> {
   const sidecar = await readJson(storage, sidecarPath, RequestSidecarSchema);
   if (!["volcengine", "seed3d", "ark-hyper3d", "ark-hitem3d", "tripo", "hunyuan", "world-labs"].includes(sidecar.provider)) {
@@ -145,6 +222,8 @@ export async function resumeGeneration(
 
   // 已成功：只补齐缺失文件（等价 repair）
   if (sidecar.status === "succeeded") {
+    // 这一支只补文件，不轮询供应商。
+    await onPhase?.("downloading");
     const files: string[] = [];
     const outputs: RequestSidecar["outputs"] = [];
     for (const output of sidecar.outputs) {
@@ -188,6 +267,12 @@ export async function resumeGeneration(
     if (["seed3d", "ark-hyper3d", "ark-hitem3d"].includes(sidecar.provider)) {
       await save({ outputs });
     }
+    // 补文件的同时保证世界/天空盒在项目里登记过（幂等；已登记就不动当前指针）。
+    if (sidecar.provider === "world-labs") {
+      await registerResumedWorld(storage, projectSlugOf(sidecarPath), sidecar);
+    } else if (sidecar.provider === "blockade-labs" && sidecar.model === "skybox/export") {
+      await registerResumedSkybox(storage, projectSlugOf(sidecarPath), sidecar);
+    }
     return { files, sidecar: sidecarPath };
   }
 
@@ -202,7 +287,13 @@ export async function resumeGeneration(
   try {
     const outputs: RequestSidecar["outputs"] = [];
     const files: string[] = [];
+    let downloadPhaseReported = false;
     const download = async (url: string, fileName: string) => {
+      // 第一个文件开始下载时才切 downloading：之前的等待都在轮询供应商。
+      if (!downloadPhaseReported) {
+        downloadPhaseReported = true;
+        await onPhase?.("downloading");
+      }
       const path = `${dir}/${fileName}`;
       await downloadToLibrary(storage, url, path, { fetchFn: keys.fetchFn });
       files.push(path);
@@ -374,6 +465,13 @@ export async function resumeGeneration(
         409,
         "not_resumable",
       );
+    }
+
+    // 世界/天空盒的续跑也要登记资产身份，否则文件在、界面里却没有这个资产。
+    if (sidecar.provider === "world-labs") {
+      await registerResumedWorld(storage, projectSlugOf(sidecarPath), sidecar);
+    } else if (sidecar.provider === "blockade-labs" && sidecar.model === "skybox/export") {
+      await registerResumedSkybox(storage, projectSlugOf(sidecarPath), sidecar);
     }
 
     sidecar.outputs = outputs;

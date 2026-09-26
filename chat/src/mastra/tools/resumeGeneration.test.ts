@@ -3,14 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import JSZip from "jszip";
-import { assetDir, projectSourceDir } from "../../common/libraryPaths";
-import { RequestSidecarSchema } from "../../dto/library";
+import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
+import { AssetIdentitySchema, RequestSidecarSchema } from "../../dto/library";
 import {
   LocalFileStorage,
   readJson,
   writeJson,
 } from "../../services/assetStorage";
-import { createProject } from "./projectTools";
+import { createProject, requireProject } from "./projectTools";
 import { listResumableSidecars, resumeGeneration } from "./resumeGeneration";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-resume-test-"));
@@ -80,14 +80,30 @@ describe("凭侧写续跑", () => {
 
 
   test("World Labs 任务续跑：只轮询 operation，不重新提交", async () => {
+    const phases: string[] = [];
     const result = await resumeGeneration(
       storage,
       `${assetDir("rz", "world")}/.0-world-request.json`,
       { worldLabsApiKey: "wlt", fetchFn: fakeFetch, pollIntervalMs: 1 },
+      (phase) => {
+        phases.push(phase);
+      },
     );
     expect(result.files).toContain(`${assetDir("rz", "world")}/0-world.glb`);
     expect(result.files).toContain(`${assetDir("rz", "world")}/0-world-full-res.spz`);
     expect(await storage.exists(`${assetDir("rz", "world")}/0-world.json`)).toBe(true);
+    // 续跑也要报阶段，否则看板上跟「卡死」长得一样
+    expect(phases).toEqual(["downloading"]);
+  });
+
+  test("世界续跑成功后登记资产身份与当前世界指针（否则文件在、界面里没有这个世界）", async () => {
+    const identity = await readJson(
+      storage,
+      assetIdentityFile("rz", "world"),
+      AssetIdentitySchema,
+    );
+    expect(identity.kind).toBe("world");
+    expect((await requireProject(storage, "rz")).currentWorld).toBe("world");
   });
 
 });
