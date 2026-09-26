@@ -557,6 +557,33 @@ describe("useAgentChat 并发不变量", () => {
     await h.unmount();
   });
 
+  test("流结束但没有工具终态事件时不把调用误报为完成", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成参考图"));
+    const assistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.role === "assistant")!;
+
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-1"));
+    const afterTool = updateMessage.mock.calls.at(-1)![1](assistant);
+    await act(async () => handlersOf(0).onDone());
+    const afterDone = updateMessage.mock.calls.at(-1)![1](afterTool);
+
+    expect(afterDone.activities?.at(-1)).toMatchObject({
+      id: "tool-1",
+      label: "Failed: generating image",
+      status: "failed",
+    });
+    expect(afterDone.agentStatus).toEqual({
+      label: "Some steps failed",
+      status: "failed",
+    });
+
+    await h.unmount();
+  });
+
   test("只读查询工具不进入时间线，避免多出一步 checking", async () => {
     const { mount, pushMessage, updateMessage } = harness();
     const h = await mount();

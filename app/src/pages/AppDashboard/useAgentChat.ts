@@ -840,9 +840,9 @@ export function useAgentChat({
                 ? {
                     ...item,
                     label: item.toolName
-                      ? completedToolActivityMessage(item.toolName)
+                      ? failedToolActivityMessage(item.toolName)
                       : item.label,
-                    status: "completed" as const,
+                    status: "failed" as const,
                   }
                 : item,
             );
