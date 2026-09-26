@@ -177,7 +177,6 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
   const thumbnails = useThumbnailQueue({
     projectSlug,
     assets,
-    refreshKey,
     onGenerated: onThumbnailGenerated,
   });
 

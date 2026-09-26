@@ -4,19 +4,17 @@ import { libraryUrl, uploadThumbnail, type LibraryAsset } from "../../shared/lib
 /**
  * 列表缩略图的生成队列。
  *
- * 只对**新出现的产物**排队，不回填历史资产（产品决策 2026-07，天空盒也不破例）：
- * 挂载时先把磁盘现状登记进 seenRef 但一张不渲，之后某个资产第一次出现、或换代出
- * 更高索引的产物（`3-chair.glb` → `4-chair.glb`）才进队列——后者不渲的话列表会挂着
- * 一张跟当前模型对不上的旧图，比没有图更糟。
+ * 缩略图是资产的派生缓存，不是一次性事件：只要当前模型（或天空盒环境图）存在、
+ * 与它同代的缩略图不存在，队列就负责把它补齐。这样生成后立即刷新、关闭页面，或
+ * 旧项目从未生成过缩略图，都只会推迟工作，不会永久留下占位图。
  *
  * 队列严格串行（一次只喂一个给 ThumbnailRenderer）：并发渲染会同时拉起 N 个 glb，
- * 内存和网络都扛不住，而缩略图完全不急。
+ * 内存和网络都扛不住。资产换代时会立即淘汰旧版本任务，只渲最新产物。
  */
 
 /**
  * 这个资产拿什么渲缩略图：模型资产渲主产物模型，天空盒没有模型产物、渲的是
- * 贴了环境贴图的球，源就是那张 HDR（与 `deriveLibraryAssets` 里的 thumbSource 同取舍）。
- * 返回 null 即"这类资产不出缩略图"，走 kind 图标占位。
+ * 贴了环境贴图的球。返回 null 即“这类资产不出缩略图”，走 kind 图标占位。
  */
 export function thumbSourcePath(asset: LibraryAsset): string | null {
   return asset.modelPath ?? (asset.kind === "skybox" ? asset.hdrPath : null);
@@ -27,11 +25,14 @@ function thumbnailJobKey(asset: LibraryAsset): string {
   return `${asset.id}::${thumbSourcePath(asset)}`;
 }
 
+/** 永久损坏的模型不能无限占住后台队列；重新打开项目后会获得一轮新的尝试。 */
+export const MAX_THUMBNAIL_ATTEMPTS = 3;
+/** 第一次失败很可能只是模型文件刚落盘或本机服务短暂繁忙，稍等后再试。 */
+export const THUMBNAIL_RETRY_BASE_MS = 250;
+
 interface Options {
   projectSlug: string;
   assets: LibraryAsset[];
-  /** 生成任务/导入完成时由上层递增——第一次递增之前只登记不排队 */
-  refreshKey: number;
   /** 缩略图已经落盘；用于把它回填到对应的异步任务消息。 */
   onGenerated?: (asset: LibraryAsset, sourcePath: string, thumbnailPath: string) => void;
 }
@@ -41,107 +42,188 @@ export interface ThumbnailQueue {
   current: LibraryAsset | null;
   /** 队列里待处理（含正在渲）的资产 id，列表据此显示占位骨架 */
   pendingIds: Set<string>;
-  /** 本次会话刚渲好的缩略图：`assetId::源产物路径` → 逻辑路径，省一次全量刷新 */
+  /** 本次会话刚渲好的缩略图：`assetId::源产物路径` → 带缓存戳的逻辑路径 */
   generated: Map<string, string>;
+  /** 已加载失败、应暂时显示占位图并等待重建的任务 stamp。 */
+  invalidImages: Set<string>;
+  /** 已声明存在的图片读不到/解码失败时，废弃它并重新生成。 */
+  onImageError: (asset: LibraryAsset) => void;
   onCaptured: (asset: LibraryAsset, pngBase64: string | null) => void;
+}
+
+function retryDelay(attempt: number): number {
+  return THUMBNAIL_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1);
 }
 
 export function useThumbnailQueue({
   projectSlug,
   assets,
-  refreshKey,
   onGenerated,
 }: Options): ThumbnailQueue {
   const activeRef = useRef(true);
   const [queue, setQueue] = useState<LibraryAsset[]>([]);
   const [generated, setGenerated] = useState<Map<string, string>>(() => new Map());
-  /** assetId → 上次见到的源产物路径，用来认出"新出现/换代了" */
-  const seenRef = useRef(new Map<string, string>());
-  /** `${assetId}::${源产物路径}` 已处理过（成功或失败都算），避免失败资产反复重试 */
-  const doneRef = useRef(new Set<string>());
-  /** 当前仍存活的资产 id；onCaptured 用它丢弃"渲染/上传期间被删除"的在途缩略图 */
-  const aliveIdsRef = useRef<Set<string>>(new Set());
-  const primedRef = useRef(false);
-  const initialKeyRef = useRef(refreshKey);
+  const [invalidImages, setInvalidImages] = useState<Set<string>>(() => new Set());
+  const generatedRef = useRef(generated);
+  const invalidImagesRef = useRef(invalidImages);
+  /** 当前项目快照里仍然有效的任务；同资产换代后旧 stamp 会立刻消失。 */
+  const currentJobsRef = useRef(new Map<string, LibraryAsset>());
+  /** 当前页面生命周期内每个源版本已经失败多少次。 */
+  const attemptsRef = useRef(new Map<string, number>());
+  const retryTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const replaceGenerated = useCallback((next: Map<string, string>) => {
+    generatedRef.current = next;
+    setGenerated(next);
+  }, []);
+
+  const replaceInvalidImages = useCallback((next: Set<string>) => {
+    invalidImagesRef.current = next;
+    setInvalidImages(next);
+  }, []);
+
+  const needsThumbnail = useCallback((asset: LibraryAsset): boolean => {
+    const source = thumbSourcePath(asset);
+    if (!source) return false;
+    const stamp = thumbnailJobKey(asset);
+    if (generatedRef.current.has(stamp)) return false;
+    return !asset.thumbPath || invalidImagesRef.current.has(stamp);
+  }, []);
+
+  const enqueue = useCallback((asset: LibraryAsset) => {
+    const stamp = thumbnailJobKey(asset);
+    if (!currentJobsRef.current.has(stamp) || !needsThumbnail(asset)) return;
+    if ((attemptsRef.current.get(stamp) ?? 0) >= MAX_THUMBNAIL_ATTEMPTS) return;
+    setQueue((items) =>
+      items.some((queued) => thumbnailJobKey(queued) === stamp) ? items : [...items, asset],
+    );
+  }, [needsThumbnail]);
+
+  const scheduleRetry = useCallback((asset: LibraryAsset) => {
+    const stamp = thumbnailJobKey(asset);
+    const attempt = (attemptsRef.current.get(stamp) ?? 0) + 1;
+    attemptsRef.current.set(stamp, attempt);
+    setQueue((items) => items.filter((queued) => thumbnailJobKey(queued) !== stamp));
+    if (attempt >= MAX_THUMBNAIL_ATTEMPTS || retryTimersRef.current.has(stamp)) return;
+
+    const timer = setTimeout(() => {
+      retryTimersRef.current.delete(stamp);
+      if (!activeRef.current) return;
+      const current = currentJobsRef.current.get(stamp);
+      if (current) enqueue(current);
+    }, retryDelay(attempt));
+    retryTimersRef.current.set(stamp, timer);
+  }, [enqueue]);
 
   useEffect(() => {
     activeRef.current = true;
+    const timers = retryTimersRef.current;
     return () => {
       activeRef.current = false;
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
     };
   }, []);
 
-  // 先于下面登记 assets 的 effect 声明：同一次提交里先解锁再登记，
-  // 这样"刷新带进来的新资产"当轮就能排上队
   useEffect(() => {
-    if (refreshKey !== initialKeyRef.current) primedRef.current = true;
-  }, [refreshKey]);
-
-  useEffect(() => {
-    const pending: LibraryAsset[] = [];
+    const currentJobs = new Map<string, LibraryAsset>();
     for (const asset of assets) {
-      const source = thumbSourcePath(asset);
-      if (!source) continue;
-      const changed = seenRef.current.get(asset.id) !== source;
-      seenRef.current.set(asset.id, source);
-      if (!changed || !primedRef.current || asset.thumbPath) continue;
-      if (doneRef.current.has(thumbnailJobKey(asset))) continue;
-      pending.push(asset);
+      if (thumbSourcePath(asset)) currentJobs.set(thumbnailJobKey(asset), asset);
     }
-    // 资产被删除后要把登记一并清掉：否则删掉 chair 再重新导入一个同名 chair
-    // （slug 复用、产物索引照样从 0 起）会被认成"没变过"，永远排不上队
-    const alive = new Set(assets.map((a) => a.id));
-    aliveIdsRef.current = alive;
-    for (const id of seenRef.current.keys()) {
-      if (!alive.has(id)) seenRef.current.delete(id);
+    currentJobsRef.current = currentJobs;
+
+    // 换代/删除/切项目后，旧任务与旧重试都没有继续工作的价值。
+    for (const [stamp, timer] of retryTimersRef.current) {
+      if (currentJobs.has(stamp)) continue;
+      clearTimeout(timer);
+      retryTimersRef.current.delete(stamp);
     }
-    for (const stamp of doneRef.current) {
-      if (!alive.has(stamp.slice(0, stamp.lastIndexOf("::")))) doneRef.current.delete(stamp);
+    for (const stamp of attemptsRef.current.keys()) {
+      if (!currentJobs.has(stamp)) attemptsRef.current.delete(stamp);
     }
-    if (pending.length === 0) return;
+
     setQueue((items) => {
-      const existing = new Set(items.map(thumbnailJobKey));
-      const additions = pending.filter((asset) => !existing.has(thumbnailJobKey(asset)));
-      return additions.length === 0 ? items : [...items, ...additions];
+      const next = items.filter((asset) => {
+        const stamp = thumbnailJobKey(asset);
+        return currentJobs.has(stamp) && needsThumbnail(asset);
+      });
+      const queued = new Set(next.map(thumbnailJobKey));
+      for (const asset of assets) {
+        const stamp = thumbnailJobKey(asset);
+        if (
+          currentJobs.has(stamp) &&
+          needsThumbnail(asset) &&
+          (attemptsRef.current.get(stamp) ?? 0) < MAX_THUMBNAIL_ATTEMPTS &&
+          !retryTimersRef.current.has(stamp) &&
+          !queued.has(stamp)
+        ) {
+          next.push(asset);
+          queued.add(stamp);
+        }
+      }
+      return next;
     });
-  }, [assets]);
+  }, [assets, needsThumbnail]);
 
   const onCaptured = useCallback(
     async (asset: LibraryAsset, pngBase64: string | null) => {
       if (!activeRef.current) return;
-      // 资产在渲染/上传期间被删除：丢弃这次在途结算，别把 stale stamp 写回 doneRef，
-      // 否则同名重导入资产（slug 复用、id 与源路径完全一致）会命中旧登记而永远排不上队。
-      if (!aliveIdsRef.current.has(asset.id)) return;
       const source = thumbSourcePath(asset);
       const stamp = thumbnailJobKey(asset);
-      doneRef.current.add(stamp);
-      if (pngBase64 && source) {
-        const sourceFile = source.split("/").pop() ?? "";
-        try {
-          const path = await uploadThumbnail(projectSlug, asset.assetSlug, sourceFile, pngBase64);
-          if (!activeRef.current) return;
-          setGenerated((prev) => {
-            const entries = new Map(prev);
-            entries.set(stamp, path);
-            return entries;
-          });
-          onGenerated?.(asset, source, path);
-        } catch {
-          // 缩略图是锦上添花：落盘失败就静默退回占位图，不打断用户手头的事
-        }
+      // 渲染期间资产已删除或换代：只清掉旧任务，不能为过期版本重试或回填消息。
+      if (!source || !currentJobsRef.current.has(stamp)) {
+        setQueue((items) => items.filter((queued) => thumbnailJobKey(queued) !== stamp));
+        return;
       }
-      setQueue((items) =>
-        // 只结算这一个“资产 + 源版本”；同资产的新版本可能已经排在后面。
-        items.filter((queued) => thumbnailJobKey(queued) !== stamp),
-      );
+      if (!pngBase64) {
+        scheduleRetry(asset);
+        return;
+      }
+
+      const sourceFile = source.split("/").pop() ?? "";
+      try {
+        const path = await uploadThumbnail(projectSlug, asset.assetSlug, sourceFile, pngBase64);
+        if (!activeRef.current || !currentJobsRef.current.has(stamp)) {
+          setQueue((items) => items.filter((queued) => thumbnailJobKey(queued) !== stamp));
+          return;
+        }
+        // 覆盖损坏的同名 PNG 时绕开浏览器的旧失败/图片缓存。
+        const nextGenerated = new Map(generatedRef.current);
+        nextGenerated.set(stamp, `${path}?thumbnail=${Date.now()}`);
+        replaceGenerated(nextGenerated);
+        if (invalidImagesRef.current.has(stamp)) {
+          const nextInvalid = new Set(invalidImagesRef.current);
+          nextInvalid.delete(stamp);
+          replaceInvalidImages(nextInvalid);
+        }
+        setQueue((items) => items.filter((queued) => thumbnailJobKey(queued) !== stamp));
+        onGenerated?.(asset, source, path);
+      } catch {
+        // 上传失败通常是本机服务刚重启或短暂不可用，按同一套有限退避策略重试。
+        scheduleRetry(asset);
+      }
     },
-    [projectSlug, onGenerated],
+    [projectSlug, onGenerated, replaceGenerated, replaceInvalidImages, scheduleRetry],
   );
+
+  const onImageError = useCallback((asset: LibraryAsset) => {
+    const stamp = thumbnailJobKey(asset);
+    if (!currentJobsRef.current.has(stamp)) return;
+    const nextGenerated = new Map(generatedRef.current);
+    nextGenerated.delete(stamp);
+    replaceGenerated(nextGenerated);
+    const nextInvalid = new Set(invalidImagesRef.current);
+    nextInvalid.add(stamp);
+    replaceInvalidImages(nextInvalid);
+    scheduleRetry(asset);
+  }, [replaceGenerated, replaceInvalidImages, scheduleRetry]);
 
   return {
     current: queue[0] ?? null,
     pendingIds: new Set(queue.map((a) => a.id)),
     generated,
+    invalidImages,
+    onImageError,
     onCaptured,
   };
 }
@@ -153,7 +235,10 @@ export function useThumbnailQueue({
 export function thumbnailSrc(
   asset: LibraryAsset,
   generated: Map<string, string>,
+  invalidImages: Set<string> = new Set(),
 ): string | null {
-  const path = generated.get(`${asset.id}::${thumbSourcePath(asset)}`) ?? asset.thumbPath;
+  const stamp = `${asset.id}::${thumbSourcePath(asset)}`;
+  if (invalidImages.has(stamp) && !generated.has(stamp)) return null;
+  const path = generated.get(stamp) ?? asset.thumbPath;
   return path ? libraryUrl(path) : null;
 }

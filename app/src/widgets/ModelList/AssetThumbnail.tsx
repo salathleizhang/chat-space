@@ -22,17 +22,21 @@ export function AssetThumbnail({
   asset,
   src,
   pending,
+  onImageError,
 }: {
   asset: LibraryAsset;
   src: string | null;
   /** 排在渲染队列里：占位图轻微呼吸，提示这张图正在路上 */
   pending?: boolean;
+  /** 文件记录存在但图片读取/解码失败时，让队列覆盖重建。 */
+  onImageError?: () => void;
 }) {
   if (src) {
     return (
       <img
         src={src}
         alt=""
+        onError={onImageError}
         className="h-10 w-10 shrink-0 rounded-media bg-field object-contain ring-1 ring-hairline"
       />
     );

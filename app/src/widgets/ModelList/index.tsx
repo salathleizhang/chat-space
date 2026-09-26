@@ -626,9 +626,10 @@ export const ModelList = memo(function ModelList({
                       src={
                         asset.assetSlug === DEFAULT_SKYBOX_SLUG
                           ? DEFAULT_SKYBOX_THUMB
-                          : thumbnailSrc(asset, thumbnails.generated)
+                          : thumbnailSrc(asset, thumbnails.generated, thumbnails.invalidImages)
                       }
                       pending={thumbnails.pendingIds.has(asset.id)}
+                      onImageError={() => thumbnails.onImageError(asset)}
                     />
                     <span className="flex min-w-0 flex-1 flex-col gap-1">
                       <span className="truncate text-sm text-ink">
