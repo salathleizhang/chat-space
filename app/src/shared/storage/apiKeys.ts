@@ -3,7 +3,9 @@ export const LLM_PROVIDER_IDS = ["volcengine"] as const;
 export type LlmProviderId = (typeof LLM_PROVIDER_IDS)[number];
 
 const LLM_SETTINGS_KEY = "chatspace.llmSettings:v1";
-const THREE_D_SETTINGS_KEY = "chatspace.threeDProviderSettings:v1";
+/** 只读的旧键：老版本存的是渠道名，现在存具体模型，加载时迁移一次。 */
+const LEGACY_THREE_D_PROVIDER_KEY = "chatspace.threeDProviderSettings:v1";
+const THREE_D_MODEL_SETTINGS_KEY = "chatspace.threeDModelSettings:v1";
 const IMAGE_SETTINGS_KEY = "chatspace.imageGenerateModelSettings:v1";
 
 function readObject(key: string): Record<string, unknown> | null {
@@ -84,28 +86,44 @@ export function saveLlmSettings(settings: LlmSettings): boolean {
   });
 }
 
-export interface ThreeDProviderSettings { provider: string }
+export interface ThreeDModelSettings { model: string }
 
-export const THREE_D_PROVIDER_PRESETS = [
+/** 下拉列出的是具体模型，不是渠道；值与 chat/src/models/threeD.ts 的选择键逐字对应。 */
+export const THREE_D_MODEL_PRESETS = [
   { value: "", label: "Auto" },
-  { value: "seed3d-direct", label: "Seed3D" },
-  { value: "hyper3d-volc", label: "Hyper3D" },
-  { value: "hi3d-volc", label: "Hi3D" },
-  { value: "tripo-direct", label: "Tripo3D" },
+  { value: "seed3d-2", label: "Seed3D 2.0" },
+  { value: "hyper3d-gen2", label: "Hyper3D Gen-2" },
+  { value: "hi3d-2", label: "Hi3D 2.0" },
+  { value: "tripo-3-1", label: "Tripo 3.1" },
 ];
 
-export function loadThreeDProviderSettings(): ThreeDProviderSettings {
-  const saved = readObject(THREE_D_SETTINGS_KEY);
-  const provider = saved?.provider;
+/** 旧版渠道偏好 → 该渠道的默认模型，迁移时保住用户原来的选择。 */
+const LEGACY_PROVIDER_MODELS: Record<string, string> = {
+  "seed3d-direct": "seed3d-2",
+  "hyper3d-volc": "hyper3d-gen2",
+  "hi3d-volc": "hi3d-2",
+  "tripo-direct": "tripo-3-1",
+};
+
+function savedThreeDModel(model: unknown): string {
+  return THREE_D_MODEL_PRESETS.some((preset) => preset.value && preset.value === model)
+    ? model as string
+    : "";
+}
+
+export function loadThreeDModelSettings(): ThreeDModelSettings {
+  const saved = readObject(THREE_D_MODEL_SETTINGS_KEY);
+  if (saved) return { model: savedThreeDModel(saved.model) };
+  const legacy = readObject(LEGACY_THREE_D_PROVIDER_KEY)?.provider;
   return {
-    provider: THREE_D_PROVIDER_PRESETS.some((item) => item.value === provider)
-      ? provider as string
-      : "",
+    model: savedThreeDModel(
+      typeof legacy === "string" ? LEGACY_PROVIDER_MODELS[legacy] ?? "" : "",
+    ),
   };
 }
 
-export function saveThreeDProviderSettings(settings: ThreeDProviderSettings): boolean {
-  return writeObject(THREE_D_SETTINGS_KEY, settings);
+export function saveThreeDModelSettings(settings: ThreeDModelSettings): boolean {
+  return writeObject(THREE_D_MODEL_SETTINGS_KEY, { model: savedThreeDModel(settings.model) });
 }
 
 export interface ImageGenerateModelSettings { model: string }

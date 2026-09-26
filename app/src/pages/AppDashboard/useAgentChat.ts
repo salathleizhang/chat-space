@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { taskSubjectLabel } from "../../shared/lib/taskText";
 import {
   streamChat,
+  type ChatResume,
   type LlmRequestConfig,
   type OutgoingChatMessage,
   type OutgoingContentPart,
@@ -16,10 +17,11 @@ import { uploadSource } from "../../shared/lib/workflowClient";
 import {
   loadImageGenerateModelSettings,
   loadLlmSettings,
-  loadThreeDProviderSettings,
+  loadThreeDModelSettings,
 } from "../../shared/storage/apiKeys";
 import type {
   AgentActivity,
+  AgentAutoTurn,
   ChatAssetAttachment,
   ChatMessage,
 } from "../../widgets/AgentDock";
@@ -164,9 +166,14 @@ interface UseAgentChatOptions {
 
 /**
  * agent 对话的核心编排：SSE 流驱动、视觉自检回路、参考图身份识别回路——
- * 这几条线彼此通过"流结束后自动发下一条带图用户消息"串联（inspect-asset/
- * identify-asset 都是本轮不等待、流结束后再回传），因此放在同一个 hook 里
+ * 这几条线彼此通过"流结束后自动让 Agent 继续下一轮"串联（inspect-asset/
+ * identify-asset 都是本轮不等待、流结束后再续跑），因此放在同一个 hook 里
  * 维护共享的 streaming/pending 状态，而不拆成互不相关的几个 hook。
+ *
+ * 续跑不是用户发言：产物（检查图、候选参考图、后台任务结果）走请求的 `resume`
+ * 字段交给服务端注入本轮上下文，界面渲染成 Agent 侧卡片。让工作台代发一条带图
+ * 用户消息也能跑通，但那条消息会冒充用户输入、被写进会话记录，还会在之后每一轮
+ * 里被重复内联回传。
  *
  * 图片上传统一走对话（2026-07 起不再有独立的手动 uncover workflow 与
  * 「自动模式」开关）：上传后把图片和指令拼成一条带图用户消息交给 agent，
@@ -198,9 +205,13 @@ export function useAgentChat({
     asset: LibraryAsset;
     inspection: InspectionRequest | null;
   } | null>(null);
-  /** 已上传待回传的自检截图：等当前 SSE 流结束后自动作为带图用户消息发出 */
-  const pendingInspectionRef = useRef<{ assetSlug: string; path: string } | null>(null);
-  /** 待回传的候选资产参考图（identify-asset 工具事件）：同样等当前流结束后发出 */
+  /** 已上传待交回 Agent 的自检截图：等当前 SSE 流结束后自动续跑下一轮 */
+  const pendingInspectionRef = useRef<{
+    assetSlug: string;
+    assetName: string;
+    path: string;
+  } | null>(null);
+  /** 待交回的候选资产参考图（identify-asset 工具事件）：同样等当前流结束后续跑 */
   const pendingIdentifyRef = useRef<{ assetSlug: string; path: string }[] | null>(null);
   /** 后台生成完成结果：等当前流结束后作为新一轮上下文交回 Agent，驱动其继续。 */
   const pendingTaskSettlementsRef = useRef<(TaskSettlement & { ownerId: string })[]>([]);
@@ -452,7 +463,7 @@ export function useAgentChat({
     setPreview({ asset, inspection: { id } });
   };
 
-  /** 截图完成：上传落盘，等当前流结束后作为带图用户消息回传给 agent */
+  /** 截图完成：上传落盘，等当前流结束后作为 Agent 自己的自检产物继续下一轮 */
   const handleInspectionCaptured = useCallback(
     (id: string, pngBase64: string | null) => {
       const current = preview;
@@ -472,7 +483,11 @@ export function useAgentChat({
       )
         .then((path) => {
           if (!activeRef.current || epoch !== generationEpochRef.current) return;
-          pendingInspectionRef.current = { assetSlug: current.asset.assetSlug, path };
+          pendingInspectionRef.current = {
+            assetSlug: current.asset.assetSlug,
+            assetName: current.asset.name,
+            path,
+          };
           if (!streamingRef.current) flushPendingInspection();
         })
         .catch((err) => {
@@ -484,7 +499,12 @@ export function useAgentChat({
   );
 
   /**
-   * 把已落盘的检查图作为带图用户消息发出，触发 agent 的自检轮。
+   * 让 Agent 看自己刚渲染出来的四视角检查图并继续判断。
+   *
+   * 检查图走 resume 而不是一条带图用户消息：图片在协议上仍然只能借 user 角色
+   * 进模型，但服务端只把它接在本轮上下文末尾，工作台不写进会话记录，界面渲染成
+   * Agent 侧的产物卡片——这一步的发起者是 Agent，不该留下用户发过图的痕迹。
+   *
    * 返回是否真的发出了一轮——调用方据此串行化，见 onDone 的说明。
    */
   const flushPendingInspection = (): boolean => {
@@ -500,15 +520,19 @@ export function useAgentChat({
       ...message, pendingInspectionAssetSlug: undefined,
       agentStatus: { label: "Inspection images ready", status: "completed" },
     }));
-    const userMessage: ChatMessage = {
-      id: nextId(),
-      role: "user",
-      content: `[Inspection screenshots] ${pending.assetSlug}: four views (top left: ISO, top right: FRONT, bottom left: RIGHT, bottom right: TOP). Check each view.`,
-      images: [pending.path],
-    };
-    const history = toOutgoingHistory([...messagesRef.current, userMessage]);
-    pushMessage(userMessage);
-    startStream(history);
+    startStream(
+      toOutgoingHistory(messagesRef.current),
+      {
+        kind: "inspection",
+        text: `[Self-check] ${pending.assetSlug}: four views (top left: ISO, top right: FRONT, bottom left: RIGHT, bottom right: TOP). Check each view.`,
+        images: [pending.path],
+      },
+      {
+        kind: "inspection",
+        label: `Self-check · ${pending.assetName} · 4 views (ISO / Front / Right / Top)`,
+        images: [pending.path],
+      },
+    );
     return true;
   };
 
@@ -551,7 +575,7 @@ export function useAgentChat({
     if (!streamingRef.current) flushPendingIdentify();
   };
 
-  /** 把候选资产的参考图依次作为带图用户消息发出，触发 agent 的身份确认轮 */
+  /** 把候选资产的参考图依次交回 Agent，触发身份确认轮（同样不是用户消息） */
   const flushPendingIdentify = (): boolean => {
     if (streamingRef.current) return false;
     const pending = pendingIdentifyRef.current;
@@ -559,19 +583,24 @@ export function useAgentChat({
     pendingIdentifyRef.current = null;
     identifyingRef.current = false;
     syncWaiting();
-    const userMessage: ChatMessage = {
-      id: nextId(),
-      role: "user",
-      content: `[Candidate asset reference images] In order: ${pending.map((p) => p.assetSlug).join(", ")}. Confirm each identity against its reference image.`,
-      images: pending.map((p) => p.path),
-    };
-    const history = toOutgoingHistory([...messagesRef.current, userMessage]);
-    pushMessage(userMessage);
-    startStream(history);
+    const slugs = pending.map((p) => p.assetSlug).join(", ");
+    startStream(
+      toOutgoingHistory(messagesRef.current),
+      {
+        kind: "identify",
+        text: `[Identity check] Candidate asset reference images, in order: ${slugs}. Confirm each identity against its reference image.`,
+        images: pending.map((p) => p.path),
+      },
+      {
+        kind: "identify",
+        label: `Checking identities · ${slugs}`,
+        images: pending.map((p) => p.path),
+      },
+    );
     return true;
   };
 
-  /** 把已结束的后台任务合成一条系统式用户消息，重新唤醒同一会话里的 Agent。 */
+  /** 把已结束的后台任务交回同一会话的 Agent，让它继续原任务（不是用户消息）。 */
   const flushPendingTaskSettlements = (): boolean => {
     if (streamingRef.current) return false;
     const settlements = pendingTaskSettlementsRef.current;
@@ -588,22 +617,28 @@ export function useAgentChat({
     }
     syncWaiting();
     const tasks = settlements.flatMap((settlement) => settlement.tasks);
-    const userMessage: ChatMessage = {
-      id: nextId(),
-      role: "user",
-      content: [
-        "[Background tasks finished]",
-        ...tasks.map((task) =>
-          task.status === "succeeded"
-            ? `- ${taskSubjectLabel(task.subject)}: succeeded`
-            : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
-        ),
-        "Continue the original request automatically: inspect successful model outputs as needed, then deliver the result. Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",
-      ].join("\n"),
-    };
-    const history = toOutgoingHistory([...messagesRef.current, userMessage]);
-    pushMessage(userMessage);
-    startStream(history);
+    const failed = tasks.filter((task) => task.status !== "succeeded").length;
+    startStream(
+      toOutgoingHistory(messagesRef.current),
+      {
+        kind: "tasks",
+        text: [
+          "[Background tasks finished]",
+          ...tasks.map((task) =>
+            task.status === "succeeded"
+              ? `- ${taskSubjectLabel(task.subject)}: succeeded`
+              : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
+          ),
+          "Continue the original request automatically: inspect successful model outputs as needed, then deliver the result. Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",
+        ].join("\n"),
+      },
+      {
+        kind: "tasks",
+        label: failed > 0
+          ? `Background generation finished · ${failed} of ${tasks.length} failed`
+          : `Background generation finished · ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
+      },
+    );
     return true;
   };
 
@@ -644,8 +679,17 @@ export function useAgentChat({
     });
   };
 
-  /** 驱动一轮 agent 对话流（send 与自检回传共用） */
-  const startStream = (history: OutgoingChatMessage[]) => {
+  /**
+   * 驱动一轮 agent 对话流（send 与三种自动续跑共用）。
+   *
+   * `resume` 是 Agent 自发续跑时本轮要看的产物：它不进 messages，由服务端接在
+   * 上下文末尾；`autoTurn` 是同一次续跑在界面上的展示形态（Agent 侧卡片）。
+   */
+  const startStream = (
+    history: OutgoingChatMessage[],
+    resume?: ChatResume,
+    autoTurn?: AgentAutoTurn,
+  ) => {
     if (!activeRef.current) return;
     /*
       不变量：同一会话同时至多一条活跃流。这道守卫必须在这里，不能只靠按钮 disabled
@@ -668,6 +712,7 @@ export function useAgentChat({
       id: assistantId,
       role: "assistant",
       content: "",
+      ...(autoTurn ? { autoTurn } : {}),
       agentStatus: { label: "Thinking", status: "running" },
     });
     activeAssistantIdRef.current = assistantId;
@@ -890,10 +935,11 @@ export function useAgentChat({
         },
       },
       {
-        threeDProvider: loadThreeDProviderSettings().provider || undefined,
+        threeDModel: loadThreeDModelSettings().model || undefined,
         imageGenerateModel:
           loadImageGenerateModelSettings().model || undefined,
         plan: sessionPlanRef.current ?? undefined,
+        ...(resume ? { resume } : {}),
       },
       controller.signal,
     );

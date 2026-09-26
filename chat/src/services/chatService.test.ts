@@ -12,6 +12,7 @@ import {
   listPendingGenerationTargets,
   planFromToolResult,
   taskIdsFromToolResult,
+  toResumeMessage,
   toolErrorMessage,
 } from "./chatService";
 import { LocalFileStorage, writeJson } from "./assetStorage";
@@ -132,6 +133,44 @@ describe("listPendingGenerationTargets", () => {
     expect(await listPendingGenerationTargets(storage, "demo")).toMatchObject([
       { slug: "table", sourceImages: ["projects/demo/source/0-table-ref.png"] },
     ]);
+  });
+});
+
+describe("toResumeMessage", () => {
+  test("Agent 自发续跑的检查图内联成 user 部件，只活在本次请求上下文里", async () => {
+    const path = "projects/demo/assets/dog/inspections/check.png";
+    await storage.writeBytes(path, new Uint8Array([1, 2, 3]));
+    const message = await toResumeMessage(storage, {
+      kind: "inspection",
+      text: "[Self-check] dog: four views. Check each view.",
+      images: [path],
+    });
+    expect(message).toMatchObject({
+      role: "user",
+      content: [
+        { type: "text", text: expect.stringContaining("[Self-check]") },
+        {
+          type: "image",
+          image: expect.stringContaining("data:image/png;base64,"),
+        },
+      ],
+    });
+  });
+
+  test("没有图片的续跑（后台任务完成）只带指令文本", async () => {
+    const message = await toResumeMessage(storage, {
+      kind: "tasks",
+      text: "[Background tasks finished]\n- 3D 生成：椅子: succeeded",
+    });
+    expect(message).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "[Background tasks finished]\n- 3D 生成：椅子: succeeded",
+        },
+      ],
+    });
   });
 });
 

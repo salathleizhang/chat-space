@@ -4,9 +4,17 @@ import {
   ProjectPlanSchema,
   type ProjectPlan,
 } from "../dto/library";
-import type { ChatMessage, ChatStreamRequest } from "../dto/chat";
+import type {
+  AskUserQuestion,
+  ChatContentPart,
+  ChatMessage,
+  ChatResume,
+  ChatStreamRequest,
+} from "../dto/chat";
 import { createCreatorAgent } from "../mastra/agents/creator";
+import { threeDModelFor } from "../models/threeD";
 import { getProjectState } from "../mastra/tools/projectTools";
+import { askUserQuestionFromToolResult } from "../mastra/tools/askUser";
 import {
   getAssetStorage,
   readAsDataUri,
@@ -84,6 +92,8 @@ export type ChatDelta =
       taskIds?: string[];
       /** update-plan 的完整落盘结果，供当前会话立即持久化。 */
       plan?: ProjectPlan;
+      /** ask-user 的提问；发出后本轮即中止，等待用户点选或输入。 */
+      question?: AskUserQuestion;
     }
   | { type: "tool-error"; name: string; toolCallId?: string; message?: string };
 
@@ -167,8 +177,25 @@ export function planFromToolResult(
 }
 
 /**
+ * ask-user 卡片的点选结果 → 给模型看的文本。
+ * 服务端不保存提问状态，问题原文与选项文字都随消息带回来，这里只负责拼装；
+ * 不写成裸文本是为了让模型明确知道这是对某个提问的回答，而不是用户新提的指令。
+ */
+export function answerPartText(
+  part: Extract<ChatContentPart, { type: "answer" }>,
+): string {
+  const chosen =
+    part.labels.length > 0 ? part.labels.join("、") : "（未选择预设选项）";
+  return [
+    `【对提问的回答】问题：「${part.question}」（${part.questionId}）`,
+    `用户选择：${chosen}`,
+    ...(part.text ? [`用户补充：${part.text}`] : []),
+  ].join("\n");
+}
+
+/**
  * dto 消息 → Mastra 消息：图片部件按逻辑路径从资产库读出内联为 data URI
- * （OpenAI 兼容协议只认用户消息里的图，自检截图经此通道回到 agent 眼前）。
+ * （OpenAI 兼容协议只认用户消息里的图）。
  */
 export async function toAgentMessages(
   storage: AssetStorage,
@@ -215,6 +242,8 @@ export async function toAgentMessages(
     for (const part of message.content) {
       if (part.type === "text") {
         parts.push({ type: "text", text: part.text });
+      } else if (part.type === "answer") {
+        parts.push({ type: "text", text: answerPartText(part) });
       } else if (part.type === "image") {
         parts.push({ type: "image", image: await readAsDataUri(storage, part.path) });
       }
@@ -222,6 +251,24 @@ export async function toAgentMessages(
     result.push({ role: "user", content: parts });
   }
   return result;
+}
+
+/**
+ * 续跑消息 → Mastra 消息：Agent 自发续跑时本轮要看的产物（自检截图等）。
+ *
+ * 协议上只能借用 user 角色装图，但语义上它不是用户输入：调用方把它单独放在
+ * 请求的 `resume` 字段里，服务端只在本次请求把它接在历史末尾，既不会被工作台
+ * 写进会话记录，也不会在后续轮次里被重复内联回传。
+ */
+export async function toResumeMessage(
+  storage: AssetStorage,
+  resume: ChatResume,
+): Promise<AgentMessage> {
+  const parts: AgentContentPart[] = [{ type: "text", text: resume.text }];
+  for (const path of resume.images ?? []) {
+    parts.push({ type: "image", image: await readAsDataUri(storage, path) });
+  }
+  return { role: "user", content: parts };
 }
 
 /** 把对话请求中的临时配置完整注入 Agent 工具上下文。 */
@@ -240,6 +287,7 @@ export function buildChatRequestContext(
     hunyuanApiKey: request.hunyuanApiKey,
     seed3dApiKey: request.seed3dApiKey,
     volcengineApiKey: request.volcengineApiKey,
+    threeDModel: request.threeDModel,
     imageGenerateModel: request.imageGenerateModel,
   });
 }
@@ -256,14 +304,20 @@ export async function* streamChat(
   const latestUserMessage = request.messages.findLast(
     (message) => message.role === "user",
   );
+  /*
+    续跑轮没有新的用户输入：它看的是 Agent 自己的产物，不是用户附的参考图。
+    这里必须把两条请求级判断都按"没有用户消息"处理，否则上一轮用户附的参考图
+    会被重新认成"本条消息明确附带"，把 analyze-reference 重新放回工具集。
+  */
   const currentImagePaths =
-    latestUserMessage && typeof latestUserMessage.content !== "string"
+    !request.resume && latestUserMessage && typeof latestUserMessage.content !== "string"
       ? latestUserMessage.content
           .filter((part) => part.type === "image")
           .map((part) => part.path)
       : [];
   const referenceAnalysisAllowed = Boolean(
-    latestUserMessage &&
+    !request.resume &&
+      latestUserMessage &&
       currentImagePaths.length === 1 &&
       hasExplicitReferenceAnalysisIntent(latestUserMessage),
   );
@@ -274,6 +328,7 @@ export async function* streamChat(
   const state = await getProjectState(storage, request.projectSlug);
   const pendingTargets = await listPendingGenerationTargets(storage, request.projectSlug);
   const currentPlan = request.plan ?? state.plan;
+  const threeDSelection = threeDModelFor(request.threeDModel);
   const assetNamesBySlug = new Map(
     state.assets.map((asset) => [
       asset.slug,
@@ -315,11 +370,14 @@ export async function* streamChat(
         : []),
       "若用户消息带有“本条消息明确选中的资产”，它们是该条指令的主要目标，代词优先指向它们；" +
         "未带资产附件时，再根据完整资产名录和对话判断，无法唯一确定才向用户确认。",
-      ...(request.threeDProvider
+      ...(threeDSelection
         ? [
-            `用户在界面上显式选择了 3D 生成供应商偏好：${request.threeDProvider}。除非该对象明确需要` +
-              "已停用的供应商，start-3d-batch 的" +
-              " provider 参数优先使用这个偏好。",
+            `用户在界面上显式选择了 3D 生成模型：${threeDSelection.label}（模型 ID ` +
+              `${threeDSelection.model}，渠道 ${threeDSelection.provider}）。start-3d-batch 的渠道与模型 ` +
+              "ID 由服务端按这个选择钉住，你不需要在 provider 参数上另作选择；向用户说明付费计划时按这个模型报。" +
+              (threeDSelection.provider === "seed3d-direct"
+                ? ""
+                : "注意 one-shot-scene Workflow 的单物体模型固定用 Seed3D，与这个选择无关，涉及完整场景时要先说明。"),
           ]
         : []),
       ...(request.imageGenerateModel
@@ -334,6 +392,7 @@ export async function* streamChat(
   const messages = [
     projectContext,
     ...(await toAgentMessages(storage, request.messages, assetNamesBySlug)),
+    ...(request.resume ? [await toResumeMessage(storage, request.resume)] : []),
   ];
   // 当前项目与供应商 key 注入工具上下文（都只活在请求生命周期）
   const output = await agent.stream(messages, {

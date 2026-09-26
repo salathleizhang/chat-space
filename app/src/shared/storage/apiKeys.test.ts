@@ -3,8 +3,9 @@ import {
   clearLegacyApiKeys,
   loadImageGenerateModelSettings,
   loadLlmSettings,
-  loadThreeDProviderSettings,
+  loadThreeDModelSettings,
   saveLlmSettings,
+  saveThreeDModelSettings,
 } from "./apiKeys";
 
 beforeEach(() => localStorage.clear());
@@ -27,7 +28,7 @@ describe("server-only provider migration", () => {
     localStorage.setItem("gabo.threeDProviderSettings:v1", JSON.stringify({ provider: "removed-provider" }));
     localStorage.setItem("gabo.imageGenerateModelSettings:v1", JSON.stringify({ model: "nano-banana" }));
     expect(loadLlmSettings().model).toBe("");
-    expect(loadThreeDProviderSettings().provider).toBe("");
+    expect(loadThreeDModelSettings().model).toBe("");
     expect(loadImageGenerateModelSettings().model).toBe("");
   });
 
@@ -64,10 +65,39 @@ describe("server-only provider migration", () => {
     });
   });
 
-  test.each(["hyper3d-volc", "hi3d-volc"])("保留火山方舟 3D 模型偏好：%s", (provider) => {
-    localStorage.setItem("gabo.threeDProviderSettings:v1", JSON.stringify({ provider }));
-    expect(loadThreeDProviderSettings().provider).toBe(provider);
-    expect(JSON.parse(localStorage.getItem("chatspace.threeDProviderSettings:v1")!)).toEqual({ provider });
+  test.each([
+    ["seed3d-direct", "seed3d-2"],
+    ["hyper3d-volc", "hyper3d-gen2"],
+    ["hi3d-volc", "hi3d-2"],
+    ["tripo-direct", "tripo-3-1"],
+  ])("旧版渠道偏好迁移到该渠道默认模型：%s → %s", (provider, model) => {
+    localStorage.setItem("chatspace.threeDProviderSettings:v1", JSON.stringify({ provider }));
+    expect(loadThreeDModelSettings().model).toBe(model);
+  });
+
+  test("旧键（gabo 前缀）里的 3D 渠道偏好同样迁移", () => {
+    localStorage.setItem("gabo.threeDProviderSettings:v1", JSON.stringify({ provider: "hi3d-volc" }));
+    expect(loadThreeDModelSettings().model).toBe("hi3d-2");
+  });
+
+  test.each(["seed3d-2", "hyper3d-gen2", "hi3d-2", "tripo-3-1"])(
+    "保存并恢复 3D 模型选择：%s",
+    (model) => {
+      expect(saveThreeDModelSettings({ model })).toBe(true);
+      expect(loadThreeDModelSettings().model).toBe(model);
+      expect(JSON.parse(localStorage.getItem("chatspace.threeDModelSettings:v1")!)).toEqual({ model });
+    },
+  );
+
+  test("保存未注册的 3D 模型回退到 Auto", () => {
+    expect(saveThreeDModelSettings({ model: "hyper3d-direct" })).toBe(true);
+    expect(loadThreeDModelSettings().model).toBe("");
+  });
+
+  test("新键存在时不再读旧渠道偏好", () => {
+    localStorage.setItem("chatspace.threeDProviderSettings:v1", JSON.stringify({ provider: "tripo-direct" }));
+    saveThreeDModelSettings({ model: "" });
+    expect(loadThreeDModelSettings().model).toBe("");
   });
 
   test("图片模型偏好从旧键迁移到 ChatSpace", () => {

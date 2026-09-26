@@ -54,6 +54,8 @@ export const Seed3dGenParamsSchema = z.object({
   subdivisionLevel: z.enum(["high", "medium", "low"]).optional(),
   /** 产物格式，缺省用供应商默认（glb）；usd/usdz 是 Seed3D 独有档 */
   fileFormat: z.enum(["glb", "obj", "usd", "usdz"]).optional(),
+  /** 供应商模型 ID；缺省用 SEED3D_MODEL（用户在界面选定具体模型时由服务端钉住） */
+  model: z.string().min(1).optional(),
 });
 export type Seed3dGenParams = z.input<typeof Seed3dGenParamsSchema>;
 
@@ -120,7 +122,7 @@ export async function runSeed3dImageTo3d(
     index,
     slug: params.assetSlug,
     provider: "seed3d",
-    model: SEED3D_MODEL,
+    model: params.model ?? SEED3D_MODEL,
     params: {
       image,
       ...(params.subdivisionLevel ? { subdivision_level: params.subdivisionLevel } : {}),
@@ -139,6 +141,7 @@ export async function runSeed3dImageTo3d(
     const taskId = await submitSeed3dTask(
       {
         image: await readAsDataUri(storage, image),
+        model: params.model,
         subdivisionLevel: params.subdivisionLevel,
         fileFormat: params.fileFormat,
       },
@@ -210,6 +213,8 @@ export function startSeed3d3dBatch(
     seed3dApiKey: string;
     subdivisionLevel?: "high" | "medium" | "low";
     fileFormat?: "glb" | "obj" | "usd" | "usdz";
+    /** 供应商模型 ID；缺省用 SEED3D_MODEL */
+    model?: string;
   },
 ) {
   return objects.map((object) =>
@@ -224,6 +229,7 @@ export function startSeed3d3dBatch(
             image: object.sourceImages[0],
             subdivisionLevel: options.subdivisionLevel,
             fileFormat: options.fileFormat,
+            model: options.model,
           },
           { apiKey: options.seed3dApiKey },
         ),
@@ -232,7 +238,11 @@ export function startSeed3d3dBatch(
       retry: {
         kind: "3d", assetSlug: object.slug, name: object.name, intent: object.intent,
         sourceImages: object.sourceImages, provider: "seed3d-direct",
-        options: { subdivisionLevel: options.subdivisionLevel, fileFormat: options.fileFormat },
+        options: {
+          subdivisionLevel: options.subdivisionLevel,
+          fileFormat: options.fileFormat,
+          model: options.model,
+        },
       },
     }),
   );

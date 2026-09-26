@@ -6,6 +6,11 @@ import { Button, Panel, Tooltip } from "../../shared/ui";
 
 interface GeneratedMessageImagesProps {
   paths: string[];
+  /**
+   * 是否按 Agent 时间线的缩进摆放。默认缩进对齐正文；放进自带内边距的卡片时
+   * 关掉，否则会在卡片里再缩进一次。
+   */
+  inset?: boolean;
 }
 
 /**
@@ -13,7 +18,7 @@ interface GeneratedMessageImagesProps {
  * 后续生成状态、模型信息、重试/下载/选为参考图等能力都只在这里演进，
  * 不与用户上传图片的展示结构绑定。
  */
-export function GeneratedMessageImages({ paths }: GeneratedMessageImagesProps) {
+export function GeneratedMessageImages({ paths, inset = true }: GeneratedMessageImagesProps) {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -32,7 +37,9 @@ export function GeneratedMessageImages({ paths }: GeneratedMessageImagesProps) {
       <div
         data-message-images="generated"
         data-agent-generated-images
-        className="mt-2 ml-[30px] max-w-[calc(100%-30px)] overflow-x-auto"
+        className={`mt-2 overflow-x-auto ${
+          inset ? "ml-[30px] max-w-[calc(100%-30px)]" : "max-w-full"
+        }`}
       >
         <div className="flex w-max max-w-full gap-2">
           {paths.map((path) => {

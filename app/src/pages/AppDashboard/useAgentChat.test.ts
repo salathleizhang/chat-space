@@ -434,12 +434,13 @@ describe("useAgentChat 并发不变量", () => {
     await flush(20);
 
     expect(streamChat).toHaveBeenCalledTimes(2);
-    expect(streamChat.mock.calls[1]![1]).toEqual([
-      expect.objectContaining({
-        role: "user",
-        content: expect.stringContaining("[Background tasks finished]"),
-      }),
-    ]);
+    // 任务完成不是用户发言：它走 resume，不进历史
+    expect(streamChat.mock.calls[1]![4]).toMatchObject({
+      resume: {
+        kind: "tasks",
+        text: expect.stringContaining("[Background tasks finished]"),
+      },
+    });
     await h.unmount();
   });
 
@@ -467,9 +468,12 @@ describe("useAgentChat 并发不变量", () => {
     );
     await flush(20);
     expect(streamChat).toHaveBeenCalledTimes(2);
-    expect(streamChat.mock.calls[1]![1]).toEqual([
-      expect.objectContaining({ content: expect.stringContaining("[Background tasks finished]") }),
-    ]);
+    expect(streamChat.mock.calls[1]![4]).toMatchObject({
+      resume: {
+        kind: "tasks",
+        text: expect.stringContaining("[Background tasks finished]"),
+      },
+    });
     await h.unmount();
   });
 
@@ -922,10 +926,16 @@ describe("生成流程持续执行", () => {
     await act(async () => settle());
     await flush(20);
     expect(streamChat).toHaveBeenCalledTimes(1);
-    expect(streamChat.mock.calls[0]![1]).toEqual(expect.arrayContaining([
+    expect(streamChat.mock.calls[0]![1]).toEqual([
       { role: "user", content: "生成金毛模型" },
-      expect.objectContaining({ content: expect.stringContaining("[Background tasks finished]") }),
-    ]));
+      { role: "assistant", content: "正在生成" },
+    ]);
+    expect(streamChat.mock.calls[0]![4]).toMatchObject({
+      resume: {
+        kind: "tasks",
+        text: expect.stringContaining("[Background tasks finished]"),
+      },
+    });
     await h.unmount();
   });
 
@@ -985,6 +995,26 @@ describe("生成流程持续执行", () => {
       expect(streamChat).toHaveBeenCalledTimes(2);
       expect(h.result.current.streaming).toBe(true);
       expect(h.result.current.messages.some((message) => message.pendingInspectionAssetSlug)).toBe(false);
+      // 检查图是 Agent 自己的产物：走 resume 交回，不进消息历史、不冒充用户发言
+      expect(streamChat.mock.calls[1]![1]).toEqual([
+        { role: "user", content: "检查模型" },
+      ]);
+      expect(streamChat.mock.calls[1]![4]).toMatchObject({
+        resume: {
+          kind: "inspection",
+          text: expect.stringContaining("[Self-check]"),
+          images: ["projects/proj-a/assets/dog/check.png"],
+        },
+      });
+      // 界面上它是本轮 assistant 消息上的 Agent 侧卡片
+      expect(h.result.current.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        autoTurn: {
+          kind: "inspection",
+          label: expect.stringContaining("4 views"),
+          images: ["projects/proj-a/assets/dog/check.png"],
+        },
+      });
       await act(async () => handlersOf(1).onDone());
       expect(h.result.current.streaming).toBe(false);
     } finally {

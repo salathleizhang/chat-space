@@ -206,6 +206,20 @@ describe("runTripoImageTo3d", () => {
     expect(sidecar.status).toBe("succeeded");
   });
 
+  test("显式 imageModel 覆盖默认几何模型，请求体与侧写都按它提交", async () => {
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoImageTo3d(
+      storage,
+      { projectSlug: "tp", assetSlug: "crate-pinned" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1, imageModel: "v2.5-20260210" },
+    );
+
+    const createCall = calls.find((c) => c.url.endsWith("/generation/image-to-model"));
+    expect((createCall?.body as { model: string }).model).toBe("v2.5-20260210");
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.params.image_model).toBe("v2.5-20260210");
+  });
+
   test("有已标注的前后视图时 auto 使用 multiview-to-model", async () => {
     const front = `${projectSourceDir("tp")}/1-crate-front.png`;
     const back = `${projectSourceDir("tp")}/1-crate-back.png`;

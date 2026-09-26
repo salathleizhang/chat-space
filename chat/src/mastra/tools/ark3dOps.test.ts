@@ -54,6 +54,17 @@ test("火山 Hyper3D 使用 data URI、文本参数，结果保存到本地", as
   expect((await readJson(storage, result.sidecar, RequestSidecarSchema)).provider).toBe("ark-hyper3d");
 });
 
+test("显式 model 覆盖该渠道默认模型，请求体与侧写都按它提交", async () => {
+  const { bodies, fetchFn } = fakeArk();
+  const result = await runArk3dImageTo3d(
+    storage, "hyper3d-volc", "ark-models", "robot-pinned", source,
+    { apiKey: "test-volc", model: "hyper3d-gen3-test", fetchFn, pollIntervalMs: 1 },
+  );
+  expect(bodies[0]).toMatchObject({ model: "hyper3d-gen3-test" });
+  expect((await readJson(storage, result.sidecar, RequestSidecarSchema)).model)
+    .toBe("hyper3d-gen3-test");
+});
+
 test("火山 Hi3D 使用 Seedream URL，上传原图不可直接提交", async () => {
   const { bodies, fetchFn } = fakeArk();
   await expect(runArk3dImageTo3d(

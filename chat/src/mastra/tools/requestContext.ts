@@ -5,6 +5,7 @@ import {
   IMAGE_EDIT_MODEL_IDS,
   type ImageEditModel,
 } from "../../models/images";
+import { threeDModelFor, type ThreeDModelEntry } from "../../models/threeD";
 
 interface ToolContextLike {
   requestContext?: unknown;
@@ -86,6 +87,13 @@ export function currentImageGenerateModel(
     (IMAGE_EDIT_MODEL_IDS as readonly string[]).includes(value)
     ? value as ImageEditModel
     : "seedream";
+}
+
+/** AgentDock 当前 3D 模型选择；未选择（Auto）或键未注册时返回 undefined。 */
+export function currentThreeDModel(
+  context: ToolContextLike | undefined,
+): ThreeDModelEntry | undefined {
+  return threeDModelFor(readContextValue(context, "threeDModel"));
 }
 
 export function requireContextString(

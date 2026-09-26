@@ -5,6 +5,7 @@ import { CREATOR_INSTRUCTIONS } from "../prompts/creator";
 import {
   analyzeSceneTool,
   analyzeReferenceTool,
+  askUserTool,
   generateCharacterTool,
   generateReferenceImagesTool,
   generateSkyboxTool,
@@ -36,6 +37,7 @@ export function createCreatorAgent(
     description: "ChatSpace 的 3D 创作 agent：火山方舟 3D 模型、Tripo3D 与 World Labs 场景",
     instructions: CREATOR_INSTRUCTIONS,
     tools: {
+      "ask-user": askUserTool,
       "update-plan": updatePlanTool,
       "generate-reference-images": generateReferenceImagesTool,
       "generate-skybox": generateSkyboxTool,

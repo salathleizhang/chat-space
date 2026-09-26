@@ -30,6 +30,7 @@ import {
   createTripoMultiviewToModelTask,
   createTripoSegmentTask,
   createTripoV3Task,
+  DEFAULT_TRIPO_IMAGE_MODEL,
   uploadTripoFile,
   uploadTripoModelViaSts,
   waitForTripoTask,
@@ -196,8 +197,16 @@ export async function runTripoImageTo3d(
       ? "v3/generation/multiview-to-model"
       : "v3/generation/image-to-model",
     params: useMultiview
-      ? { generation_mode: "multiview", reference_views: Object.fromEntries(availableViews) }
-      : { generation_mode: "single", image: resolved.image },
+      ? {
+          generation_mode: "multiview",
+          reference_views: Object.fromEntries(availableViews),
+          image_model: callOptions.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL,
+        }
+      : {
+          generation_mode: "single",
+          image: resolved.image,
+          image_model: callOptions.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL,
+        },
     status: "queued",
     outputs: [],
     createdAt: now(),
@@ -500,7 +509,7 @@ export function startTripo3dBatch(
           sourceImages: object.sourceImages,
           ...(object.referenceViews ? { referenceViews: object.referenceViews } : {}),
           provider: "tripo-direct",
-          options: { generationMode: options.generationMode ?? "auto" },
+          options: { generationMode: options.generationMode ?? "auto", imageModel: options.imageModel },
         },
       },
     ),

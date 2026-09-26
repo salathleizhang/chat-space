@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { THREE_D_PROVIDER_IDS } from "../models/threeD";
 import { LogicalPathSchema, ReferenceImageViewsSchema, SlugSchema } from "./library";
 
 /** 生成任务契约；历史 provider ID 只用于读取旧任务元数据。 */
@@ -60,7 +61,7 @@ export const Start3dBatchRequestSchema = z
     projectSlug: SlugSchema,
     /** 省略 = 项目下全部可生成对象（正式资产 + 已确认场景对象 + 单物体生成目标） */
     assetSlugs: z.array(SlugSchema).optional(),
-    provider: z.enum(["seed3d-direct", "hyper3d-volc", "hi3d-volc", "tripo-direct"]).default("seed3d-direct"),
+    provider: z.enum(THREE_D_PROVIDER_IDS).default("seed3d-direct"),
     faceCount: z.number().int().min(500).max(2000000).optional(),
     generateType: z.enum(["Normal", "LowPoly", "Geometry"]).optional(),
     enableRigging: z.boolean().optional(),

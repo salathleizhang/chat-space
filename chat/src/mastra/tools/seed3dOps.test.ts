@@ -106,6 +106,18 @@ describe("runSeed3dImageTo3d", () => {
     });
   });
 
+  test("显式 model 覆盖默认模型，请求体与侧写都按它提交", async () => {
+    const { fetchFn, bodies } = makeFakeArkFetch();
+    const result = await runSeed3dImageTo3d(
+      storage,
+      { projectSlug: "sd", assetSlug: "pinned", model: "doubao-seed3d-3-0-test" },
+      { apiKey: "ak", fetchFn, pollIntervalMs: 1 },
+    );
+    expect(bodies[0]).toMatchObject({ model: "doubao-seed3d-3-0-test" });
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.model).toBe("doubao-seed3d-3-0-test");
+  });
+
   test("产物落盘 + 侧写记 provider/任务 id，轮询到 succeeded 才算成功", async () => {
     const { fetchFn, pollCount } = makeFakeArkFetch();
     const result = await runSeed3dImageTo3d(

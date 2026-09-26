@@ -13,9 +13,9 @@ import { requireCurrentProject } from "./requestContext";
  * 新→旧排列）匹配不上时，用这个工具代替瞎猜 slug：候选 slug 由 agent 自己
  * 从名录/对话上下文里挑（优先最近创建/最近提到的几个），工具只做存在性与
  * 「有没有参考图」校验，不做筛选决策——避免和 app 侧的解析逻辑产生两份真相。
- * 与 inspect-asset 同款异步：本轮不返回图片，图片以带图的用户消息回传
- * （OpenAI 兼容协议的 tool 消息装不了图）。但比 inspect-asset 简单：参考图
- * 已经在磁盘上，app 不需要开视口渲染，直接读库回传即可。
+ * 与 inspect-asset 同款异步：本轮不返回图片，候选参考图随后经请求的 `resume`
+ * 字段交回（OpenAI 兼容协议的 tool 消息装不了图）。但比 inspect-asset 简单：
+ * 参考图已经在磁盘上，app 不需要开视口渲染，直接读库交回即可。
  */
 
 const MAX_CANDIDATES = 5;
@@ -74,8 +74,8 @@ export const identifyAssetTool = createTool({
     `确认用户指的是哪个资产（免费）：当用户用外观/颜色/形状等描述而非名字指代资产，` +
     `导致你无法从当前资产名录（已按创建时间新→旧排列）确定 slug 时调用，不要凭猜测的 ` +
     `slug 直接执行操作。传入你怀疑的候选 assetSlug（拿不准就优先选名录里最靠前，即最近 ` +
-    `创建的几个，最多 ${MAX_CANDIDATES} 个）。注意：本轮不会返回图片——工作台会以带图的 ` +
-    `用户消息回传每个候选资产的参考图（标注 slug），收到后据此确认身份，再继续你原本要做的操作。`,
+    `创建的几个，最多 ${MAX_CANDIDATES} 个）。注意：本轮不会返回图片——工作台会把每个 ` +
+    `候选资产的参考图（标注 slug）随后直接交回给你，收到后据此确认身份，再继续你原本要做的操作。`,
   inputSchema: z.object({
     assetSlugs: z.array(SlugSchema).min(1).max(MAX_CANDIDATES),
   }),
@@ -86,7 +86,7 @@ export const identifyAssetTool = createTool({
     return {
       requested: true,
       ...result,
-      note: "已请求参考图。参考图将以带图的用户消息回传（每个候选资产一张，标注 slug），收到后据此确认身份，再继续你原本要做的操作。",
+      note: "已请求参考图。候选资产的参考图（每个候选资产一张，标注 slug）会随后直接交回，收到后据此确认身份，再继续你原本要做的操作。",
     };
   },
 });

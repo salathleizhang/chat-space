@@ -13,8 +13,20 @@ export const SessionMessageSchema = z.object({
   content: z.string(),
   pendingTaskIds: z.array(z.string().min(1)).optional(),
   pendingInspectionAssetSlug: SlugSchema.optional(),
-  /** 消息携带的库内图片（用户附件、自检截图或工具生成图），逻辑路径引用 */
+  /** 消息携带的库内图片（用户附件或工具生成图），逻辑路径引用 */
   images: z.array(LogicalPathSchema).optional(),
+  /**
+   * Agent 自发续跑时本轮拿到的产物（四视角自检图、候选参考图、后台任务结果）。
+   * 它不是用户输入，只是渲染成 Agent 侧卡片所需的展示信息；发给模型时走请求的
+   * `resume` 字段，不从这里回放。
+   */
+  autoTurn: z
+    .object({
+      kind: z.enum(["inspection", "identify", "tasks"]),
+      label: z.string().min(1),
+      images: z.array(LogicalPathSchema).optional(),
+    })
+    .optional(),
   /**
    * 用户发送这一条消息时选中的资产快照。slug 才是发给 agent 的身份；
    * name/thumbPath/kind 只为恢复会话后仍能还原附件 UI。

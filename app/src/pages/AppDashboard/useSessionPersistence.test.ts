@@ -458,3 +458,36 @@ test("后台生成与自检恢复点随会话保存，恢复时不显示执行�
   ]));
   await h.unmount();
 });
+
+test("Agent 自发续跑的产物卡片随会话保存并在恢复后仍是 Agent 侧", async () => {
+  const messages: ChatMessage[] = [
+    { id: "u1", role: "user", content: "生成金毛模型" },
+    {
+      id: "a1",
+      role: "assistant",
+      content: "四视角检查完成，比例正常。",
+      autoTurn: {
+        kind: "inspection",
+        label: "Self-check · 金毛 · 4 views (ISO / Front / Right / Top)",
+        images: ["projects/demo/assets/dog/inspections/check.png"],
+      },
+    },
+  ];
+  fetchLatestSession.mockImplementation(async () => session("auto-turn", messages));
+  const p = parent();
+  const h = await p.mount("auto-turn");
+  await flush();
+  expect(p.messages[1]?.autoTurn).toMatchObject({ kind: "inspection" });
+  await h.rerender("auto-turn");
+  await flush(PAST_DEBOUNCE);
+  expect(saveSession.mock.calls.at(-1)?.[3]).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: "a1",
+      autoTurn: expect.objectContaining({
+        kind: "inspection",
+        images: ["projects/demo/assets/dog/inspections/check.png"],
+      }),
+    }),
+  ]));
+  await h.unmount();
+});

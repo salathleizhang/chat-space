@@ -46,6 +46,17 @@ Tripo3D 支持单图与多视角模型生成。`generate-reference-images(mode=m
 
 火山影眸 Hyper3D、数美 Hi3D 的默认模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
 
+3D 生成下拉菜单选的是具体模型，不是渠道；选定的模型同时决定渠道与提交给供应商的模型 ID，`start-3d-batch` 由服务端按该选择钉住，Agent 传的 `provider` 参数会被忽略（留空 `Auto` 才由 Agent 判断）：
+
+| 菜单项 | 渠道 | 默认 Model ID | 覆盖变量 |
+| --- | --- | --- | --- |
+| Seed3D 2.0 | `seed3d-direct` | `doubao-seed3d-2-0-260328` | — |
+| Hyper3D Gen-2 | `hyper3d-volc` | `hyper3d-gen2-260112` | `VOLC_HYPER3D_MODEL` |
+| Hi3D 2.0 | `hi3d-volc` | `hitem3d-2-0-251223` | `VOLC_HI3D_MODEL` |
+| Tripo 3.1 | `tripo-direct` | `v3.1-20260211` | `TRIPO_IMAGE_MODEL` |
+
+菜单项与模型 ID 的对应关系在 `chat/src/models/threeD.ts`（选择键是稳定契约，模型 ID 才允许被 env 覆盖）。旧版浏览器里保存的渠道偏好（Seed3D / Hyper3D / Hi3D / Tripo3D）会在加载时迁移成对应渠道的默认模型。完整场景的 `one-shot-scene` Workflow 单物体模型固定用 Seed3D，不跟随这个选择。
+
 运行检查：
 
 ```bash

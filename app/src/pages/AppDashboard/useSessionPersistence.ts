@@ -32,12 +32,13 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
 }
 
 function storedMessages(messages: ChatMessage[]) {
-  return messages.map(({ id, role, content, images, assets, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug }) => ({
+  return messages.map(({ id, role, content, images, assets, autoTurn, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug }) => ({
     id,
     role,
     content,
     ...(images?.length ? { images } : {}),
     ...(assets?.length ? { assets } : {}),
+    ...(autoTurn ? { autoTurn } : {}),
     ...(activities?.length ? { activities } : {}),
     ...(agentStatus ? { agentStatus } : {}),
     ...(pendingTaskIds?.length ? { pendingTaskIds } : {}),
@@ -45,8 +46,9 @@ function storedMessages(messages: ChatMessage[]) {
   }));
 }
 
+/** 会话标题取用户真正说过的话；Agent 自发续跑的产物不是用户输入。 */
 function sessionTitle(messages: ChatMessage[]) {
-  return messages.find((message) => message.role === "user")?.content.slice(0, 40) || "New conversation";
+  return messages.find((message) => message.role === "user" && !message.autoTurn)?.content.slice(0, 40) || "New conversation";
 }
 
 /** 恢复当前项目最近会话 + 防抖落盘（决策 8：会话落盘在 chat 侧，换浏览器不丢） */

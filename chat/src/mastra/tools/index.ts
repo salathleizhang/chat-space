@@ -1,4 +1,5 @@
 /** creator agent 工具汇出口（与 agents/creator.ts 挂载清单一一对应） */
+export { askUserTool } from "./askUser";
 export { repairAssetsTool } from "./assetRepair";
 export { buildCadModelTool, getCadSourceTool } from "./cadOps";
 export { unwrapUvTool } from "./hunyuanOps";

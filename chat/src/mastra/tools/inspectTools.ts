@@ -10,9 +10,10 @@ import { requireCurrentProject } from "./requestContext";
 /**
  * 视觉自检能力（免费，CADAM 自检循环的 ChatSpace 变体）：agent 服务端没有渲染能力，
  * 截图由 app/ 视口完成——inspect-asset 只发信号（经 SSE tool 事件带 args 驱动
- * app 开小窗四视角截图），检查图经 POST inspection 端点落盘后，由 app 以
- * **带图用户消息**回传（OpenAI 兼容协议的 tool 消息装不了图，这是唯一通道）。
- * 工具不等待回传：本轮结束，自检发生在带图消息触发的下一轮。
+ * app 开小窗四视角截图），检查图经 POST inspection 端点落盘后，由 app 以请求的
+ * `resume` 字段交回，服务端把它接在下一轮上下文末尾（OpenAI 兼容协议的 tool
+ * 消息装不了图，这是唯一通道）。它不属于会话历史，也不在界面上冒充用户发言。
+ * 工具不等待交回：本轮结束，自检发生在续跑触发的下一轮。
  */
 
 const INSPECTION_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -47,7 +48,7 @@ export async function saveInspectionSheet(
 export const inspectAssetTool = createTool({
   id: "inspect-asset",
   description:
-    "请求工作台对资产的最新模型做四视角截图（免费）：小窗会自动打开并从 ISO/前/右/顶四个视角截图合成一张检查图，以带图的用户消息回传给你。生成/修改模型或贴图完成后应调用此工具自检。注意：本轮不会返回图片——收到检查图消息后，逐视角对照生成意图检查（缺件、比例失调、部件断开、贴图错位都算不合格），不合格就修正后重新生成并再次自检",
+    "请求工作台对资产的最新模型做四视角截图（免费）：小窗会自动打开并从 ISO/前/右/顶四个视角截图合成一张检查图，随后直接交回给你。生成/修改模型或贴图完成后应调用此工具自检。注意：本轮不会返回图片——收到 [Self-check] 检查图后，逐视角对照生成意图检查（缺件、比例失调、部件断开、贴图错位都算不合格），不合格就修正后重新生成并再次自检",
   inputSchema: z.object({ assetSlug: SlugSchema }),
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
@@ -57,7 +58,7 @@ export const inspectAssetTool = createTool({
     return {
       requested: true,
       modelPath,
-      note: "已请求工作台截图。检查图将以带图的用户消息回传（四视角 2×2：ISO/前/右/顶），请收到后逐视角自检。",
+      note: "已请求工作台截图。四视角 2×2 检查图（ISO/前/右/顶）会随后直接交回，请收到后逐视角自检。",
     };
   },
 });

@@ -40,11 +40,12 @@ import {
   loadLlmSettings,
   saveLlmSettings,
   saveImageGenerateModelSettings,
-  THREE_D_PROVIDER_PRESETS,
-  loadThreeDProviderSettings,
-  saveThreeDProviderSettings,
+  THREE_D_MODEL_PRESETS,
+  loadThreeDModelSettings,
+  saveThreeDModelSettings,
 } from "../../shared/storage/apiKeys";
 import { PlanCard } from "./PlanCard";
+import { AgentAutoTurnCard } from "./AgentAutoTurnCard";
 import { GeneratedMessageImages } from "./GeneratedMessageImages";
 import { LiquidMetalSendButton } from "./LiquidMetalSendButton";
 import { UploadedMessageImages } from "./UploadedMessageImages";
@@ -57,14 +58,26 @@ export interface ChatMessage {
   pendingTaskIds?: string[];
   /** 等待工作台截图的资产；恢复后继续自检。 */
   pendingInspectionAssetSlug?: string;
-  /** 消息携带的库内图片（用户附件、自检截图或工具生成图），逻辑路径 */
+  /** 消息携带的库内图片（用户附件或工具生成图），逻辑路径 */
   images?: string[];
+  /**
+   * 这一轮是 Agent 自己续跑（自检、身份确认、后台任务完成）时本轮拿到的产物。
+   * 它不是用户输入：渲染成 Agent 侧卡片，而不是用户气泡。
+   */
+  autoTurn?: AgentAutoTurn;
   /** 用户发送这条消息时选中的资产快照；切换当前选择后历史指向不漂移 */
   assets?: ChatAssetAttachment[];
   /** 这一轮 assistant 回复内发生的工具轨迹，按调用顺序排列。 */
   activities?: AgentMessageActivity[];
   /** 这一轮对话顶部唯一的 Agent 状态；步骤节点本身只使用圆点。 */
   agentStatus?: AgentMessageStatus;
+}
+
+/** Agent 自发续跑的本轮产物；图片路径来自资产库，落盘后随会话保存。 */
+export interface AgentAutoTurn {
+  kind: "inspection" | "identify" | "tasks";
+  label: string;
+  images?: string[];
 }
 
 export interface AgentMessageStatus {
@@ -508,6 +521,9 @@ const MessageHistory = memo(function MessageHistory({
         {turnStatus && (
           <div className="mb-2">{renderTurnStatus(turnStatus)}</div>
         )}
+        {message.autoTurn && (
+          <AgentAutoTurnCard attachment={message.autoTurn} />
+        )}
         {timelineRows.length > 0 && (
           <div
             data-agent-tool-timeline
@@ -660,8 +676,8 @@ export function AgentDock({
   const [envLlmProviders, setEnvLlmProviders] = useState<LlmProviderId[] | null>(
     null,
   );
-  const [threeDProvider, setThreeDProvider] = useState(
-    () => loadThreeDProviderSettings().provider,
+  const [threeDModel, setThreeDModel] = useState(
+    () => loadThreeDModelSettings().model,
   );
   const [imageGenerateModel, setImageGenerateModel] = useState(
     () => loadImageGenerateModelSettings().model,
@@ -736,9 +752,9 @@ export function AgentDock({
     });
   };
 
-  const handleThreeDProviderChange = (value: string) => {
-    setThreeDProvider(value);
-    saveThreeDProviderSettings({ provider: value });
+  const handleThreeDModelChange = (value: string) => {
+    setThreeDModel(value);
+    saveThreeDModelSettings({ model: value });
   };
 
   const handleImageGenerateModelChange = (value: string) => {
@@ -1018,10 +1034,10 @@ export function AgentDock({
                 aria-label="Choose chat model"
               />
               <Select
-                value={threeDProvider}
-                options={THREE_D_PROVIDER_PRESETS}
-                onChange={handleThreeDProviderChange}
-                aria-label="Choose 3D generation provider"
+                value={threeDModel}
+                options={THREE_D_MODEL_PRESETS}
+                onChange={handleThreeDModelChange}
+                aria-label="Choose 3D generation model"
               />
               <Select
                 value={imageGenerateModel}

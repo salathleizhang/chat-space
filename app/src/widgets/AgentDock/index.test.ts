@@ -541,6 +541,40 @@ describe("AgentDock 状态行", () => {
     expect(document.querySelector("[data-generated-image-preview]")).toBeNull();
   });
 
+  test("Agent 自发续跑的检查图渲染成 Agent 侧卡片，不是用户气泡", async () => {
+    const path = "projects/demo/assets/dog/inspections/check.png";
+    const { container } = await render({
+      messages: [
+        {
+          id: "a1",
+          role: "assistant",
+          content: "四视角检查完成，比例正常。",
+          autoTurn: {
+            kind: "inspection",
+            label: "Self-check · 金毛 · 4 views (ISO / Front / Right / Top)",
+            images: [path],
+          },
+        },
+      ],
+    });
+    await act(async () =>
+      (container.querySelector(
+        'button[aria-label="Expand agent"]',
+      ) as HTMLButtonElement).click(),
+    );
+
+    const card = container.querySelector("[data-agent-auto-turn='inspection']")!;
+    expect(card.textContent).toContain("Self-check · 金毛 · 4 views");
+    const gallery = card.querySelector("[data-agent-generated-images]")!;
+    expect(gallery.querySelector("img")!.getAttribute("src")).toContain(
+      `/api/library/${path}`,
+    );
+    // 卡片自带内边距，缩略图不再按时间线再缩进一次
+    expect(gallery.classList.contains("ml-[30px]")).toBe(false);
+    // 用户气泡是右对齐的 bg-fill 容器；这一步不该出现任何一个
+    expect(container.querySelector(".self-end")).toBeNull();
+  });
+
   test("生成图使用输入框附件缩略图，用户历史图片仍保留大图样式", async () => {
     const { container } = await render({
       messages: [
@@ -885,7 +919,7 @@ describe("AgentDock 图片生成模型选择", () => {
     const { container } = await render();
     for (const label of [
       "Choose chat model",
-      "Choose 3D generation provider",
+      "Choose 3D generation model",
       "Choose image generation model",
     ]) {
       const select = container.querySelector(`button[aria-label="${label}"]`);
@@ -913,5 +947,40 @@ describe("AgentDock 图片生成模型选择", () => {
     expect(JSON.parse(localStorage.getItem("chatspace.imageGenerateModelSettings:v1")!)).toEqual({
       model: "seedream-5-pro",
     });
+  });
+});
+
+describe("AgentDock 3D 模型选择", () => {
+  test("菜单列出具体模型而不是渠道名，并持久化选择", async () => {
+    const { container } = await render();
+    const threeDSelect = container.querySelector(
+      'button[aria-label="Choose 3D generation model"]',
+    ) as HTMLButtonElement;
+
+    await act(async () => threeDSelect.click());
+    for (const label of ["Seed3D 2.0", "Hyper3D Gen-2", "Hi3D 2.0", "Tripo 3.1"]) {
+      expect(document.body.textContent).toContain(label);
+    }
+    const hi3d = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Hi3D 2.0"),
+    ) as HTMLButtonElement;
+    await act(async () => hi3d.click());
+
+    expect(threeDSelect.textContent).toContain("Hi3D 2.0");
+    expect(JSON.parse(localStorage.getItem("chatspace.threeDModelSettings:v1")!)).toEqual({
+      model: "hi3d-2",
+    });
+  });
+
+  test("旧版渠道偏好按该渠道默认模型回显", async () => {
+    localStorage.setItem(
+      "chatspace.threeDProviderSettings:v1",
+      JSON.stringify({ provider: "tripo-direct" }),
+    );
+    const { container } = await render();
+    const threeDSelect = container.querySelector(
+      'button[aria-label="Choose 3D generation model"]',
+    ) as HTMLButtonElement;
+    expect(threeDSelect.textContent).toContain("Tripo 3.1");
   });
 });

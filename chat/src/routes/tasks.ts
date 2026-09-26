@@ -90,6 +90,8 @@ taskRoutes.post("/:taskId/retry", async (c) => {
     ...(retry.referenceViews ? { referenceViews: retry.referenceViews } : {}),
   };
   const options = retry.options;
+  /** 重试必须复用原任务的模型 ID，否则用户选定的模型会被渠道默认值悄悄换掉。 */
+  const pinnedModel = typeof options.model === "string" && options.model ? options.model : undefined;
   const provider = retry.provider;
   if (provider !== "tripo-direct" && provider !== "seed3d-direct" &&
       provider !== "hyper3d-volc" && provider !== "hi3d-volc") {
@@ -99,7 +101,7 @@ taskRoutes.post("/:taskId/retry", async (c) => {
     provider === "tripo-direct"
       ? startTripo3dBatch(req.projectSlug, [object], {
           tripo3dApiKey: req.tripo3dApiKey ?? "",
-          imageModel: config.tripo.imageModel,
+          imageModel: pinnedModel ?? config.tripo.imageModel,
           generationMode:
             options.generationMode === "single" || options.generationMode === "multiview"
               ? options.generationMode
@@ -111,9 +113,11 @@ taskRoutes.post("/:taskId/retry", async (c) => {
           faceCount: typeof options.faceCount === "number" ? options.faceCount : undefined,
           taPose: options.taPose === true,
           resolution: options.resolution === "1536pro" ? "1536pro" : "1536",
+          model: pinnedModel,
         })
         : startSeed3d3dBatch(req.projectSlug, [object], {
                 seed3dApiKey: req.seed3dApiKey ?? req.volcengineApiKey ?? "",
+                model: pinnedModel,
                 subdivisionLevel:
                   options.subdivisionLevel === "high" ||
                   options.subdivisionLevel === "medium" ||

@@ -44,15 +44,30 @@ interface StreamHandlers {
   onDone: () => void;
 }
 
-/** 浏览器只发送生成偏好；供应商凭证由本机服务注入。 */
-export interface ProviderKeys {
-  /** 不是凭证，是 AgentDock 第二个下拉的 3D 生成供应商偏好（留空 = 交给 agent 判断），
-      字段名与 dto/chat.ts 的 threeDProvider 对齐 */
-  threeDProvider?: string;
+/**
+ * Agent 自发续跑：客户端协作工具（四视角自检、参考图身份确认、后台任务完成）
+ * 拿到的产物。它由服务端注入本轮上下文，**不进入 messages**——因此不会在会话
+ * 记录里冒充一条用户消息，也不会在后续每一轮被重复内联回传。
+ */
+export interface ChatResume {
+  kind: "inspection" | "identify" | "tasks";
+  /** 面向模型的续跑指令；不是用户说的话 */
+  text: string;
+  /** 库内逻辑路径；服务端内联为图片部件 */
+  images?: string[];
+}
+
+/** 本轮请求的附加字段：生成偏好、会话计划快照、Agent 自发续跑的产物。 */
+export interface ChatTurnOptions {
+  /** 不是凭证，是 AgentDock 第二个下拉选中的具体 3D 模型（留空 = 交给 agent 判断），
+      字段名与 dto/chat.ts 的 threeDModel 对齐 */
+  threeDModel?: string;
   /** 不是凭证，是 AgentDock 图片生成模型偏好；省略 = 交给 agent 自动选择 */
   imageGenerateModel?: string;
   /** 当前会话的计划快照；服务端把它注入下一轮上下文。 */
   plan?: ProjectPlan;
+  /** Agent 自发续跑的本轮上下文；与 messages 并列，不进历史。 */
+  resume?: ChatResume;
 }
 
 /**
@@ -69,7 +84,7 @@ export async function streamChat(
   messages: OutgoingChatMessage[],
   llm: LlmRequestConfig,
   handlers: StreamHandlers,
-  providerKeys?: ProviderKeys,
+  options?: ChatTurnOptions,
   signal?: AbortSignal,
 ): Promise<void> {
   try {
@@ -80,7 +95,7 @@ export async function streamChat(
         projectSlug,
         messages,
         llm,
-        ...providerKeys,
+        ...options,
       }),
       signal,
     });

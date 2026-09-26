@@ -27,14 +27,25 @@ describe("ChatStreamRequestSchema 图片生成模型偏好", () => {
     ).toThrow();
   });
 
-  test("拒绝旧版图片与 3D 供应商偏好", () => {
+  test("拒绝旧版图片偏好，旧版 3D 渠道字段被丢弃而不是当成选择", () => {
     expect(() => ChatStreamRequestSchema.parse({ ...baseRequest, imageGenerateModel: "nano-banana" })).toThrow();
-    expect(() => ChatStreamRequestSchema.parse({ ...baseRequest, threeDProvider: "hyper3d-direct" })).toThrow();
+    const parsed = ChatStreamRequestSchema.parse({ ...baseRequest, threeDProvider: "hyper3d-volc" });
+    expect(parsed.threeDModel).toBeUndefined();
+    expect(parsed).not.toHaveProperty("threeDProvider");
   });
 
-  test.each(["hyper3d-volc", "hi3d-volc"])("接受火山方舟 3D 模型：%s", (threeDProvider) => {
-    expect(ChatStreamRequestSchema.parse({ ...baseRequest, threeDProvider }).threeDProvider)
-      .toBe(threeDProvider);
+  test.each(["seed3d-2", "hyper3d-gen2", "hi3d-2", "tripo-3-1"])(
+    "接受已注册的 3D 模型：%s",
+    (threeDModel) => {
+      expect(ChatStreamRequestSchema.parse({ ...baseRequest, threeDModel }).threeDModel)
+        .toBe(threeDModel);
+    },
+  );
+
+  test("拒绝未注册的 3D 模型选择键", () => {
+    expect(() =>
+      ChatStreamRequestSchema.parse({ ...baseRequest, threeDModel: "hyper3d-direct" }),
+    ).toThrow();
   });
 });
 
@@ -87,5 +98,34 @@ describe("ChatStreamRequestSchema 会话计划", () => {
       },
     });
     expect(parsed.plan?.revision).toBe(1);
+  });
+});
+
+describe("ChatStreamRequestSchema 续跑上下文", () => {
+  test("接受 Agent 自发续跑的指令与库内图片", () => {
+    const parsed = ChatStreamRequestSchema.parse({
+      ...baseRequest,
+      resume: {
+        kind: "inspection",
+        text: "[Self-check] dog: four views.",
+        images: ["projects/demo/assets/dog/inspections/check.png"],
+      },
+    });
+    expect(parsed.resume).toMatchObject({ kind: "inspection" });
+  });
+
+  test("拒绝逃逸资产库的续跑图片与未知续跑类型", () => {
+    expect(() =>
+      ChatStreamRequestSchema.parse({
+        ...baseRequest,
+        resume: { kind: "inspection", text: "看这张图", images: ["../../secret.png"] },
+      }),
+    ).toThrow();
+    expect(() =>
+      ChatStreamRequestSchema.parse({
+        ...baseRequest,
+        resume: { kind: "unknown", text: "继续" },
+      }),
+    ).toThrow();
   });
 });

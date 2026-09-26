@@ -18,6 +18,8 @@ export interface Ark3dGenOptions {
   faceCount?: number;
   taPose?: boolean;
   resolution?: "1536" | "1536pro";
+  /** 供应商模型 ID；缺省用该渠道在 config 里配置的模型 */
+  model?: string;
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
 }
@@ -66,7 +68,8 @@ export async function runArk3dImageTo3d(
   const dir = assetDir(projectSlug, assetSlug);
   const index = nextIndex(await storage.list(dir));
   const sidecarPath = `${dir}/${formatRequestSidecarName(index, assetSlug)}`;
-  const model = provider === "hi3d-volc" ? config.ark3d.hi3dModel : config.ark3d.hyper3dModel;
+  const model = options.model ??
+    (provider === "hi3d-volc" ? config.ark3d.hi3dModel : config.ark3d.hyper3dModel);
   const command = provider === "hi3d-volc"
     ? hi3dCommand(options)
     : hyper3dCommand(options);
@@ -155,6 +158,7 @@ export function startArk3dBatch(
           faceCount: options.faceCount,
           taPose: options.taPose,
           resolution: options.resolution,
+          model: options.model,
         },
       },
     }),
