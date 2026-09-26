@@ -28,6 +28,8 @@ World Labs 单步任务有两种模式：`direct` 直接用最新源图和可选
 
 Tripo3D 支持单图与多视角模型生成。`generate-reference-images(mode=multiview)` 可把目标已有的一张干净参考图扩展为前、左、后、右四视图并绑定视角元数据；之后 `start-3d-batch(provider=tripo-direct)` 默认自动使用多视角接口，也可用 `tripoGenerationMode=single|multiview` 显式选择。
 
+动作生成工具 `generate-animation` 当前已禁用。
+
 需要从整张图片生成完整场景时，Creator 先用 `analyze-reference` 提取对象并等待确认；获得对象选择和整条付费计划的同意后，把该次分析的 `runId` 与可选的 `selectedSlugs` 交给注册到 Agent 的 `one-shot-scene` Mastra Workflow。Workflow 首步保存确认结果，再依次完成逐对象参考图、干净底板、World Labs 空环境和 Seed3D 物体模型。后台任务会等全部模型落盘才标记成功；普通单步生成仍使用各自的工具。服务中断后正在运行的总任务会标记失败；再次运行会复用同一确认结果、已成功的请求侧写和产物完成剩余阶段，进行中的供应商请求仍可用 `resume-generation` 恢复。
 
 对话模型下拉菜单提供四个模型：GLM 5.3 Flash、DeepSeek V4.1 Flash、Doubao-Seed-Evolving、Doubao-Seed-2.1-pro，共用本机的 `VOLC_KEY` 和火山方舟地址 `https://ark.cn-beijing.volces.com/api/v3`。自动选择默认使用 GLM 5.3 Flash；旧版 `glm-5.3` 选择会迁移到 Flash，已移除的 Seed 2.0 Lite 选择会回退到默认模型。可用 `VOLC_LLM_BASE_URL` 覆盖地址，用 `VOLC_LLM_MODEL` 单独覆盖自动选择的默认模型。四个选项的实际模型 ID 或专属接入点 ID 可分别覆盖：

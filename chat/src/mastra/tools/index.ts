@@ -4,11 +4,7 @@ export { buildCadModelTool, getCadSourceTool } from "./cadOps";
 export { generateCharacterTool, unwrapUvTool } from "./hunyuanOps";
 export { identifyAssetTool } from "./identifyTools";
 export { inspectAssetTool } from "./inspectTools";
-export {
-  generateAnimationTool,
-  retopologizeTool,
-  rigModelTool,
-} from "./meshOps";
+export { retopologizeTool, rigModelTool } from "./meshOps";
 export { generateTextureTool } from "./textureOps";
 export { analyzeReferenceTool } from "./referenceAnalysis";
 export { updatePlanTool } from "./planTools";

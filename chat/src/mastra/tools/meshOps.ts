@@ -8,14 +8,13 @@ import {
   requireCurrentProject,
 } from "./requestContext";
 import {
-  runTripoAnimationRetarget,
   runTripoRetopology,
   runTripoRig,
 } from "./tripoOps";
 
 /** 模型后处理统一使用 Tripo v3；UV 展开是唯一保留的混元能力。 */
 
-export type MeshOperation = "retopo" | "rig" | "animation";
+export type MeshOperation = "retopo" | "rig";
 
 function startTripoTask(
   context: unknown,
@@ -89,34 +88,5 @@ export const rigModelTool = createTool({
         },
         { apiKey },
       ),
-    ),
-});
-
-export const generateAnimationTool = createTool({
-  id: "generate-animation",
-  description:
-    "通过 Tripo v3 把官方 preset:* 动作重定向到资产最近一次 Tripo 绑骨任务（付费操作——启动前须经用户同意）。例如 preset:walk、preset:biped:wave_goodbye_01。任务化返回",
-  inputSchema: z.object({
-    assetSlug: SlugSchema,
-    animationPreset: z.string().startsWith("preset:"),
-    /** 原地播放，不产生位移 */
-    animateInPlace: z.boolean().optional(),
-  }),
-  execute: async (input, context) =>
-    startTripoTask(
-      context,
-      "animation",
-      `动作生成：${input.assetSlug}#${input.animationPreset}`,
-      (projectSlug, apiKey) =>
-        runTripoAnimationRetarget(
-          getAssetStorage(),
-          {
-            projectSlug,
-            assetSlug: input.assetSlug,
-            animation: input.animationPreset,
-            animateInPlace: input.animateInPlace,
-          },
-          { apiKey },
-        ),
     ),
 });
