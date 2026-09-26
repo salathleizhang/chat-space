@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { LibraryAsset } from "../../shared/lib/libraryApi";
+import type { LibraryAsset, PlanStep, ProjectPlan } from "../../shared/lib/libraryApi";
 import {
   AgentDock,
   type AgentActivity,
@@ -57,7 +57,26 @@ async function render(props: Partial<Parameters<typeof AgentDock>[0]> = {}) {
       } as never),
     );
   });
-  return { container, onSend, onStop };
+  return { container, onSend, onStop, root };
+}
+
+/** 同一个 root 上换 props 重渲染：用来模拟 SSE 推进计划状态时的连续更新。 */
+async function rerender(
+  root: Root,
+  props: Partial<Parameters<typeof AgentDock>[0]> = {},
+) {
+  await act(async () => {
+    root.render(
+      createElement(AgentDock, {
+        messages: [],
+        activity: IDLE,
+        streaming: false,
+        onSend: mock(() => {}),
+        onStop: mock(() => {}),
+        ...props,
+      } as never),
+    );
+  });
 }
 
 const inputOf = (c: HTMLElement) => c.querySelector("input[type='text'], input:not([type])") as HTMLInputElement;
@@ -443,30 +462,55 @@ describe("AgentDock 会话菜单", () => {
 });
 
 describe("AgentDock 会话计划", () => {
-  test("计划显示在消息末尾，使用标准面板、居中阅读宽度和分层步骤排版", async () => {
-    const { container } = await render({
-      messages: [
-        { id: "u1", role: "user", content: "重新分析场景图片" },
-        { id: "a1", role: "assistant", content: "我先列出处理步骤。" },
-      ],
-      plan: {
-        schemaVersion: 1,
-        title: "重新分析场景图片",
-        steps: [
-          { id: "step-1", content: "分析第一张图片", status: "in_progress" },
-          { id: "step-2", content: "汇总结果", status: "pending" },
-        ],
-        updatedAt: "2026-08-01T06:00:00.000Z",
-      },
-    });
+  const MESSAGES = [
+    { id: "u1", role: "user" as const, content: "重新分析场景图片" },
+    { id: "a1", role: "assistant" as const, content: "我先列出处理步骤。" },
+  ];
+  const planWith = (
+    steps: PlanStep[],
+    extra: Partial<ProjectPlan> = {},
+  ): ProjectPlan => ({
+    schemaVersion: 1,
+    revision: 1,
+    title: "重新分析场景图片",
+    steps,
+    updatedAt: "2026-08-01T06:00:00.000Z",
+    ...extra,
+  });
+  const RUNNING = planWith([
+    { id: "step-1", content: "分析第一张图片", status: "in_progress" },
+    { id: "step-2", content: "汇总结果", status: "pending" },
+  ]);
+  const NOT_STARTED = planWith([
+    { id: "step-1", content: "分析第一张图片", status: "pending" },
+    { id: "step-2", content: "汇总结果", status: "pending" },
+  ]);
+
+  async function renderPlan(plan: ProjectPlan) {
+    const rendered = await render({ messages: MESSAGES, plan });
     await act(async () =>
-      (container.querySelector(
+      (rendered.container.querySelector(
         'button[aria-label="Expand agent"]',
       ) as HTMLButtonElement).click(),
     );
+    return rendered;
+  }
 
+  const cardOf = (container: HTMLElement) =>
+    container.querySelector("#agent-dock-history [data-plan-card]") as HTMLElement;
+  const headerOf = (container: HTMLElement) =>
+    cardOf(container).querySelector("[data-plan-card-header]") as HTMLButtonElement;
+  /** 折叠的行仍留在 DOM 里（收高度的动画要有东西可收），按未折叠的计数。 */
+  const visibleSteps = (container: HTMLElement) =>
+    [...cardOf(container).querySelectorAll<HTMLElement>("[data-plan-step]")].filter(
+      (step) => !step.dataset.planStepFolded,
+    );
+  const stepCount = (container: HTMLElement) => visibleSteps(container).length;
+
+  test("计划开始执行后默认折叠：只留当前这一步，面板仍是标准居中卡片", async () => {
+    const { container } = await renderPlan(RUNNING);
     const history = container.querySelector("#agent-dock-history")!;
-    const card = history.querySelector("[data-plan-card]")!;
+    const card = cardOf(container);
     const lastMessage = history.querySelector("[data-agent-message]")!;
 
     expect(card).not.toBeNull();
@@ -479,12 +523,101 @@ describe("AgentDock 会话计划", () => {
     expect(
       card.querySelector("[data-plan-card-header]")?.classList.contains("justify-between"),
     ).toBe(true);
-    expect(
-      card.querySelector('[data-plan-step="in_progress"]')?.classList.contains("grid"),
-    ).toBe(true);
+    expect(card.dataset.planCardState).toBe("collapsed");
+    expect(headerOf(container).getAttribute("aria-expanded")).toBe("false");
+    // 折叠态只剩当前进行中的那一步占高度，未开始的步骤收成 0fr。
+    expect(stepCount(container)).toBe(1);
+    const step = card.querySelector<HTMLElement>('[data-plan-step="in_progress"]')!;
+    expect(step.classList.contains("grid")).toBe(true);
+    expect(step.textContent).toContain("分析第一张图片");
+    expect(step.dataset.planStepFolded).toBeUndefined();
+    const pending = card.querySelector<HTMLElement>('[data-plan-step="pending"]')!;
+    expect(pending.dataset.planStepFolded).toBe("true");
+    expect(pending.classList.contains("grid-rows-[0fr]")).toBe(true);
+    expect(pending.getAttribute("aria-hidden")).toBe("true");
+    // 收放靠 grid-template-rows + opacity 过渡，不是瞬间切换。
+    expect(step.className).toContain("transition-[grid-template-rows,opacity]");
+    expect(step.classList.contains("grid-rows-[1fr]")).toBe(true);
     expect(
       lastMessage.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
+  });
+
+  test("点击计划标题栏展开全部步骤，再点收起", async () => {
+    const { container } = await renderPlan(RUNNING);
+    expect(stepCount(container)).toBe(1);
+
+    await act(async () => headerOf(container).click());
+    expect(cardOf(container).dataset.planCardState).toBe("expanded");
+    expect(headerOf(container).getAttribute("aria-expanded")).toBe("true");
+    expect(stepCount(container)).toBe(2);
+
+    await act(async () => headerOf(container).click());
+    expect(cardOf(container).dataset.planCardState).toBe("collapsed");
+    expect(stepCount(container)).toBe(1);
+  });
+
+  test("计划还没开始执行时完整铺开，点击才折叠", async () => {
+    const { container } = await renderPlan(NOT_STARTED);
+
+    expect(cardOf(container).dataset.planCardState).toBe("expanded");
+    expect(stepCount(container)).toBe(2);
+
+    await act(async () => headerOf(container).click());
+    expect(cardOf(container).dataset.planCardState).toBe("collapsed");
+    expect(stepCount(container)).toBe(1);
+    expect(visibleSteps(container)[0]!.textContent).toContain("分析第一张图片");
+  });
+
+  test("用户展开后，同一计划的后续进度更新不会再次自动折叠", async () => {
+    const { container, root } = await renderPlan(RUNNING);
+    await act(async () => headerOf(container).click());
+    expect(stepCount(container)).toBe(2);
+
+    await rerender(root, {
+      messages: MESSAGES,
+      plan: planWith([
+        { id: "step-1", content: "分析第一张图片", status: "completed" },
+        { id: "step-2", content: "汇总结果", status: "in_progress" },
+      ]),
+    });
+
+    expect(cardOf(container).dataset.planCardState).toBe("expanded");
+    expect(stepCount(container)).toBe(2);
+  });
+
+  test("重新规划（revision 变化）后回到默认折叠", async () => {
+    const { container, root } = await renderPlan(RUNNING);
+    await act(async () => headerOf(container).click());
+    expect(stepCount(container)).toBe(2);
+
+    await rerender(root, {
+      messages: MESSAGES,
+      plan: planWith(
+        [
+          { id: "step-9", content: "改用另一种分析路线", status: "in_progress" },
+          { id: "step-10", content: "重新汇总", status: "pending" },
+        ],
+        { revision: 2, revisionReason: "原路线不可行" },
+      ),
+    });
+
+    expect(cardOf(container).dataset.planCardState).toBe("collapsed");
+    expect(stepCount(container)).toBe(1);
+    expect(visibleSteps(container)[0]!.textContent).toContain("改用另一种分析路线");
+  });
+
+  test("全部完成且折叠时，展示最后推进过的一步而不是回到第一步", async () => {
+    const { container } = await renderPlan(
+      planWith([
+        { id: "step-1", content: "分析第一张图片", status: "completed" },
+        { id: "step-2", content: "汇总结果", status: "completed" },
+      ]),
+    );
+
+    expect(cardOf(container).dataset.planCardState).toBe("collapsed");
+    expect(stepCount(container)).toBe(1);
+    expect(visibleSteps(container)[0]!.textContent).toContain("汇总结果");
   });
 });
 

@@ -6,6 +6,7 @@ import { PlusIcon } from "@phosphor-icons/react/Plus";
 import { XIcon } from "@phosphor-icons/react/X";
 import {
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -46,6 +47,7 @@ import {
   saveThreeDModelSettings,
 } from "../../shared/storage/apiKeys";
 import { PlanCard } from "./PlanCard";
+import { followScrollToBottom } from "./followScroll";
 import { AgentAutoTurnCard } from "./AgentAutoTurnCard";
 import { AgentMarkdown } from "./AgentMarkdown";
 import { AskUserCard } from "./AskUserCard";
@@ -162,6 +164,9 @@ const SESSION_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
   hour: "2-digit",
   minute: "2-digit",
 });
+
+/** 计划卡展开动画 300ms；跟帧到内容高度稳定为止，这个值只是防止死循环的上限。 */
+const PLAN_EXPAND_FOLLOW_MAX_MS = 1500;
 
 function SessionMenu({
   messages,
@@ -416,11 +421,57 @@ const MessageHistory = memo(function MessageHistory({
   onAnswerQuestion?: (ownerMessageId: string, answer: AskUserAnswer) => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  /** 用户是不是正贴着底部看；自己往上翻过就不算，后续长高不再拽他回去。 */
+  const pinnedRef = useRef(true);
+
+  const handleScroll = () => {
+    const node = scrollRef.current;
+    if (!node) return;
+    pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+  };
 
   useEffect(() => {
     if (!expanded) return;
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [expanded, messages, activity]);
+
+  /**
+   * 历史里的内容会长高：计划卡展开、图片解码完成、工具轨迹补行。容器本身是定高的，
+   * 不跟就会把末尾那截切在底边外——计划卡正好长在历史末尾，展开后必须能看全。
+   * 只跟随「本来就贴底」的情况；用户翻上去读旧消息时不动他的滚动位置。
+   */
+  useEffect(() => {
+    const node = scrollRef.current;
+    const content = contentRef.current;
+    if (!node || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (!pinnedRef.current) return;
+      node.scrollTop = node.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
+  /**
+   * 点开计划是明确的「我要看」：卡片长在历史末尾，展开后新露出来的步骤会落到容器外，
+   * 必须跟到底。这里不依赖「本来就贴底」的判断，也不依赖 ResizeObserver 的投递时机——
+   * 浏览器为保持画面稳定会做滚动锚定，它调整 scrollTop 产生的滚动事件会把贴底判定
+   * 翻成 false，后续长高就都不跟了。跟帧细节见 followScrollToBottom。
+   */
+  const handlePlanToggle = useCallback((open: boolean) => {
+    if (!open) return;
+    pinnedRef.current = true;
+    const node = scrollRef.current;
+    if (!node) return;
+    followScrollToBottom(
+      node,
+      (callback) => requestAnimationFrame(callback),
+      () => performance.now(),
+      PLAN_EXPAND_FOLLOW_MAX_MS,
+    );
+  }, []);
 
   let lastAssistantIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -652,44 +703,48 @@ const MessageHistory = memo(function MessageHistory({
   return (
     <div
       id="agent-dock-history"
-      className="agent-dock-scrollbar flex h-[min(48vh,28rem)] flex-col gap-3 overflow-y-auto p-4"
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="agent-dock-scrollbar h-[min(48vh,28rem)] overflow-y-auto"
     >
-      {messages.map((message, messageIndex) =>
-        message.role === "user" ? (
-          <div
-            key={`${message.id}-${messageIndex}`}
-            className="max-w-[85%] self-end rounded-control bg-fill px-3 py-2 text-sm text-ink"
-          >
-            {message.content}
-            {message.assets && message.assets.length > 0 && (
-              <div className="mt-2 max-w-full overflow-x-auto">
-                <div className="flex w-max gap-1.5">
-                  {message.assets.map((asset) => (
-                    <AssetAttachmentChip
-                      key={asset.assetSlug}
-                      asset={asset}
-                    />
-                  ))}
+      <div ref={contentRef} className="flex flex-col gap-3 p-4">
+        {messages.map((message, messageIndex) =>
+          message.role === "user" ? (
+            <div
+              key={`${message.id}-${messageIndex}`}
+              className="max-w-[85%] self-end rounded-control bg-fill px-3 py-2 text-sm text-ink"
+            >
+              {message.content}
+              {message.assets && message.assets.length > 0 && (
+                <div className="mt-2 max-w-full overflow-x-auto">
+                  <div className="flex w-max gap-1.5">
+                    {message.assets.map((asset) => (
+                      <AssetAttachmentChip
+                        key={asset.assetSlug}
+                        asset={asset}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-            {message.images && message.images.length > 0 && (
-              <UploadedMessageImages paths={message.images} />
-            )}
-          </div>
-        ) : renderAssistantMessage(message, messageIndex),
-      )}
-      {lastAssistantIndex === -1 &&
-        (activity.state === "working" || activity.state === "waiting") &&
-        renderTurnStatus(
-          {
-            label: activity.message,
-            status: activity.state === "waiting" ? "waiting" : "running",
-          },
-          "live-agent",
+              )}
+              {message.images && message.images.length > 0 && (
+                <UploadedMessageImages paths={message.images} />
+              )}
+            </div>
+          ) : renderAssistantMessage(message, messageIndex),
         )}
-      {plan && <PlanCard plan={plan} />}
-      <div ref={messagesEndRef} />
+        {lastAssistantIndex === -1 &&
+          (activity.state === "working" || activity.state === "waiting") &&
+          renderTurnStatus(
+            {
+              label: activity.message,
+              status: activity.state === "waiting" ? "waiting" : "running",
+            },
+            "live-agent",
+          )}
+        {plan && <PlanCard plan={plan} onToggle={handlePlanToggle} />}
+        <div ref={messagesEndRef} />
+      </div>
     </div>
   );
 });
