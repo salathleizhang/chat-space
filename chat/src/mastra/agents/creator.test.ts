@@ -27,7 +27,11 @@ describe("creator 工具可用性", () => {
     ) as { properties?: Record<string, unknown> };
     expect(segmentSchema.properties).toHaveProperty("assetSlug");
     expect(segmentSchema.properties).not.toHaveProperty("channel");
+    expect(tools["retopologize"]).toBeDefined();
+    expect(tools["rig-model"]).toBeDefined();
     expect(Object.keys(tools)).not.toContain("generate-animation");
+    expect(tools["generate-character"]).toBeDefined();
+    expect(Object.keys(tools)).not.toContain("unwrap-uv");
     expect(Object.keys(tools)).not.toContain("build-cad-model");
     expect(Object.keys(tools)).not.toContain("get-cad-source");
     expect(Object.keys(tools)).not.toContain("generate-plate");
