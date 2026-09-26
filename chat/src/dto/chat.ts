@@ -14,32 +14,36 @@ export const ChatContentPartSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string().min(1) }),
   z.object({ type: z.literal("image"), path: LogicalPathSchema }),
   z.object({ type: z.literal("asset"), assetSlug: SlugSchema }),
-  /**
-   * ask-user 卡片的点选结果。服务端每轮都是无状态的，不保存任何提问状态，
-   * 所以问题原文与选中项的可读文字必须随消息一起回来，才能拼出完整的上下文。
-   */
-  z
-    .object({
-      type: z.literal("answer"),
-      questionId: z.string().min(1),
-      /** 原问题文本；服务端据此把这一轮上下文补全 */
-      question: z.string().min(1).max(600),
-      optionIds: z.array(z.string().min(1)),
-      /** 与 optionIds 一一对应的可读文字 */
-      labels: z.array(z.string().min(1)).max(6),
-      /** allowOther 的自由输入 */
-      text: z.string().min(1).max(1000).optional(),
-    })
-    /*
-      一一对应必须在这里锁住：服务端拿 labels 当"用户选了什么"报给模型，
-      数量对不上就会把用户的选择说错，而这属于会误导后续付费决策的错误。
-    */
-    .refine((part) => part.labels.length === part.optionIds.length, {
-      message: "labels 必须与 optionIds 一一对应",
-      path: ["labels"],
-    }),
 ]);
 export type ChatContentPart = z.infer<typeof ChatContentPartSchema>;
+
+/**
+ * 用户在 ask-user 卡片上作出的选择。
+ *
+ * 它走请求顶层的 `answer` 字段，而不是一条用户消息：用户点的是卡片，不是发言，
+ * 历史里不该凭空多出一条用户气泡，"同意"这类词也不该占掉会话标题。服务端每轮
+ * 无状态、不保存提问状态，所以问题原文与选项文字必须随答案一起回来。
+ */
+export const AskUserAnswerSchema = z
+  .object({
+    questionId: z.string().min(1),
+    /** 原问题文本；服务端据此把这一轮上下文补全 */
+    question: z.string().min(1).max(600),
+    optionIds: z.array(z.string().min(1)),
+    /** 与 optionIds 一一对应的可读文字 */
+    labels: z.array(z.string().min(1)).max(6),
+    /** allowOther 的自由输入 */
+    text: z.string().min(1).max(1000).optional(),
+  })
+  /*
+    一一对应必须在这里锁住：服务端拿 labels 当"用户选了什么"报给模型，
+    数量对不上就会把用户的选择说错，而这属于会误导后续付费决策的错误。
+  */
+  .refine((answer) => answer.labels.length === answer.optionIds.length, {
+    message: "labels 必须与 optionIds 一一对应",
+    path: ["labels"],
+  });
+export type AskUserAnswer = z.infer<typeof AskUserAnswerSchema>;
 
 export const ChatMessageSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
@@ -125,6 +129,8 @@ export const ChatStreamRequestSchema = z.object({
   plan: ProjectPlanSchema.optional(),
   /** Agent 自发续跑的本轮上下文；不进入 messages，因此不落会话历史。 */
   resume: ChatResumeSchema.optional(),
+  /** ask-user 卡片的点选结果；与 resume 同款，只活在本轮上下文里。 */
+  answer: AskUserAnswerSchema.optional(),
   llm: LlmConfigSchema,
   /** 仅本机服务注入的凭证，浏览器提交的同名字段会被丢弃。 */
   worldLabsApiKey: z.string().min(1).optional(),

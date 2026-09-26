@@ -409,7 +409,7 @@ export function useAgentChat({
    */
   const toOutgoingHistory = (list: ChatMessage[]): OutgoingChatMessage[] =>
     list.flatMap<OutgoingChatMessage>(
-      ({ role, content, images, assets, questionAnswer }) => {
+      ({ role, content, images, assets }) => {
         const hasText = content.trim().length > 0;
 
         /*
@@ -421,15 +421,8 @@ export function useAgentChat({
           return hasText ? [{ role, content }] : [];
         }
 
-        /*
-         * 卡片回答必须走结构化部件：服务端每轮都是无状态的，只有把问题原文与选中项
-         * 文字一起带上，它才能拼出「这是在回答哪个问题」。content 里那句「同意」
-         * 只是给人看的显示文本。
-         */
         const hasAttachments =
-          (assets && assets.length > 0) ||
-          (images && images.length > 0) ||
-          Boolean(questionAnswer);
+          (assets && assets.length > 0) || (images && images.length > 0);
         if (!hasAttachments) {
           return hasText ? [{ role, content }] : [];
         }
@@ -439,9 +432,6 @@ export function useAgentChat({
             type: "asset" as const,
             assetSlug,
           })),
-          ...(questionAnswer
-            ? [{ type: "answer" as const, ...questionAnswer }]
-            : []),
           ...(hasText ? [{ type: "text" as const, text: content }] : []),
           ...(images ?? []).map((path) => ({ type: "image" as const, path })),
         ];
@@ -553,19 +543,18 @@ export function useAgentChat({
       ...message, pendingInspectionAssetSlug: undefined,
       agentStatus: { label: "Inspection images ready", status: "completed" },
     }));
-    startStream(
-      toOutgoingHistory(messagesRef.current),
-      {
+    startStream(toOutgoingHistory(messagesRef.current), {
+      resume: {
         kind: "inspection",
         text: `[Self-check] ${pending.assetSlug}: four views (top left: ISO, top right: FRONT, bottom left: RIGHT, bottom right: TOP). Check each view.`,
         images: [pending.path],
       },
-      {
+      autoTurn: {
         kind: "inspection",
         label: `Self-check · ${pending.assetName} · 4 views (ISO / Front / Right / Top)`,
         images: [pending.path],
       },
-    );
+    });
     return true;
   };
 
@@ -617,19 +606,18 @@ export function useAgentChat({
     identifyingRef.current = false;
     syncWaiting();
     const slugs = pending.map((p) => p.assetSlug).join(", ");
-    startStream(
-      toOutgoingHistory(messagesRef.current),
-      {
+    startStream(toOutgoingHistory(messagesRef.current), {
+      resume: {
         kind: "identify",
         text: `[Identity check] Candidate asset reference images, in order: ${slugs}. Confirm each identity against its reference image.`,
         images: pending.map((p) => p.path),
       },
-      {
+      autoTurn: {
         kind: "identify",
         label: `Checking identities · ${slugs}`,
         images: pending.map((p) => p.path),
       },
-    );
+    });
     return true;
   };
 
@@ -651,9 +639,8 @@ export function useAgentChat({
     syncWaiting();
     const tasks = settlements.flatMap((settlement) => settlement.tasks);
     const failed = tasks.filter((task) => task.status !== "succeeded").length;
-    startStream(
-      toOutgoingHistory(messagesRef.current),
-      {
+    startStream(toOutgoingHistory(messagesRef.current), {
+      resume: {
         kind: "tasks",
         text: [
           "[Background tasks finished]",
@@ -665,13 +652,13 @@ export function useAgentChat({
           "Continue the original request automatically: inspect successful model outputs as needed, then deliver the result. Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",
         ].join("\n"),
       },
-      {
+      autoTurn: {
         kind: "tasks",
         label: failed > 0
           ? `Background generation finished · ${failed} of ${tasks.length} failed`
           : `Background generation finished · ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
       },
-    );
+    });
     return true;
   };
 
@@ -717,12 +704,17 @@ export function useAgentChat({
    *
    * `resume` 是 Agent 自发续跑时本轮要看的产物：它不进 messages，由服务端接在
    * 上下文末尾；`autoTurn` 是同一次续跑在界面上的展示形态（Agent 侧卡片）。
+   * `answer` 是用户点卡片作出的选择：同样不进 messages，界面上只在卡片里显示。
    */
   const startStream = (
     history: OutgoingChatMessage[],
-    resume?: ChatResume,
-    autoTurn?: AgentAutoTurn,
+    turn: {
+      resume?: ChatResume;
+      autoTurn?: AgentAutoTurn;
+      answer?: AskUserAnswer;
+    } = {},
   ) => {
+    const { resume, autoTurn, answer } = turn;
     if (!activeRef.current) return;
     /*
       不变量：同一会话同时至多一条活跃流。这道守卫必须在这里，不能只靠按钮 disabled
@@ -994,6 +986,7 @@ export function useAgentChat({
           loadImageGenerateModelSettings().model || undefined,
         plan: sessionPlanRef.current ?? undefined,
         ...(resume ? { resume } : {}),
+        ...(answer ? { answer } : {}),
       },
       controller.signal,
     );
@@ -1046,11 +1039,11 @@ export function useAgentChat({
   };
 
   /**
-   * 用户在 ask-user 卡片上作出选择：把结构化答案作为一条用户消息发出去，
-   * 原 assistant 消息上的卡片随之转为只读回执。
+   * 用户在 ask-user 卡片上作出选择。
    *
-   * 走的是普通用户消息而不是 `resume`：这是用户本人的输入，应当留在会话历史里，
-   * 也让下一轮的上下文天然带上"我问了什么、用户选了什么"。
+   * 回答走请求的 `answer` 字段，**不推一条用户消息**：用户点的是卡片，不是发言，
+   * 历史里不该因此多出一条气泡、会话标题也不该被"同意"占掉。界面上只在卡片内部
+   * 把状态转成"已选择：X"，服务端把答案接在本轮上下文末尾交给模型。
    */
   const answerQuestion = (ownerMessageId: string, answer: AskUserAnswer) => {
     if (streamingRef.current || uploadingRef.current || hasPendingWork()) return;
@@ -1061,19 +1054,8 @@ export function useAgentChat({
       supersededQuestion: undefined,
       agentStatus: { label: "Answered", status: "completed" },
     }));
-    const display =
-      [...answer.labels, ...(answer.text ? [answer.text] : [])].join("、") ||
-      "已回答";
-    const userMessage: ChatMessage = {
-      id: nextId(),
-      role: "user",
-      content: display,
-      questionAnswer: answer,
-    };
-    const history = toOutgoingHistory([...messagesRef.current, userMessage]);
-    pushMessage(userMessage);
     setActivity({ state: "working", message: "Thinking" });
-    startStream(history);
+    startStream(toOutgoingHistory(messagesRef.current), { answer });
   };
 
   // 只恢复当前会话明确记录的任务；不把其他会话的项目任务接到这里。

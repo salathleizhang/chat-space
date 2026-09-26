@@ -4,14 +4,12 @@ import type { ProjectPlan } from "./libraryApi";
 
 /**
  * 消息部件：图片以资产库逻辑路径引用、chat 侧内联为 data URI；
- * 资产附件只传稳定 slug，由 chat 侧从当前项目状态解析；
- * 卡片回答（answer）把问题原文与选中项文字一起带回——服务端不保存提问状态。
+ * 资产附件只传稳定 slug，由 chat 侧从当前项目状态解析。
  */
 export type OutgoingContentPart =
   | { type: "text"; text: string }
   | { type: "image"; path: string }
-  | { type: "asset"; assetSlug: string }
-  | ({ type: "answer" } & AskUserAnswer);
+  | { type: "asset"; assetSlug: string };
 
 /**
  * ask-user 提问卡片：Agent 需要用户本人做决定（付费同意、方案取舍、对象确认）
@@ -41,7 +39,10 @@ export interface AskUserQuestion {
   allowOther: boolean;
 }
 
-/** 用户在卡片上作出的选择；随下一条用户消息回到服务端。 */
+/**
+ * 用户在卡片上作出的选择。它作为请求顶层字段回传，不是一条用户消息：
+ * 用户点的是卡片，历史里不该因此多出一条用户气泡。
+ */
 export interface AskUserAnswer {
   questionId: string;
   /** 原问题文本；服务端不保存提问状态，必须随答案一起回传 */
@@ -111,6 +112,8 @@ export interface ChatTurnOptions {
   plan?: ProjectPlan;
   /** Agent 自发续跑的本轮上下文；与 messages 并列，不进历史。 */
   resume?: ChatResume;
+  /** ask-user 卡片的点选结果；同样不进 messages，界面只在卡片里显示。 */
+  answer?: AskUserAnswer;
 }
 
 /**

@@ -1146,7 +1146,7 @@ describe("ask-user 提问卡片", () => {
     await h.unmount();
   });
 
-  test("点选卡片把结构化答案作为下一条用户消息发出并续跑", async () => {
+  test("点选卡片只更新卡片并续跑：不往历史里推用户消息", async () => {
     const { mount, pushMessage, updateMessage } = harness();
     const h = await mount();
     await act(async () => h.result.current.send("生成椅子"));
@@ -1159,21 +1159,20 @@ describe("ask-user 提问卡片", () => {
 
     await act(async () => h.result.current.answerQuestion(assistant.id, ANSWER));
 
+    // 卡片转成只读回执
     const receipt = replay(updateMessage, assistant);
     expect(receipt.questionAnswer).toEqual(ANSWER);
     expect(receipt.pendingQuestion).toEqual(QUESTION);
 
-    const answerMessage = pushMessage.mock.calls
-      .map(([message]) => message)
-      .find((message) => message.questionAnswer)!;
-    expect(answerMessage.content).toBe("同意");
+    // 推给界面的只有新一轮的 assistant 占位气泡，没有"用户发了条消息"
+    expect(
+      pushMessage.mock.calls.map(([message]) => message).filter((m) => m.role === "user"),
+    ).toEqual([]);
 
+    // 回答走请求顶层字段，不混进 messages
     expect(streamChat).toHaveBeenCalledTimes(2);
-    const history = streamChat.mock.calls[1]![1] as OutgoingChatMessage[];
-    expect(history.at(-1)?.content).toEqual([
-      { type: "answer", ...ANSWER },
-      { type: "text", text: "同意" },
-    ]);
+    expect(streamChat.mock.calls[1]![1]).toEqual([]);
+    expect(streamChat.mock.calls[1]![4]).toMatchObject({ answer: ANSWER });
 
     await h.unmount();
   });

@@ -6,7 +6,8 @@ import { projectCandidatesFile } from "../common/libraryPaths";
 import type { ChatMessage } from "../dto/chat";
 import { CandidateRegistrySchema } from "../dto/library";
 import {
-  answerPartText,
+  answerContextText,
+  toAnswerMessage,
   buildChatRequestContext,
   hasExplicitReferenceAnalysisIntent,
   imagePathsFromToolResult,
@@ -245,11 +246,10 @@ describe("planContextText", () => {
   });
 });
 
-describe("answerPartText", () => {
+describe("answerContextText", () => {
   test("把卡片点选还原成模型可读的回答", () => {
     expect(
-      answerPartText({
-        type: "answer",
+      answerContextText({
         questionId: "q-1",
         question: "是否继续？",
         optionIds: ["approve"],
@@ -259,8 +259,7 @@ describe("answerPartText", () => {
   });
 
   test("自由输入与预设选项同时出现时都保留", () => {
-    const text = answerPartText({
-      type: "answer",
+    const text = answerContextText({
       questionId: "q-2",
       question: "选哪些对象？",
       optionIds: ["chair"],
@@ -272,8 +271,7 @@ describe("answerPartText", () => {
   });
 
   test("只有自由输入时不留空的选项行", () => {
-    const text = answerPartText({
-      type: "answer",
+    const text = answerContextText({
       questionId: "q-3",
       question: "怎么办？",
       optionIds: [],
@@ -282,6 +280,20 @@ describe("answerPartText", () => {
     });
     expect(text).toContain("用户选择：（未选择预设选项）");
     expect(text).toContain("用户补充：先只做底板");
+  });
+
+  test("回答接成本轮上下文：借 user 角色，但工作台不把它写进会话历史", () => {
+    expect(
+      toAnswerMessage({
+        questionId: "q-4",
+        question: "是否继续？",
+        optionIds: ["approve"],
+        labels: ["同意"],
+      }),
+    ).toEqual({
+      role: "user",
+      content: "【对提问的回答】问题：「是否继续？」（q-4）\n用户选择：同意",
+    });
   });
 });
 

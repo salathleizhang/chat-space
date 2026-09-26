@@ -116,56 +116,67 @@ describe("ChatStreamEventSchema ask-user 提问", () => {
     ).toThrow();
   });
 
-  test("请求接受卡片回答部件，并带上问题原文与可读选项", () => {
+  test("请求接受顶层 answer 字段，并带上问题原文与可读选项", () => {
     const parsed = ChatStreamRequestSchema.parse({
       ...baseRequest,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "answer",
-              questionId: "q-1",
-              question: "是否按上述计划生成？",
-              optionIds: ["approve"],
-              labels: ["同意"],
-            },
-            { type: "text", text: "同意" },
-          ],
-        },
-      ],
-    });
-    expect(parsed.messages[0]!.content).toEqual([
-      {
-        type: "answer",
+      answer: {
         questionId: "q-1",
         question: "是否按上述计划生成？",
         optionIds: ["approve"],
         labels: ["同意"],
       },
-      { type: "text", text: "同意" },
-    ]);
+    });
+    expect(parsed.answer).toEqual({
+      questionId: "q-1",
+      question: "是否按上述计划生成？",
+      optionIds: ["approve"],
+      labels: ["同意"],
+    });
   });
 
-  test("回答必须能定位到问题：缺问题原文或选项文字都拒绝", () => {
-    const answerPart = (patch: Record<string, unknown>) => ({
+  test("回答不再是一条用户消息：answer 不能作为消息部件出现", () => {
+    expect(() =>
+      ChatStreamRequestSchema.parse({
+        ...baseRequest,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "answer",
+                questionId: "q-1",
+                question: "是否继续？",
+                optionIds: [],
+                labels: [],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  test("回答必须能定位到问题：缺问题原文或选项文字对不上都拒绝", () => {
+    const withAnswer = (patch: Record<string, unknown>) => ({
       ...baseRequest,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "answer", questionId: "q-1", question: "是否继续？", optionIds: [], labels: [], ...patch },
-          ],
-        },
-      ],
+      answer: {
+        questionId: "q-1",
+        question: "是否继续？",
+        optionIds: [],
+        labels: [],
+        ...patch,
+      },
     });
     expect(() =>
-      ChatStreamRequestSchema.parse(answerPart({ question: undefined })),
+      ChatStreamRequestSchema.parse(withAnswer({ question: undefined })),
     ).toThrow();
+    // labels 与 optionIds 必须一一对应，否则报给模型的"用户选了什么"就是错的
     expect(() =>
-      ChatStreamRequestSchema.parse(answerPart({ labels: ["同意"] })),
+      ChatStreamRequestSchema.parse(withAnswer({ labels: ["同意"] })),
     ).toThrow();
-    expect(ChatStreamRequestSchema.parse(answerPart({ text: "先只做底板" })).messages).toHaveLength(1);
+    expect(
+      ChatStreamRequestSchema.parse(withAnswer({ text: "先只做底板" })).answer,
+    ).toMatchObject({ text: "先只做底板" });
   });
 });
 

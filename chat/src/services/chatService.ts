@@ -5,8 +5,8 @@ import {
   type ProjectPlan,
 } from "../dto/library";
 import type {
+  AskUserAnswer,
   AskUserQuestion,
-  ChatContentPart,
   ChatMessage,
   ChatResume,
   ChatStreamRequest,
@@ -193,18 +193,16 @@ export function planFromToolResult(
 
 /**
  * ask-user 卡片的点选结果 → 给模型看的文本。
- * 服务端不保存提问状态，问题原文与选项文字都随消息带回来，这里只负责拼装；
+ * 服务端不保存提问状态，问题原文与选项文字都随答案带回来，这里只负责拼装；
  * 不写成裸文本是为了让模型明确知道这是对某个提问的回答，而不是用户新提的指令。
  */
-export function answerPartText(
-  part: Extract<ChatContentPart, { type: "answer" }>,
-): string {
+export function answerContextText(answer: AskUserAnswer): string {
   const chosen =
-    part.labels.length > 0 ? part.labels.join("、") : "（未选择预设选项）";
+    answer.labels.length > 0 ? answer.labels.join("、") : "（未选择预设选项）";
   return [
-    `【对提问的回答】问题：「${part.question}」（${part.questionId}）`,
+    `【对提问的回答】问题：「${answer.question}」（${answer.questionId}）`,
     `用户选择：${chosen}`,
-    ...(part.text ? [`用户补充：${part.text}`] : []),
+    ...(answer.text ? [`用户补充：${answer.text}`] : []),
   ].join("\n");
 }
 
@@ -257,8 +255,6 @@ export async function toAgentMessages(
     for (const part of message.content) {
       if (part.type === "text") {
         parts.push({ type: "text", text: part.text });
-      } else if (part.type === "answer") {
-        parts.push({ type: "text", text: answerPartText(part) });
       } else if (part.type === "image") {
         parts.push({ type: "image", image: await readAsDataUri(storage, part.path) });
       }
@@ -284,6 +280,17 @@ export async function toResumeMessage(
     parts.push({ type: "image", image: await readAsDataUri(storage, path) });
   }
   return { role: "user", content: parts };
+}
+
+/**
+ * 卡片回答 → 本轮上下文。
+ *
+ * 和 resume 同款：协议上只能借 user 角色，但语义上它不是用户发言——用户点的是
+ * 卡片。工作台不把它写进会话记录，界面上也只在卡片里显示"已选择：X"，所以它既
+ * 不会在历史里多出一条用户气泡，也不会在后续每一轮被重复回放。
+ */
+export function toAnswerMessage(answer: AskUserAnswer): AgentMessage {
+  return { role: "user", content: answerContextText(answer) };
 }
 
 /** 把对话请求中的临时配置完整注入 Agent 工具上下文。 */
@@ -402,6 +409,7 @@ export async function* streamChat(
     projectContext,
     ...(await toAgentMessages(storage, request.messages, assetNamesBySlug)),
     ...(request.resume ? [await toResumeMessage(storage, request.resume)] : []),
+    ...(request.answer ? [toAnswerMessage(request.answer)] : []),
   ];
   // 当前项目与供应商 key 注入工具上下文（都只活在请求生命周期）
   const output = await agent.stream(messages, {
