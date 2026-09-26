@@ -717,6 +717,21 @@ export type GenerateReferenceImagesInput = z.input<
 >;
 
 /**
+ * 部分 OpenAI-compatible 模型会把数组参数再次 JSON 序列化成字符串。
+ * 只接受能解成真正数组的字符串；其他值原样交给 Zod 报错，避免把任意文本
+ * 静默扩成业务参数。
+ */
+function parseStringifiedArray(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
+/**
  * 工具对模型暴露的入参必须是顶层 `type: object`。上面的 union 会被序列化成
  * `{ anyOf: [...] }`，火山方舟的 DeepSeek 接入点会直接拒绝整轮请求：
  * `tools.N.function.parameters must be a JSON Schema of type object`
@@ -733,10 +748,14 @@ export const GenerateReferenceImagesToolSchema = z.object({
   assetSlug: SlugSchema.optional(),
   assetName: z.string().min(1).optional(),
   assetIntent: z.string().min(1).optional(),
-  count: z.number().int().min(1).max(4).default(1),
+  // DeepSeek 偶尔把 JSON number 输出成 "1"；这里只做 number 的标准安全 coercion。
+  count: z.coerce.number().int().min(1).max(4).default(1),
   canvas: z.enum(REFERENCE_IMAGE_CANVASES).default("landscape"),
   /** plate 缺省移除全部已确认对象，使用场景分析绑定的原参考图。 */
-  objectSlugs: z.array(SlugSchema).optional(),
+  objectSlugs: z.preprocess(
+    parseStringifiedArray,
+    z.array(SlugSchema).optional(),
+  ),
   sourceImage: LogicalPathSchema.optional(),
   extraInstructions: z.string().optional(),
 });

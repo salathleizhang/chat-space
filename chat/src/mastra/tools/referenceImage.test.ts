@@ -206,9 +206,12 @@ describe("GenerateReferenceImagesInputSchema", () => {
     const json = z.toJSONSchema(GenerateReferenceImagesToolSchema, { io: "input" }) as {
       type?: string;
       anyOf?: unknown;
+      properties?: Record<string, { type?: string }>;
     };
     expect(json.type).toBe("object");
     expect(json.anyOf).toBeUndefined();
+    expect(json.properties?.count?.type).toBe("integer");
+    expect(json.properties?.objectSlugs?.type).toBe("array");
 
     const flat = GenerateReferenceImagesToolSchema.parse({
       mode: "edit",
@@ -225,6 +228,32 @@ describe("GenerateReferenceImagesInputSchema", () => {
       mode: "plate",
       model: "seedream",
     });
+  });
+
+  test("只归一化模型常见的数字字符串与字符串化数组", () => {
+    expect(
+      GenerateReferenceImagesToolSchema.parse({
+        mode: "plate",
+        count: "1",
+        objectSlugs: '["red-sweater"]',
+      }),
+    ).toMatchObject({
+      count: 1,
+      objectSlugs: ["red-sweater"],
+    });
+
+    expect(() =>
+      GenerateReferenceImagesToolSchema.parse({
+        mode: "plate",
+        count: "one",
+      }),
+    ).toThrow();
+    expect(() =>
+      GenerateReferenceImagesToolSchema.parse({
+        mode: "plate",
+        objectSlugs: '"red-sweater"',
+      }),
+    ).toThrow();
   });
 });
 
