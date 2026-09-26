@@ -31,6 +31,8 @@ import {
   createTripoSegmentTask,
   createTripoV3Task,
   DEFAULT_TRIPO_IMAGE_MODEL,
+  DEFAULT_TRIPO_TEXTURE_MODEL,
+  tripoTextureVersionFor,
   uploadTripoFile,
   uploadTripoModelViaSts,
   waitForTripoTask,
@@ -188,6 +190,8 @@ export async function runTripoImageTo3d(
   const sidecarPath = `${dir}/${formatRequestSidecarName(index, params.assetSlug)}`;
 
   const now = () => new Date().toISOString();
+  const imageModel = callOptions.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL;
+  const textureModel = callOptions.textureModel ?? tripoTextureVersionFor(imageModel);
   const sidecar: RequestSidecar = {
     schemaVersion: 1,
     index,
@@ -200,12 +204,14 @@ export async function runTripoImageTo3d(
       ? {
           generation_mode: "multiview",
           reference_views: Object.fromEntries(availableViews),
-          image_model: callOptions.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL,
+          image_model: imageModel,
+          texture_model: textureModel,
         }
       : {
           generation_mode: "single",
           image: resolved.image,
-          image_model: callOptions.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL,
+          image_model: imageModel,
+          texture_model: textureModel,
         },
     status: "queued",
     outputs: [],
@@ -552,7 +558,16 @@ export const segmentPartsTool = createTool({
 /** 贴图重生成只调用 Tripo v3 /models/texture；上传资产库最新模型作为输入。 */
 export async function runTripoTexture(
   storage: AssetStorage,
-  params: { projectSlug: string; assetSlug: string; prompt?: string; pbr?: boolean },
+  params: {
+    projectSlug: string;
+    assetSlug: string;
+    prompt?: string;
+    pbr?: boolean;
+    /** 贴图模型版本，缺省用最新的 v3.5；fast 与 delight 只有 v3.5 认。 */
+    model?: string;
+    textureQuality?: "fast" | "standard" | "detailed" | "extreme";
+    delight?: boolean;
+  },
   callOptions: TripoCallOptions,
 ): Promise<TripoOpResult> {
   await requireProject(storage, params.projectSlug);
@@ -577,6 +592,7 @@ export async function runTripoTexture(
   }
   const fileName = modelPath.split("/").pop()!;
   const ext = fileName.split(".").pop()!.toLowerCase();
+  const textureModel = params.model ?? DEFAULT_TRIPO_TEXTURE_MODEL;
   const fileToken = bytes.byteLength > 60 * 1024 * 1024
     ? await uploadTripoModelViaSts(ext, bytes, callOptions)
     : await uploadTripoFile(fileName, bytes, callOptions);
@@ -588,13 +604,19 @@ export async function runTripoTexture(
       path: "/models/texture",
       body: {
         input: fileToken,
+        model: textureModel,
         ...(params.prompt ? { texture_prompt: { text: params.prompt } } : {}),
         ...(params.pbr !== undefined ? { pbr: params.pbr } : {}),
+        ...(params.textureQuality ? { texture_quality: params.textureQuality } : {}),
+        ...(params.delight !== undefined ? { delight: params.delight } : {}),
       },
       sidecarParams: {
         input_model: modelPath,
+        texture_model: textureModel,
         ...(params.prompt ? { prompt: params.prompt } : {}),
         ...(params.pbr !== undefined ? { pbr: params.pbr } : {}),
+        ...(params.textureQuality ? { texture_quality: params.textureQuality } : {}),
+        ...(params.delight !== undefined ? { delight: params.delight } : {}),
       },
     },
     callOptions,

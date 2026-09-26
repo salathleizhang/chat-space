@@ -1,5 +1,6 @@
 import { config } from "../config";
 import { SEED3D_MODEL } from "./seed3d";
+import { TRIPO_P1_MODEL, TRIPO_P2_MODEL } from "./tripo";
 
 /**
  * 可选的 3D 生成模型注册表。界面选的是「具体模型」，不是渠道：条目同时决定
@@ -46,6 +47,16 @@ export const THREE_D_MODELS = {
     label: "Tripo 3.1",
     provider: "tripo-direct",
     model: config.tripo.imageModel,
+  },
+  "tripo-p1": {
+    label: "Tripo P1",
+    provider: "tripo-direct",
+    model: TRIPO_P1_MODEL,
+  },
+  "tripo-p2": {
+    label: "Tripo P2",
+    provider: "tripo-direct",
+    model: TRIPO_P2_MODEL,
   },
 } as const satisfies Record<string, ThreeDModelEntry>;
 

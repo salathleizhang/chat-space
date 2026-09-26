@@ -95,6 +95,8 @@ export const THREE_D_MODEL_PRESETS = [
   { value: "hyper3d-gen2", label: "Hyper3D Gen-2" },
   { value: "hi3d-2", label: "Hi3D 2.0" },
   { value: "tripo-3-1", label: "Tripo 3.1" },
+  { value: "tripo-p1", label: "Tripo P1" },
+  { value: "tripo-p2", label: "Tripo P2" },
 ];
 
 /** 旧版渠道偏好 → 该渠道的默认模型，迁移时保住用户原来的选择。 */

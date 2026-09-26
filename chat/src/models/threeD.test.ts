@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { config } from "../config";
 import { SEED3D_MODEL } from "./seed3d";
+import { TRIPO_P1_MODEL, TRIPO_P2_MODEL } from "./tripo";
 import {
   THREE_D_MODELS,
   THREE_D_MODEL_SELECTIONS,
@@ -15,11 +16,26 @@ describe("3D 模型注册表", () => {
       "hyper3d-gen2",
       "hi3d-2",
       "tripo-3-1",
+      "tripo-p1",
+      "tripo-p2",
     ]);
     expect(THREE_D_MODELS["seed3d-2"]).toEqual({
       label: "Seed3D 2.0",
       provider: "seed3d-direct",
       model: SEED3D_MODEL,
+    });
+  });
+
+  test("Tripo P 系列用带日期的固定 ID，低多边形选项与 H 系列并存", () => {
+    expect(THREE_D_MODELS["tripo-p1"]).toEqual({
+      label: "Tripo P1",
+      provider: "tripo-direct",
+      model: TRIPO_P1_MODEL,
+    });
+    expect(THREE_D_MODELS["tripo-p2"]).toEqual({
+      label: "Tripo P2",
+      provider: "tripo-direct",
+      model: TRIPO_P2_MODEL,
     });
   });
 
@@ -29,11 +45,11 @@ describe("3D 模型注册表", () => {
     expect(THREE_D_MODELS["tripo-3-1"].model).toBe(config.tripo.imageModel);
   });
 
-  test("四条渠道各有一个条目，且渠道值都在白名单内", () => {
+  test("每个渠道至少有一个条目，且渠道值都在白名单内", () => {
     const providers = THREE_D_MODEL_SELECTIONS.map(
       (selection) => THREE_D_MODELS[selection].provider,
     );
-    expect([...providers].sort()).toEqual([...THREE_D_PROVIDER_IDS].sort());
+    expect([...new Set(providers)].sort()).toEqual([...THREE_D_PROVIDER_IDS].sort());
   });
 
   test("选择键是稳定契约：未注册（含旧版渠道名与模型 ID）一律不解析", () => {

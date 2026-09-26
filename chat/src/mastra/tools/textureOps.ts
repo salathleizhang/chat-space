@@ -9,11 +9,15 @@ import { runTripoTexture } from "./tripoOps";
 export const generateTextureTool = createTool({
   id: "generate-texture",
   description:
-    "为当前项目已有的 3D 模型通过 Tripo v3 /models/texture 重新生成材质贴图。只使用 Tripo，与对话框选中的图片模型无关。调用前须说明 Tripo 付费操作并取得用户同意。任务化返回，用 list-generation-tasks 跟进。",
+    "为当前项目已有的 3D 模型通过 Tripo v3 /models/texture 重新生成材质贴图，默认使用最新贴图模型 v3.5-20260815。只使用 Tripo，与对话框选中的图片模型无关。textureQuality=fast 更快但细节更少（贴图尺寸与积分同 standard）。调用前须说明 Tripo 付费操作并取得用户同意。任务化返回，用 list-generation-tasks 跟进。",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     stylePrompt: z.string().min(1).max(600),
     enablePbr: z.boolean().default(true),
+    /** 贴图质量档；fast 只比 standard 少细节，尺寸与积分相同。 */
+    textureQuality: z.enum(["fast", "standard", "detailed", "extreme"]).optional(),
+    /** 是否在贴图前去除参考图里的烘焙光照（Tripo v3.5 贴图模型，默认 true）。 */
+    delight: z.boolean().optional(),
   }),
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
@@ -28,7 +32,14 @@ export const generateTextureTool = createTool({
       `贴图生成（Tripo）：${input.assetSlug}`,
       () => runTripoTexture(
         getAssetStorage(),
-        { projectSlug, assetSlug: input.assetSlug, prompt: input.stylePrompt, pbr: input.enablePbr },
+        {
+          projectSlug,
+          assetSlug: input.assetSlug,
+          prompt: input.stylePrompt,
+          pbr: input.enablePbr,
+          textureQuality: input.textureQuality,
+          delight: input.delight,
+        },
         { apiKey: tripoKey },
       ),
       { assetSlug: input.assetSlug },

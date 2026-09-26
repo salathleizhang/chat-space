@@ -21,13 +21,15 @@ bun run dev
 | --- | --- |
 | `VOLC_KEY` | 火山方舟 GLM 5.3 Flash / DeepSeek V4.1 Flash / Doubao-Seed-Evolving / Doubao-Seed-2.1-pro 对话、Seedream 4.5 / 5.0 / 5.0 Pro 图片，以及 Seed3D、Hyper3D、Hi3D 模型 |
 | `TRIPO_KEY` | Tripo3D 单图/多视角模型生成、多角度参考图、贴图、分割、重拓扑与绑骨 |
-| `TRIPO_IMAGE_MODEL` | Tripo3D 图生 3D 的几何模型 ID，默认 `v3.1-20260211`（v3 接口必填） |
+| `TRIPO_IMAGE_MODEL` | 界面「Tripo 3.1」项提交的几何模型 ID，默认 `v3.1-20260211`（v3 接口必填；P 系列在菜单里单独选，不受这个变量影响） |
 | `HUNYUAN_KEY` | 腾讯混元 UV 展开专用，格式为 `SecretId:SecretKey` |
 | `WORLDLABS_KEY` | World Labs Marble 场景 |
 
 World Labs 单步任务有两种模式：`direct` 直接用最新源图和可选文字提示词生成世界，不要求图片分析；传 `sourceImage: null` 可只用文字。`empty-environment` 根据已有的一键场景确认记录排除独立对象，生成空环境。`one-shot-scene` Workflow 使用空环境模式。
 
 Tripo3D 支持单图与多视角模型生成。`generate-reference-images(mode=multiview)` 可把目标已有的一张干净参考图扩展为前、左、后、右四视图并绑定视角元数据；之后 `start-3d-batch(provider=tripo-direct)` 默认自动使用多视角接口，也可用 `tripoGenerationMode=single|multiview` 显式选择。
+
+Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度版本，P 系列的 `P2-20260801`（四边面输出，Preview）与 `P1-20260311` 面向低多边形、干净拓扑的游戏与移动端资产，面数上限分别为 48–50,000（四边面 48–25,000）与 50–20,000。生成请求固定带 `texture_version=v3.5-20260815`（最新的贴图模型；`v2.5` 几何仍配 `v2.5-20250123` 贴图），不再落到官方默认的 `v3.0` 贴图。贴图后处理 `generate-texture` 同样用 v3.5，并可用 `textureQuality=fast|standard|detailed|extreme` 与 `delight` 控制细节档位和参考图烘焙光照。
 
 模型后处理统一走 Tripo v3：`retopologize` 使用 `/mesh/decimate`，`rig-model` 使用 `/animations/rig`；`generate-animation` 当前未向 Agent 注册，动作生成已禁用。`generate-character` 组合“图生 3D → biped 绑骨”（会产生两次付费任务）。Tripo 当前没有为已有模型单独执行 UV 展开的端点，因此只有 `unwrap-uv` 保留混元实现；Tripo P 系列生成接口的 UV 开关只在新模型生成时生效，不能替代后处理 UV 展开。
 
@@ -56,6 +58,8 @@ Tripo3D 支持单图与多视角模型生成。`generate-reference-images(mode=m
 | Hyper3D Gen-2 | `hyper3d-volc` | `hyper3d-gen2-260112` | `VOLC_HYPER3D_MODEL` |
 | Hi3D 2.0 | `hi3d-volc` | `hitem3d-2-0-251223` | `VOLC_HI3D_MODEL` |
 | Tripo 3.1 | `tripo-direct` | `v3.1-20260211` | `TRIPO_IMAGE_MODEL` |
+| Tripo P1 | `tripo-direct` | `P1-20260311` | — |
+| Tripo P2 | `tripo-direct` | `P2-20260801` | — |
 
 菜单项与模型 ID 的对应关系在 `chat/src/models/threeD.ts`（选择键是稳定契约，模型 ID 才允许被 env 覆盖）。旧版浏览器里保存的渠道偏好（Seed3D / Hyper3D / Hi3D / Tripo3D）会在加载时迁移成对应渠道的默认模型。完整场景的 `one-shot-scene` Workflow 单物体模型固定用 Seed3D，不跟随这个选择。
 

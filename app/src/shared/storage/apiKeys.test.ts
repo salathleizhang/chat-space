@@ -80,7 +80,7 @@ describe("server-only provider migration", () => {
     expect(loadThreeDModelSettings().model).toBe("hi3d-2");
   });
 
-  test.each(["seed3d-2", "hyper3d-gen2", "hi3d-2", "tripo-3-1"])(
+  test.each(["seed3d-2", "hyper3d-gen2", "hi3d-2", "tripo-3-1", "tripo-p1", "tripo-p2"])(
     "保存并恢复 3D 模型选择：%s",
     (model) => {
       expect(saveThreeDModelSettings({ model })).toBe(true);

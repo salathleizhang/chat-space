@@ -25,6 +25,24 @@ const V3_BASE = "https://openapi.tripo3d.ai/v3";
 /** 图生 3D 默认几何模型（官方 v3.1，最新最佳质量）；可用 TRIPO_IMAGE_MODEL 覆盖。 */
 export const DEFAULT_TRIPO_IMAGE_MODEL = "v3.1-20260211";
 
+/** P 系列低多边形几何模型（v3 端点收带日期的固定 ID，别名 tripo-p1 也可用）。 */
+export const TRIPO_P1_MODEL = "P1-20260311";
+export const TRIPO_P2_MODEL = "P2-20260801";
+
+/** 最新贴图模型（v3.5，2026-09）：新增 texture_quality=fast 与 delight。 */
+export const DEFAULT_TRIPO_TEXTURE_MODEL = "v3.5-20260815";
+
+/** 语义分割 v2（Beta，带语义标签）。 */
+export const TRIPO_SEGMENT_MODEL = "v2.0-20260430";
+
+/**
+ * 贴图版本：v2.5 几何配 v2.5 贴图，其余（v3.x / P 系列）用最新的 v3.5。
+ * 官方在省略 texture_version 时会把非 v2.5 几何降到 v3.0 贴图，这里显式升到最新。
+ */
+export function tripoTextureVersionFor(geometryModel: string): string {
+  return geometryModel.startsWith("v2.5") ? "v2.5-20250123" : DEFAULT_TRIPO_TEXTURE_MODEL;
+}
+
 export interface TripoCallOptions {
   apiKey: string;
   fetchFn?: typeof fetch;
@@ -34,6 +52,8 @@ export interface TripoCallOptions {
   requestTimeoutMs?: number;
   /** 图生 3D 的几何模型版本；缺省用 DEFAULT_TRIPO_IMAGE_MODEL */
   imageModel?: string;
+  /** 贴图模型版本；缺省按几何模型推导（v2.5 → v2.5，其余 → 最新 v3.5） */
+  textureModel?: string;
   onStatus?: (status: string) => void | Promise<void>;
 }
 
@@ -89,9 +109,14 @@ export function createTripoImageToModelTask(
   fileToken: string,
   options: TripoCallOptions,
 ): Promise<string> {
+  const model = options.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL;
   return createTripoV3Task(
     "/generation/image-to-model",
-    { input: fileToken, model: options.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL },
+    {
+      input: fileToken,
+      model,
+      texture_version: options.textureModel ?? tripoTextureVersionFor(model),
+    },
     options,
   );
 }
@@ -116,7 +141,12 @@ export function createTripoMultiviewToModelTask(
   }
   return createTripoV3Task(
     "/generation/multiview-to-model",
-    { inputs: payloadInputs, model: options.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL },
+    {
+      inputs: payloadInputs,
+      model: options.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL,
+      texture_version: options.textureModel
+        ?? tripoTextureVersionFor(options.imageModel ?? DEFAULT_TRIPO_IMAGE_MODEL),
+    },
     options,
   );
 }
@@ -169,7 +199,7 @@ export function createTripoSegmentTask(
 ): Promise<string> {
   return createTripoV3Task(
     "/mesh/segment",
-    { model: "v2.0-20260430", input: originalTaskId },
+    { model: TRIPO_SEGMENT_MODEL, input: originalTaskId },
     options,
   );
 }

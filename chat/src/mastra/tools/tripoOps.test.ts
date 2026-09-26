@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
 import { AssetIdentitySchema, RequestSidecarSchema } from "../../dto/library";
+import { TRIPO_P2_MODEL } from "../../models/tripo";
 import {
   LocalFileStorage,
   readJson,
@@ -161,6 +162,7 @@ describe("runTripoTexture", () => {
     const textureCall = calls.find((call) => call.url.endsWith("/models/texture"));
     expect(textureCall?.body).toEqual({
       input: "ft-1",
+      model: "v3.5-20260815",
       texture_prompt: { text: "worn red paint" },
       pbr: true,
     });
@@ -174,6 +176,33 @@ describe("runTripoTexture", () => {
     expect(sidecar.params.input_model).toBe(`${dir}/1-painted-crate.glb`);
     expect(sidecar.model).toBe("/models/texture");
     expect(sidecar.status).toBe("succeeded");
+  });
+
+  test("textureQuality 与 delight 原样提交，并写进请求侧写", async () => {
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    const result = await runTripoTexture(
+      storage,
+      {
+        projectSlug: "tp",
+        assetSlug: "painted-crate",
+        textureQuality: "fast",
+        delight: false,
+      },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
+    );
+
+    const textureCall = calls.find((call) => call.url.endsWith("/models/texture"));
+    expect(textureCall?.body).toMatchObject({
+      model: "v3.5-20260815",
+      texture_quality: "fast",
+      delight: false,
+    });
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.params).toMatchObject({
+      texture_model: "v3.5-20260815",
+      texture_quality: "fast",
+      delight: false,
+    });
   });
 });
 
@@ -211,13 +240,32 @@ describe("runTripoImageTo3d", () => {
     const result = await runTripoImageTo3d(
       storage,
       { projectSlug: "tp", assetSlug: "crate-pinned" },
-      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1, imageModel: "v2.5-20260210" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1, imageModel: "v2.5-20250123" },
     );
 
     const createCall = calls.find((c) => c.url.endsWith("/generation/image-to-model"));
-    expect((createCall?.body as { model: string }).model).toBe("v2.5-20260210");
+    expect((createCall?.body as { model: string }).model).toBe("v2.5-20250123");
+    /** v2.5 几何仍配 v2.5 贴图，不会被升到 v3.5。 */
+    expect((createCall?.body as { texture_version: string }).texture_version)
+      .toBe("v2.5-20250123");
     const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
-    expect(sidecar.params.image_model).toBe("v2.5-20260210");
+    expect(sidecar.params.image_model).toBe("v2.5-20250123");
+    expect(sidecar.params.texture_model).toBe("v2.5-20250123");
+  });
+
+  test("P 系列几何模型走同一端点，贴图版本取最新的 v3.5", async () => {
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    await runTripoImageTo3d(
+      storage,
+      { projectSlug: "tp", assetSlug: "crate-p2" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1, imageModel: TRIPO_P2_MODEL },
+    );
+
+    const createCall = calls.find((c) => c.url.endsWith("/generation/image-to-model"));
+    expect(createCall?.body).toMatchObject({
+      model: "P2-20260801",
+      texture_version: "v3.5-20260815",
+    });
   });
 
   test("有已标注的前后视图时 auto 使用 multiview-to-model", async () => {
