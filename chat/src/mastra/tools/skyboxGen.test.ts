@@ -3,10 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assetDir, assetIdentityFile } from "../../common/libraryPaths";
-import { ProjectSchema, RequestSidecarSchema } from "../../dto/library";
-import { LocalFileStorage, readJson } from "../../services/assetStorage";
-import { createProject, requireProject } from "./projectTools";
-import { runSkyboxGeneration } from "./skyboxGen";
+import { AssetIdentitySchema, ProjectSchema, RequestSidecarSchema } from "../../dto/library";
+import { LocalFileStorage, readJson, writeJson } from "../../services/assetStorage";
+import { createProject, requireProject, setCurrentSkybox } from "./projectTools";
+import { runCurrentSkyboxEdit, runSkyboxGeneration } from "./skyboxGen";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-skybox-test-"));
 const storage = new LocalFileStorage(root);
@@ -192,5 +192,158 @@ describe("runSkyboxGeneration", () => {
     expect(genSidecar.error).toBeTruthy();
     expect(genSidecar.providerTaskId).toBe("obf-11");
     expect(genSidecar.params.requestId).toBe("11");
+  });
+});
+
+describe("runCurrentSkyboxEdit", () => {
+  test("用所选图片模型编辑当前天空盒，并把图片保存为同资产的新代次", async () => {
+    await createProject(storage, { name: "编辑天空盒", slug: "sb-edit" });
+    const dir = assetDir("sb-edit", "evening-sky");
+    await writeJson(storage, assetIdentityFile("sb-edit", "evening-sky"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "evening-sky",
+      kind: "skybox",
+      name: "Evening sky",
+      intent: "warm evening",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    await storage.writeBytes(`${dir}/0-evening-sky.png`, PNG_BYTES);
+    await storage.writeBytes(`${dir}/1-evening-sky.hdr`, HDR_BYTES);
+    await setCurrentSkybox(storage, "sb-edit", "evening-sky");
+
+    let requestBody: Record<string, unknown> | undefined;
+    const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return jsonResponse({
+        data: [{ b64_json: Buffer.from(PNG_BYTES).toString("base64") }],
+      });
+    }) as typeof fetch;
+
+    const result = await runCurrentSkyboxEdit(
+      storage,
+      {
+        projectSlug: "sb-edit",
+        prompt: "改成有紫色极光的雪夜",
+        model: "seedream-5-pro",
+      },
+      { volcengineApiKey: "volc-key" },
+      { fetchFn },
+    );
+
+    expect(result).toMatchObject({
+      skyboxSlug: "evening-sky",
+      image: `${dir}/2-evening-sky.png`,
+      model: "seedream-5-pro",
+    });
+    expect(await storage.exists(`${dir}/0-evening-sky.png`)).toBe(true);
+    expect(await storage.exists(`${dir}/1-evening-sky.hdr`)).toBe(true);
+    expect(await storage.exists(result.image)).toBe(true);
+    expect(requestBody?.model).toBe("doubao-seedream-5-0-pro-260628");
+    expect(requestBody?.image).toBeString();
+    expect(String(requestBody?.prompt)).toContain("seamless 360-degree equirectangular");
+    expect(String(requestBody?.prompt)).toContain("紫色极光");
+
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.status).toBe("succeeded");
+    expect(sidecar.provider).toBe("volcengine");
+    expect(sidecar.params.model).toBe("seedream-5-pro");
+    expect(sidecar.params.input_image).toBe(`${dir}/0-evening-sky.png`);
+    expect((await requireProject(storage, "sb-edit")).currentSkybox).toBe("evening-sky");
+  });
+
+  test("没有已生成天空盒时以内置默认图创建唯一天空盒资产", async () => {
+    await createProject(storage, { name: "默认天空盒", slug: "sb-default" });
+    let requestBody: Record<string, unknown> | undefined;
+    const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return jsonResponse({
+        data: [{ b64_json: Buffer.from(PNG_BYTES).toString("base64") }],
+      });
+    }) as typeof fetch;
+
+    const result = await runCurrentSkyboxEdit(
+      storage,
+      { projectSlug: "sb-default", prompt: "改成夜晚" },
+      { volcengineApiKey: "volc-key" },
+      { fetchFn },
+    );
+
+    expect(result.skyboxSlug).toBe("skybox");
+    expect(result.image).toBe(`${assetDir("sb-default", "skybox")}/0-skybox.png`);
+    expect(requestBody?.image).toBeString();
+    expect(String(requestBody?.image)).toStartWith("data:image/jpeg;base64,");
+    expect((await requireProject(storage, "sb-default")).currentSkybox).toBe("skybox");
+    const identity = await readJson(
+      storage,
+      assetIdentityFile("sb-default", "skybox"),
+      AssetIdentitySchema,
+    );
+    expect(identity.kind).toBe("skybox");
+    expect(identity.name).toBe("Skybox");
+  });
+
+  test("旧项目有天空盒但没有 currentSkybox 指针时自动复用现有资产", async () => {
+    await createProject(storage, { name: "旧天空盒", slug: "sb-legacy" });
+    const dir = assetDir("sb-legacy", "legacy-sky");
+    await writeJson(storage, assetIdentityFile("sb-legacy", "legacy-sky"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "legacy-sky",
+      kind: "skybox",
+      name: "Legacy sky",
+      intent: "legacy",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    await storage.writeBytes(`${dir}/0-legacy-sky.png`, PNG_BYTES);
+    const fetchFn = (async (_input: string | URL | Request) => jsonResponse({
+      data: [{ b64_json: Buffer.from(PNG_BYTES).toString("base64") }],
+    })) as typeof fetch;
+
+    const result = await runCurrentSkyboxEdit(
+      storage,
+      { projectSlug: "sb-legacy", prompt: "加一点云" },
+      { volcengineApiKey: "volc-key" },
+      { fetchFn },
+    );
+
+    expect(result.skyboxSlug).toBe("legacy-sky");
+    expect(result.image).toBe(`${dir}/1-legacy-sky.png`);
+    expect((await requireProject(storage, "sb-legacy")).currentSkybox).toBe("legacy-sky");
+  });
+
+  test("现有天空盒只有 HDR 时用内置默认图作为可编辑输入，但仍写回同一资产", async () => {
+    await createProject(storage, { name: "HDR 天空盒", slug: "sb-hdr-only" });
+    const dir = assetDir("sb-hdr-only", "hdr-sky");
+    await writeJson(storage, assetIdentityFile("sb-hdr-only", "hdr-sky"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "hdr-sky",
+      kind: "skybox",
+      name: "HDR sky",
+      intent: "legacy HDR",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    await storage.writeBytes(`${dir}/0-hdr-sky.hdr`, HDR_BYTES);
+    const defaultDataUri = `data:image/jpeg;base64,${Buffer.from(PNG_BYTES).toString("base64")}`;
+    let requestBody: Record<string, unknown> | undefined;
+    const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return jsonResponse({
+        data: [{ b64_json: Buffer.from(PNG_BYTES).toString("base64") }],
+      });
+    }) as typeof fetch;
+
+    const result = await runCurrentSkyboxEdit(
+      storage,
+      { projectSlug: "sb-hdr-only", prompt: "变成清晨" },
+      { volcengineApiKey: "volc-key" },
+      { fetchFn, defaultImageDataUri: defaultDataUri },
+    );
+
+    expect(result.skyboxSlug).toBe("hdr-sky");
+    expect(result.image).toBe(`${dir}/1-hdr-sky.png`);
+    expect(requestBody?.image).toBe(defaultDataUri);
+    expect((await requireProject(storage, "sb-hdr-only")).currentSkybox).toBe("hdr-sky");
   });
 });

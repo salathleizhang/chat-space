@@ -55,6 +55,7 @@ const TASK_STARTING_TOOLS = new Set([
 /** 完成后会立刻在 source/ 落盘图片，需要同步刷新图片库。 */
 const IMAGE_OUTPUT_TOOLS = new Set([
   "generate-reference-images",
+  "generate-skybox",
   "edit-reference-image",
 ]);
 
@@ -86,6 +87,7 @@ const BACKGROUND_ACTIVITY_TOOLS = new Set([
 const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "update-plan": "Updating plan",
   "generate-reference-images": "Generating image",
+  "generate-skybox": "Generating skybox",
   "edit-reference-image": "Editing reference image",
   "analyze-scene": "Analyzing current scene",
   analyzeSceneTool: "Analyzing current scene",

@@ -8,6 +8,7 @@ import {
   buildCadModelTool,
   getCadSourceTool,
   generateReferenceImagesTool,
+  generateSkyboxTool,
   generateTextureTool,
   identifyAssetTool,
   inspectAssetTool,
@@ -36,6 +37,7 @@ export function createCreatorAgent(
     tools: {
       "update-plan": updatePlanTool,
       "generate-reference-images": generateReferenceImagesTool,
+      "generate-skybox": generateSkyboxTool,
       "generate-texture": generateTextureTool,
       "analyze-scene": analyzeSceneTool,
       ...(options.enableAnalyzeReference

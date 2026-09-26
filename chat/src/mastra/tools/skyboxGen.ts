@@ -1,6 +1,12 @@
+import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { toErrorMessage } from "../../common/errors";
-import { formatIndexedName, formatRequestSidecarName, nextIndex } from "../../common/indexedFiles";
+import { ChatServiceError, toErrorMessage } from "../../common/errors";
+import {
+  formatIndexedName,
+  formatRequestSidecarName,
+  nextIndex,
+  reserveIndex,
+} from "../../common/indexedFiles";
 import { assetDir, assetIdentityFile } from "../../common/libraryPaths";
 import {
   AssetIdentitySchema,
@@ -15,13 +21,32 @@ import {
   submitSkyboxExport,
   type BlockadeLabsOptions,
 } from "../../models/blockadelabs";
-import { writeJson, type AssetStorage } from "../../services/assetStorage";
+import {
+  IMAGE_CHANNELS,
+  IMAGE_EDIT_MODEL_IDS,
+  routeImageEditChannel,
+  runImageEdit,
+  type ImageEditModel,
+  type ImageProviderKeys,
+} from "../../models/images";
+import {
+  getAssetStorage,
+  readAsDataUri,
+  writeJson,
+  type AssetStorage,
+} from "../../services/assetStorage";
 import { downloadToLibrary } from "./assetRepair";
 import {
+  getProjectState,
   requireProject,
   setCurrentSkybox,
   uniqueAssetSlug,
 } from "./projectTools";
+import {
+  currentImageGenerateModel,
+  optionalContextString,
+  requireCurrentProject,
+} from "./requestContext";
 
 export const SkyboxGenParamsSchema = z.object({
   projectSlug: SlugSchema,
@@ -39,6 +64,254 @@ export interface SkyboxGenResult {
   panoPath: string;
   sidecars: string[];
 }
+
+const SKYBOX_RASTER_RE = /^(\d+)-.*\.(png|jpe?g|webp)$/i;
+
+function latestSkyboxRaster(files: string[]): string | undefined {
+  let best: { name: string; index: number } | undefined;
+  for (const name of files) {
+    const match = SKYBOX_RASTER_RE.exec(name);
+    if (!match) continue;
+    const index = Number(match[1]);
+    if (!best || index > best.index) best = { name, index };
+  }
+  return best?.name;
+}
+
+function imageExtension(ref: { url?: string; mimeType?: string }): "png" | "jpg" | "webp" {
+  const mime = ref.mimeType?.toLowerCase();
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
+  if (mime === "image/webp") return "webp";
+  const url = ref.url?.split(/[?#]/)[0];
+  const urlExt = url?.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+  if (urlExt === "jpg" || urlExt === "jpeg") return "jpg";
+  if (urlExt === "webp") return "webp";
+  return "png";
+}
+
+function composeSkyboxEditPrompt(prompt: string): string {
+  return [
+    "Edit the supplied image as a seamless 360-degree equirectangular skybox panorama.",
+    "Preserve the exact equirectangular projection, original aspect ratio, horizon continuity, and a seamless left/right edge.",
+    "Do not add borders, text, watermarks, frames, or a visible seam.",
+    `Requested change: ${prompt}`,
+  ].join("\n");
+}
+
+export const EditCurrentSkyboxParamsSchema = z.object({
+  projectSlug: SlugSchema,
+  prompt: z.string().min(1),
+  model: z.enum(IMAGE_EDIT_MODEL_IDS).default("seedream"),
+  channel: z.enum(IMAGE_CHANNELS).optional(),
+});
+
+export interface EditCurrentSkyboxResult {
+  skyboxSlug: string;
+  image: string;
+  sidecar: string;
+  model: ImageEditModel;
+}
+
+const DEFAULT_SKYBOX_IMAGE_URLS = [
+  new URL("../../../../app/dist/env/sky.jpg", import.meta.url),
+  new URL("../../../../app/public/env/sky.jpg", import.meta.url),
+];
+
+async function defaultSkyboxDataUri(): Promise<string> {
+  for (const url of DEFAULT_SKYBOX_IMAGE_URLS) {
+    const file = Bun.file(url);
+    if (await file.exists()) {
+      return `data:image/jpeg;base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`;
+    }
+  }
+  throw new ChatServiceError(
+    "内置默认天空盒的可编辑全景图不存在",
+    500,
+    "default_skybox_missing",
+  );
+}
+
+interface ResolvedSkyboxInput {
+  skyboxSlug: string;
+  inputLabel: string;
+  dataUri: string;
+  isNewAsset: boolean;
+}
+
+/** 当前指针优先；旧项目没有指针时自动复用最近创建的天空盒；都没有才使用内置默认图。 */
+async function resolveSkyboxInput(
+  storage: AssetStorage,
+  projectSlug: string,
+  currentSkybox: string | undefined,
+  defaultImageDataUri?: string,
+): Promise<ResolvedSkyboxInput> {
+  const state = await getProjectState(storage, projectSlug);
+  const skyboxes = state.assets
+    .filter((asset) => asset.identity?.kind === "skybox")
+    .sort((a, b) =>
+      (b.identity?.createdAt ?? "").localeCompare(a.identity?.createdAt ?? ""),
+    );
+  const existing = skyboxes.find((asset) => asset.slug === currentSkybox) ?? skyboxes[0];
+  if (existing) {
+    const inputFile = latestSkyboxRaster(existing.files);
+    const inputPath = inputFile
+      ? `${assetDir(projectSlug, existing.slug)}/${inputFile}`
+      : "builtin:/env/sky.jpg";
+    return {
+      skyboxSlug: existing.slug,
+      inputLabel: inputPath,
+      dataUri: inputFile
+        ? await readAsDataUri(storage, inputPath)
+        : defaultImageDataUri ?? await defaultSkyboxDataUri(),
+      isNewAsset: false,
+    };
+  }
+
+  return {
+    skyboxSlug: await uniqueAssetSlug(storage, projectSlug, "skybox"),
+    inputLabel: "builtin:/env/sky.jpg",
+    dataUri: defaultImageDataUri ?? await defaultSkyboxDataUri(),
+    isNewAsset: true,
+  };
+}
+
+/**
+ * 用当前图片生成模型编辑项目当前启用的天空盒。输出作为同一天空盒资产的新代次，
+ * 不覆盖旧全景/HDR；视口按最高索引选择环境图，因此刷新后立即显示新结果。
+ */
+export async function runCurrentSkyboxEdit(
+  storage: AssetStorage,
+  rawParams: z.input<typeof EditCurrentSkyboxParamsSchema>,
+  keys: ImageProviderKeys,
+  options: { fetchFn?: typeof fetch; defaultImageDataUri?: string } = {},
+): Promise<EditCurrentSkyboxResult> {
+  const params = EditCurrentSkyboxParamsSchema.parse(rawParams);
+  const project = await requireProject(storage, params.projectSlug);
+  const resolved = await resolveSkyboxInput(
+    storage,
+    params.projectSlug,
+    project.currentSkybox,
+    options.defaultImageDataUri,
+  );
+  const { skyboxSlug } = resolved;
+  const dir = assetDir(params.projectSlug, skyboxSlug);
+  const route = routeImageEditChannel(params.model, keys, params.channel);
+  const effectivePrompt = composeSkyboxEditPrompt(params.prompt);
+  const now = () => new Date().toISOString();
+  const sidecarFor = (index: number): RequestSidecar => ({
+    schemaVersion: 1,
+    index,
+    slug: skyboxSlug,
+    provider: route.channel,
+    model: route.entry.model,
+    params: {
+      prompt: params.prompt,
+      effective_prompt: effectivePrompt,
+      model: params.model,
+      input_image: resolved.inputLabel,
+      operation: "skybox/edit",
+    },
+    status: "queued",
+    outputs: [],
+    createdAt: now(),
+    updatedAt: now(),
+  });
+  const index = await reserveIndex(storage, dir, skyboxSlug, (candidate) =>
+    JSON.stringify(sidecarFor(candidate), null, 2),
+  );
+  const sidecarPath = `${dir}/${formatRequestSidecarName(index, skyboxSlug)}`;
+  const sidecar = sidecarFor(index);
+  const saveSidecar = () =>
+    writeJson(storage, sidecarPath, RequestSidecarSchema, { ...sidecar, updatedAt: now() });
+  await saveSidecar();
+
+  try {
+    sidecar.status = "running";
+    await saveSidecar();
+    const { refs } = await runImageEdit(
+      route.channel,
+      route.entry,
+      { prompt: effectivePrompt, images: [resolved.dataUri] },
+      route.apiKey,
+      options,
+    );
+    const ref = refs[0];
+    if (!ref) {
+      throw new ChatServiceError("天空盒编辑结果中没有图片", 502, "skybox_edit_no_image");
+    }
+
+    const outputPath = `${dir}/${formatIndexedName(
+      index,
+      skyboxSlug,
+      imageExtension(ref),
+    )}`;
+    if (ref.url) {
+      await downloadToLibrary(storage, ref.url, outputPath, { fetchFn: options.fetchFn });
+      sidecar.outputs = [{ path: outputPath, providerUrl: ref.url }];
+    } else if (ref.dataBase64) {
+      await storage.writeBytes(outputPath, new Uint8Array(Buffer.from(ref.dataBase64, "base64")));
+      sidecar.outputs = [{ path: outputPath }];
+    } else {
+      throw new ChatServiceError("天空盒编辑结果中没有图片", 502, "skybox_edit_no_image");
+    }
+
+    sidecar.status = "succeeded";
+    await saveSidecar();
+    if (resolved.isNewAsset) {
+      await writeJson(storage, assetIdentityFile(params.projectSlug, skyboxSlug), AssetIdentitySchema, {
+        schemaVersion: 1,
+        slug: skyboxSlug,
+        kind: "skybox",
+        name: "Skybox",
+        intent: params.prompt,
+        sourceImages: [],
+        createdAt: new Date().toISOString(),
+      });
+    }
+    await setCurrentSkybox(storage, params.projectSlug, skyboxSlug);
+    return {
+      skyboxSlug,
+      image: outputPath,
+      sidecar: sidecarPath,
+      model: params.model,
+    };
+  } catch (err) {
+    sidecar.status = "failed";
+    sidecar.error = toErrorMessage(err);
+    await saveSidecar();
+    throw err;
+  }
+}
+
+function imageProviderKeysFromContext(
+  context: Parameters<typeof optionalContextString>[0],
+): ImageProviderKeys {
+  return {
+    volcengineApiKey:
+      optionalContextString(context, "volcengineApiKey") ??
+      optionalContextString(context, "seed3dApiKey"),
+    googleApiKey: optionalContextString(context, "googleApiKey"),
+    openaiApiKey: optionalContextString(context, "openaiApiKey"),
+    openrouterApiKey: optionalContextString(context, "openrouterApiKey"),
+  };
+}
+
+export const generateSkyboxTool = createTool({
+  id: "generate-skybox",
+  description:
+    "天空盒生成（付费操作——调用前须经用户同意）：根据提示词修改项目唯一的天空盒，并自动使用 AgentDock 当前选择的图片生成模型。有已生成天空盒就继续编辑它；没有则以内置默认天空盒为输入创建。保留旧代次，成功后立即用于当前场景，不要求用户选择天空盒。",
+  inputSchema: z.object({ prompt: z.string().min(1) }),
+  execute: async (input, context) =>
+    runCurrentSkyboxEdit(
+      getAssetStorage(),
+      {
+        projectSlug: requireCurrentProject(context),
+        prompt: input.prompt,
+        model: currentImageGenerateModel(context),
+      },
+      imageProviderKeysFromContext(context),
+    ),
+});
 
 /**
  * 天空盒生成（Blockade Labs）：两段链式——生成全景图 → 导出 HDR，各自独立侧写、独立索引

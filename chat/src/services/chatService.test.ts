@@ -74,6 +74,11 @@ describe("imagePathsFromToolResult", () => {
       }),
     ).toEqual(["projects/demo/source/1-chair-ref.webp"]);
     expect(
+      imagePathsFromToolResult("generate-skybox", {
+        image: "projects/demo/assets/sky/2-sky.png",
+      }),
+    ).toEqual(["projects/demo/assets/sky/2-sky.png"]);
+    expect(
       imagePathsFromToolResult("start-3d-batch", {
         images: ["projects/demo/source/0-ref.png"],
       }),
@@ -175,5 +180,20 @@ describe("buildChatRequestContext", () => {
     );
 
     expect(context.get<string>("seed3dApiKey")).toBe("ark-seed3d-key");
+  });
+
+  test("把当前图片生成模型注入 Agent 工具上下文", () => {
+    const context = buildChatRequestContext(
+      {
+        projectSlug: "demo",
+        messages: [{ role: "user", content: "修改天空盒" }],
+        llm: { apiKey: "sk-llm" },
+        imageGenerateModel: "seedream-5-pro",
+      },
+      [],
+      false,
+    );
+
+    expect(context.get<string>("imageGenerateModel")).toBe("seedream-5-pro");
   });
 });

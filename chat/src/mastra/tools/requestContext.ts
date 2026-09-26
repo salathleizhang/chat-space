@@ -1,6 +1,10 @@
 import { ChatServiceError } from "../../common/errors";
 import type { LlmConfig } from "../../dto/chat";
 import { SlugSchema } from "../../dto/library";
+import {
+  IMAGE_EDIT_MODEL_IDS,
+  type ImageEditModel,
+} from "../../models/images";
 
 interface ToolContextLike {
   requestContext?: unknown;
@@ -72,6 +76,17 @@ export function referenceAnalysisAllowed(
   context: ToolContextLike | undefined,
 ): boolean {
   return readContextValue(context, "referenceAnalysisAllowed") === true;
+}
+
+/** AgentDock 当前图片生成模型；Auto/旧请求统一回退到默认 Seedream 4.5。 */
+export function currentImageGenerateModel(
+  context: ToolContextLike | undefined,
+): ImageEditModel {
+  const value = readContextValue(context, "imageGenerateModel");
+  return typeof value === "string" &&
+    (IMAGE_EDIT_MODEL_IDS as readonly string[]).includes(value)
+    ? value as ImageEditModel
+    : "seedream";
 }
 
 export function requireContextString(

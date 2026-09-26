@@ -113,6 +113,8 @@ export function imagePathsFromToolResult(
   const candidates =
     toolName === "generate-reference-images" || toolName === "generateReferenceImagesTool"
       ? record.images
+      : toolName === "generate-skybox" || toolName === "generateSkyboxTool"
+        ? [record.image]
       : toolName === "edit-reference-image" || toolName === "editReferenceImageTool"
         ? [record.image]
         : undefined;
@@ -237,6 +239,7 @@ export function buildChatRequestContext(
     tripo3dApiKey: request.tripo3dApiKey,
     seed3dApiKey: request.seed3dApiKey,
     volcengineApiKey: request.volcengineApiKey,
+    imageGenerateModel: request.imageGenerateModel,
   });
 }
 

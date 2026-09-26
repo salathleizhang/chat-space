@@ -16,6 +16,7 @@ export { analyzeSceneTool } from "./sceneAnalysis";
 export { generateReferenceImagesTool } from "./referenceImage";
 export { segmentPartsTool } from "./tripoOps";
 export { resumeGenerationTool } from "./resumeGeneration";
+export { generateSkyboxTool } from "./skyboxGen";
 export {
   listGenerationTasksTool,
   start3dBatchTool,
