@@ -6,8 +6,6 @@ import {
   analyzeSceneTool,
   analyzeReferenceTool,
   generateCharacterTool,
-  buildCadModelTool,
-  getCadSourceTool,
   generateReferenceImagesTool,
   generateSkyboxTool,
   generateTextureTool,
@@ -35,7 +33,7 @@ export function createCreatorAgent(
   return new Agent({
     id: "chatspace-creator",
     name: "ChatSpace 3D Creator",
-    description: "ChatSpace 的 3D 创作 agent：本地 CAD、火山方舟 3D 模型、Tripo3D 与 World Labs 场景",
+    description: "ChatSpace 的 3D 创作 agent：火山方舟 3D 模型、Tripo3D 与 World Labs 场景",
     instructions: CREATOR_INSTRUCTIONS,
     tools: {
       "update-plan": updatePlanTool,
@@ -52,8 +50,6 @@ export function createCreatorAgent(
       "retopologize": retopologizeTool,
       "rig-model": rigModelTool,
       "generate-character": generateCharacterTool,
-      "build-cad-model": buildCadModelTool,
-      "get-cad-source": getCadSourceTool,
       "identify-asset": identifyAssetTool,
       "inspect-asset": inspectAssetTool,
       "list-generation-tasks": listGenerationTasksTool,

@@ -13,7 +13,7 @@ export const CREATOR_INSTRUCTIONS = `你是 ChatSpace 的 3D 创作助手。项�
 - start-3d-batch 支持火山 Seed3D（默认）、火山影眸 Hyper3D Gen-2（provider=hyper3d-volc）、火山数美 Hi3D 2.0（provider=hi3d-volc），以及 Tripo3D（provider=tripo-direct）。Tripo 默认自动识别多视角参考图；需要更准确的几何时，先调用 generate-reference-images(mode=multiview, assetSlug=已有目标) 生成前/左/后/右视图，再以 tripoGenerationMode=multiview 启动。Hyper3D 可指定 faceCount 和 taPose；Hi3D 可指定 faceCount 和 resolution=1536/1536pro，但需要 Seedream 生成或编辑的参考图 URL。start-world-task 的 mode=direct 直接用最新源图和可选 prompt 生成 World Labs 世界，无须图片分析；sourceImage=null 时只用 prompt。mode=empty-environment 根据 one-shot-scene 已确认的场景分析去除对象，生成空环境。不要为 direct 模式额外调用图片分析。segment-parts 用 Tripo3D 分割已生成的模型。list-generation-tasks 查看任务状态与本地产物。
 - 已有模型只修改贴图时调用 generate-texture。它固定使用 Tripo v3 /models/texture，读取资产库最新模型；对话框选择的图片模型只影响参考图生成，不影响贴图。不要用 generate-reference-images + start-3d-batch 代替贴图操作。
 - 模型后处理统一使用 Tripo：retopologize 调用 v3 /mesh/decimate；rig-model 调用 /animations/rig。动作生成当前已禁用，不要尝试调用 generate-animation。generate-character 用 Tripo 图生 3D 后接 biped 绑骨，是两个付费任务，确认时须明确说明。Tripo 没有对已有模型单独 UV 展开的端点，只有 unwrap-uv 使用混元。
-- 规则几何体可用 build-cad-model 本地编译 OpenSCAD；修改时先用 get-cad-source 读取源码。inspect-asset 请求工作台生成模型四视角截图；截图会在后续带图消息返回，再据此判断结果。identify-asset 用参考图确认名称不明确的资产。repair-assets 补齐任务文件，resume-generation 续跑中断任务。
+- inspect-asset 请求工作台生成模型四视角截图；截图会在后续带图消息返回，再据此判断结果。identify-asset 用参考图确认名称不明确的资产。repair-assets 补齐任务文件，resume-generation 续跑中断任务。
 
 ## 操作约束
 
