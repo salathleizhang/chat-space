@@ -1,6 +1,7 @@
 import { CaretUpIcon } from "@phosphor-icons/react/CaretUp";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { placePopover, type PopoverPlacement } from "./popoverPosition";
 
 export interface SelectOption {
   value: string;
@@ -15,13 +16,20 @@ interface SelectProps {
   "aria-label"?: string;
 }
 
+/** 选项行高（与下方 `h-[54px]` 必须一致）：用来算内容理想高度，判断哪一侧装得下 */
+const OPTION_HEIGHT = 54;
+/** 弹层上下内边距之和（`p-2`） */
+const LIST_PADDING = 16;
+
 /** 胶囊触发下拉：浮层 portal 到 body + fixed 定位，逃逸父级面板的 overflow 裁切
     （同 Tooltip 的定位手法），坐标是运行时测量值，只能走 style。
+    展开方向由 `placePopover` 按两侧余量决定——写死向上会让贴着屏幕顶部的选择器
+    把前几个选项排到视口外（见 popoverPosition.ts）。
     已知限制：只做鼠标 + Escape 关闭，未实现方向键/Home/End/首字母导航与
     aria-activedescendant 焦点管理——键盘用户经 Tab 触达触发按钮后，选项行仍不可达。 */
 export function Select({ value, options, onChange, className = "", ...rest }: SelectProps) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; bottom: number; width: number } | null>(null);
+  const [pos, setPos] = useState<PopoverPlacement | null>(null);
   const anchorRef = useRef<HTMLButtonElement>(null);
 
   const current = options.find((option) => option.value === value);
@@ -49,7 +57,8 @@ export function Select({ value, options, onChange, className = "", ...rest }: Se
     }
     const rect = anchorRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6, width: rect.width });
+    const contentHeight = options.length * OPTION_HEIGHT + (options.length - 1) + LIST_PADDING;
+    setPos(placePopover(rect, { preferredHeight: contentHeight, minWidth: 176 }));
     setOpen(true);
   };
 
@@ -74,11 +83,19 @@ export function Select({ value, options, onChange, className = "", ...rest }: Se
             <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
             <ul
               role="listbox"
-              style={{ left: pos.left, bottom: pos.bottom, minWidth: Math.max(pos.width, 176) }}
-              className="fixed z-50 flex origin-bottom-left flex-col gap-1 rounded-surface border border-line bg-surface-raised p-2 shadow-lg backdrop-blur-md transition-[opacity,scale] duration-150 ease-spring starting:opacity-0 starting:scale-95 motion-reduce:starting:scale-100"
+              style={{
+                left: pos.left,
+                top: pos.top,
+                bottom: pos.bottom,
+                minWidth: pos.minWidth,
+                maxHeight: pos.maxHeight,
+              }}
+              className={`fixed z-50 flex flex-col gap-1 overflow-y-auto rounded-surface border border-line bg-surface-raised p-2 shadow-lg backdrop-blur-md transition-[opacity,scale] duration-150 ease-spring starting:opacity-0 starting:scale-95 motion-reduce:starting:scale-100 ${
+                pos.openUp ? "origin-bottom-left" : "origin-top-left"
+              }`}
             >
               {options.map((option) => (
-                <li key={option.value}>
+                <li key={option.value} className="shrink-0">
                   <button
                     type="button"
                     role="option"
