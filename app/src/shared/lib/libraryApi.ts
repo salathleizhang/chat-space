@@ -64,7 +64,34 @@ export interface AssetTransform {
  */
 export interface SceneLayout {
   transforms: Record<string, AssetTransform>;
+  /** 与 transforms 同为稀疏表：没有条目的资产保持供应商文件里的原材质 */
+  materials?: Record<string, AssetMaterial>;
   updatedAt: string;
+}
+
+/**
+ * 可被工程图片覆盖的贴图通道（three 材质槽位名）
+ */
+export const MATERIAL_TEXTURE_SLOTS = [
+  "map",
+  "normalMap",
+  "roughnessMap",
+  "metalnessMap",
+  "aoMap",
+  "emissiveMap",
+  "alphaMap",
+] as const;
+export type MaterialTextureSlot = (typeof MATERIAL_TEXTURE_SLOTS)[number];
+
+/**
+ * 单个资产的材质覆盖（scene.json 的 materials 条目）。**只做贴图替换，不换材质类**：
+ * 覆盖是从模型自带材质克隆一份、只补用户改过的槽位，所以 glTF 的 clearcoat/transmission、
+ * OBJ 的 specular、unlit 材质都原样保留。
+ *
+ * 稀疏到槽位：`textures` 里没有的通道沿用模型自带贴图。
+ */
+export interface AssetMaterial {
+  textures: Partial<Record<MaterialTextureSlot, string>>;
 }
 
 export interface ProjectState {
@@ -410,13 +437,35 @@ export async function saveSceneTransforms(
   projectSlug: string,
   transforms: Record<string, AssetTransform>,
 ): Promise<void> {
+  await putScene(projectSlug, { transforms }, "Failed to save scene placement");
+}
+
+/**
+ * 保存材质覆盖：与摆放共用同一个端点，服务端在同一把文件锁里按键浅合并。
+ * 材质编辑是离散动作（换一张贴图），不需要防抖；调用方只负责把请求按序排队。
+ */
+export async function saveSceneMaterials(
+  projectSlug: string,
+  materials: Record<string, AssetMaterial>,
+): Promise<void> {
+  await putScene(projectSlug, { materials }, "Failed to save material");
+}
+
+async function putScene(
+  projectSlug: string,
+  body: {
+    transforms?: Record<string, AssetTransform>;
+    materials?: Record<string, AssetMaterial>;
+  },
+  failureLabel: string,
+): Promise<void> {
   const response = await chatFetch(`/api/projects/${projectSlug}/scene`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transforms }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw await chatResponseError(response, `Failed to save scene placement (${response.status})`);
+    throw await chatResponseError(response, `${failureLabel} (${response.status})`);
   }
 }
 

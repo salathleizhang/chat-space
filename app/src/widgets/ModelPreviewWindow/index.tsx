@@ -6,7 +6,7 @@ import { OrbitControls } from "@react-three/drei/core/OrbitControls";
 import { Canvas, useThree } from "@react-three/fiber";
 import { memo, Suspense, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import * as THREE from "three";
-import type { AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
+import type { AssetMaterial, AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
 import { Badge, Button, Panel } from "../../shared/ui";
 import { ModelMesh } from "../Viewport/ModelMesh";
 import { createInspectionCamera, INSPECTION_VIEWS } from "./inspectionViews";
@@ -26,6 +26,8 @@ interface ModelPreviewWindowProps {
   asset: LibraryAsset;
   /** 与主视口一致的旋转/缩放；位置由预览窗自动居中。 */
   transform?: AssetTransform;
+  /** 与主视口一致的材质覆盖；不传即渲染供应商原材质 */
+  material?: AssetMaterial;
   inspection: InspectionRequest | null;
   onClose: () => void;
   /** 四视角合成图完成（pngBase64 不含 data: 前缀）；失败时 base64 为 null */
@@ -134,6 +136,7 @@ function InspectionCapturer({
 export const ModelPreviewWindow = memo(function ModelPreviewWindow({
   asset,
   transform,
+  material,
   inspection,
   onClose,
   onInspectionCaptured,
@@ -225,7 +228,7 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
             <Suspense fallback={null}>
               <Bounds fit clip observe margin={1.3}>
                 <group rotation={transform?.rotation} scale={transform?.scale}>
-                  <ModelMesh asset={asset} />
+                  <ModelMesh asset={asset} material={material} />
                 </group>
               </Bounds>
             </Suspense>

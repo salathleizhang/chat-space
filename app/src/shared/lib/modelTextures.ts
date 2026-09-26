@@ -149,3 +149,49 @@ export function collectTextureEntries(root: Object3D): TextureEntry[] {
   }
   return entries;
 }
+
+/** 模型自带材质在某个通道上的贴图；右侧栏的"当前贴图"缩略图就是它 */
+export interface ChannelTexture {
+  /** 模型里第一个真的填了这个通道的材质名（可能为空串，OBJ 的材质常常没有名字） */
+  materialName: string;
+  width: number;
+  height: number;
+  /** 无法绘制的压缩纹理为 null，此时右侧栏只显示"Compressed format"占位 */
+  dataUrl: string | null;
+}
+
+/**
+ * 按**通道**收集模型自带贴图，与 `collectTextureEntries` 的"按贴图去重"正好相反：
+ * 悬浮卡问的是"这个模型用了哪些贴图"，右侧栏问的是"base color 这一格现在是谁"。
+ * 因此这里按传入的槽位顺序逐个查，每个槽位取第一个填了它的材质——多材质模型在
+ * 右侧栏里只呈现主材质那一份，逐个材质各列一行会把面板撑成材质清单。
+ */
+export function collectChannelTextures(
+  root: Object3D,
+  slots: readonly string[],
+): Map<string, ChannelTexture> {
+  const found = new Map<string, ChannelTexture>();
+  root.traverse((node) => {
+    if (found.size === slots.length) return;
+    const material = (node as { material?: Material | Material[] }).material;
+    if (!material) return;
+    for (const mat of Array.isArray(material) ? material : [material]) {
+      for (const slot of slots) {
+        if (found.has(slot)) continue;
+        const texture = (mat as unknown as Record<string, unknown>)[slot] as
+          | Texture
+          | null
+          | undefined;
+        if (!texture?.isTexture) continue;
+        const { width, height } = textureSize(texture);
+        found.set(slot, {
+          materialName: mat.name ?? "",
+          width,
+          height,
+          dataUrl: renderThumb(texture),
+        });
+      }
+    }
+  });
+  return found;
+}
