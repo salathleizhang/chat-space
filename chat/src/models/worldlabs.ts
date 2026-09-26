@@ -1,4 +1,10 @@
 import { ChatServiceError } from "../common/errors";
+import {
+  API_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  isRetryableNetworkError,
+  sleep,
+} from "../common/http";
 
 /**
  * World Labs Marble 客户端（对应上游 generate-world.mjs）。
@@ -13,6 +19,8 @@ export interface WorldLabsOptions {
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /** 单次轮询的超时预算（默认 API_REQUEST_TIMEOUT_MS） */
+  requestTimeoutMs?: number;
   onStatus?: (status: string) => void | Promise<void>;
 }
 
@@ -90,15 +98,21 @@ export async function submitMarbleWorld(
       }
     : { type: "text", text_prompt: params.textPrompt };
 
-  const submitResponse = await fetchFn(`${ENDPOINT}/worlds:generate`, {
-    method: "POST",
-    headers: headers(options.apiKey),
-    body: JSON.stringify({
-      display_name: params.displayName,
-      model: MARBLE_MODEL,
-      world_prompt: worldPrompt,
-    }),
-  });
+  const submitResponse = await fetchWithTimeout(
+    fetchFn,
+    `${ENDPOINT}/worlds:generate`,
+    {
+      method: "POST",
+      headers: headers(options.apiKey),
+      body: JSON.stringify({
+        display_name: params.displayName,
+        model: MARBLE_MODEL,
+        world_prompt: worldPrompt,
+      }),
+    },
+    API_REQUEST_TIMEOUT_MS,
+    "World Labs 提交",
+  );
   const submitBody = (await submitResponse.json().catch(() => ({}))) as MarbleOperation;
   if (!submitResponse.ok) {
     throw new ChatServiceError(
@@ -127,11 +141,16 @@ export async function pollMarbleOperation(
   for (;;) {
     let response: Response;
     try {
-      response = await fetchFn(`${ENDPOINT}/operations/${operationId}`, {
-        headers: { "WLT-Api-Key": options.apiKey },
-      });
-    } catch {
+      response = await fetchWithTimeout(
+        fetchFn,
+        `${ENDPOINT}/operations/${operationId}`,
+        { headers: { "WLT-Api-Key": options.apiKey } },
+        options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+        "World Labs 轮询",
+      );
+    } catch (error) {
       // 瞬时网络错误不终止整条任务：等一个轮询间隔后继续，超时仍由 deadline 判定。
+      if (!isRetryableNetworkError(error)) throw error;
       if (Date.now() > deadline) {
         throw new ChatServiceError(
           `World Labs 生成超时（operation_id=${operationId}）`,
@@ -139,7 +158,7 @@ export async function pollMarbleOperation(
           "worldlabs_timeout",
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      await sleep(pollIntervalMs);
       continue;
     }
     const body = (await response.json().catch(() => ({}))) as MarbleOperation;

@@ -1,5 +1,12 @@
 import { createHash, createHmac } from "node:crypto";
 import { ChatServiceError } from "../common/errors";
+import {
+  API_REQUEST_TIMEOUT_MS,
+  UPLOAD_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  isRetryableNetworkError,
+  sleep,
+} from "../common/http";
 
 /**
  * Tripo3D 直连客户端（Bearer tsk_ key；v3 REST 细节经官方文档核实 2026-09）。
@@ -23,6 +30,8 @@ export interface TripoCallOptions {
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /** 单次状态查询的超时预算（默认 API_REQUEST_TIMEOUT_MS） */
+  requestTimeoutMs?: number;
   /** 图生 3D 的几何模型版本；缺省用 DEFAULT_TRIPO_IMAGE_MODEL */
   imageModel?: string;
   onStatus?: (status: string) => void | Promise<void>;
@@ -49,11 +58,17 @@ export async function uploadTripoFile(
   const fetchFn = options.fetchFn ?? fetch;
   const form = new FormData();
   form.append("file", new Blob([bytes]), fileName);
-  const response = await fetchFn(`${V3_BASE}/files`, {
-    method: "POST",
-    headers: authHeader(options.apiKey),
-    body: form,
-  });
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${V3_BASE}/files`,
+    {
+      method: "POST",
+      headers: authHeader(options.apiKey),
+      body: form,
+    },
+    UPLOAD_REQUEST_TIMEOUT_MS,
+    "Tripo 上传",
+  );
   const payload = await jsonOrEmpty(response);
   if (!response.ok) {
     throw new ChatServiceError(
@@ -121,11 +136,17 @@ export async function createTripoV3Task(
   options: TripoCallOptions,
 ): Promise<string> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${V3_BASE}${path}`, {
-    method: "POST",
-    headers: { ...authHeader(options.apiKey), "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${V3_BASE}${path}`,
+    {
+      method: "POST",
+      headers: { ...authHeader(options.apiKey), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    API_REQUEST_TIMEOUT_MS,
+    `Tripo 提交 ${path}`,
+  );
   const payload = await jsonOrEmpty(response);
   if (!response.ok) {
     throw new ChatServiceError(
@@ -212,19 +233,25 @@ export async function sigV4PutObject(
   );
   const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
 
-  const response = await fetchFn(`https://${s3Host}${canonicalUri}`, {
-    method: "PUT",
-    headers: {
-      Host: s3Host,
-      "x-amz-content-sha256": payloadHash,
-      "x-amz-date": amzDate,
-      "x-amz-security-token": creds.sessionToken,
-      Authorization:
-        `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${scope}, ` +
-        `SignedHeaders=${S3_SIGNED_HEADERS}, Signature=${signature}`,
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `https://${s3Host}${canonicalUri}`,
+    {
+      method: "PUT",
+      headers: {
+        Host: s3Host,
+        "x-amz-content-sha256": payloadHash,
+        "x-amz-date": amzDate,
+        "x-amz-security-token": creds.sessionToken,
+        Authorization:
+          `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${scope}, ` +
+          `SignedHeaders=${S3_SIGNED_HEADERS}, Signature=${signature}`,
+      },
+      body: bytes,
     },
-    body: bytes,
-  });
+    UPLOAD_REQUEST_TIMEOUT_MS,
+    "Tripo S3 直传",
+  );
   if (!response.ok) {
     throw new ChatServiceError(
       `Tripo S3 直传失败（${response.status}）：${(await response.text()).slice(0, 300)}`,
@@ -241,11 +268,17 @@ export async function uploadTripoModelViaSts(
   options: TripoCallOptions,
 ): Promise<string> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${V3_BASE}/files/upload-credentials`, {
-    method: "POST",
-    headers: { ...authHeader(options.apiKey), "Content-Type": "application/json" },
-    body: JSON.stringify({ format }),
-  });
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${V3_BASE}/files/upload-credentials`,
+    {
+      method: "POST",
+      headers: { ...authHeader(options.apiKey), "Content-Type": "application/json" },
+      body: JSON.stringify({ format }),
+    },
+    API_REQUEST_TIMEOUT_MS,
+    "Tripo STS 换发",
+  );
   const payload = await jsonOrEmpty(response);
   if (!response.ok) {
     throw new ChatServiceError(
@@ -291,10 +324,32 @@ export async function waitForTripoTask(
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
   const url = `${V3_BASE}/tasks/${taskId}`;
+  const timeoutError = () =>
+    new ChatServiceError(
+      `Tripo 任务超时（task_id=${taskId}，可凭侧写续查）`,
+      504,
+      "tripo_timeout",
+    );
 
   for (;;) {
-    const response = await fetchFn(url, { headers: authHeader(options.apiKey) });
-    const payload = await jsonOrEmpty(response);
+    let response: Response;
+    let payload: Record<string, unknown>;
+    try {
+      response = await fetchWithTimeout(
+        fetchFn,
+        url,
+        { headers: authHeader(options.apiKey) },
+        options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+        "Tripo 任务查询",
+      );
+      payload = await jsonOrEmpty(response);
+    } catch (error) {
+      // 单次请求超时/网络抖动不终止整条任务：等一个轮询间隔再查，整体仍由 deadline 兜底。
+      if (!isRetryableNetworkError(error)) throw error;
+      if (Date.now() > deadline) throw timeoutError();
+      await sleep(pollIntervalMs);
+      continue;
+    }
     if (!response.ok) {
       throw new ChatServiceError(
         `Tripo 任务查询失败（${response.status}）`,
@@ -310,13 +365,7 @@ export async function waitForTripoTask(
     if (TERMINAL_FAILURES.has(status)) {
       throw new ChatServiceError(`Tripo 任务失败：${status}`, 502, "tripo_task_failed");
     }
-    if (Date.now() > deadline) {
-      throw new ChatServiceError(
-        `Tripo 任务超时（task_id=${taskId}，可凭侧写续查）`,
-        504,
-        "tripo_timeout",
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (Date.now() > deadline) throw timeoutError();
+    await sleep(pollIntervalMs);
   }
 }

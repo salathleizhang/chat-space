@@ -45,6 +45,8 @@ export const GenerationTaskSchema = z.object({
   phase: TaskPhaseSchema.default("queued"),
   assetSlug: SlugSchema.optional(),
   batchId: z.string().optional(),
+  /** 创建该任务的进程身份；热重载不变、进程重启才变，用于区分「服务重启」和「模块重载」 */
+  bootId: z.string().optional(),
   retry: Retryable3dTaskSchema.optional(),
   result: z.unknown().optional(),
   error: z.string().optional(),

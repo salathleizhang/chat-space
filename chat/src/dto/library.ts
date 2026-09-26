@@ -257,3 +257,19 @@ export const RequestSidecarSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 export type RequestSidecar = z.infer<typeof RequestSidecarSchema>;
+
+/**
+ * 这份侧写还能凭 `resume-generation` 接续吗？已提交（有 providerTaskId）但没跑完的、
+ * 以及超时/中断写成 failed 的，都可以只轮询 + 下载，不重新提交付费请求。
+ *
+ * 判断必须和 `listResumableSidecars` 一致：2026-09-26 出过一次「repair-assets 什么
+ * 也没说，于是把供应商侧早已完成的任务又提交了一遍」的双重付费，两处共用这一个谓词。
+ */
+export function isResumableSidecar(sidecar: RequestSidecar): boolean {
+  const hasProviderTaskId = Boolean(sidecar.providerTaskId);
+  return (
+    sidecar.status === "queued" ||
+    sidecar.status === "running" ||
+    (sidecar.status === "failed" && hasProviderTaskId)
+  );
+}

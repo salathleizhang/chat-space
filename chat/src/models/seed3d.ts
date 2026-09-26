@@ -1,4 +1,10 @@
 import { ChatServiceError } from "../common/errors";
+import {
+  API_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  isRetryableNetworkError,
+  sleep,
+} from "../common/http";
 
 /**
  * 火山方舟 Seed3D 图生 3D 客户端（ark.cn-beijing.volces.com/api/v3，Bearer）。
@@ -32,6 +38,8 @@ export interface Seed3dCallOptions {
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /** 单次查询的超时预算（默认 API_REQUEST_TIMEOUT_MS） */
+  requestTimeoutMs?: number;
   onStatus?: (status: string) => void | Promise<void>;
 }
 
@@ -49,14 +57,20 @@ async function callArk(
   options: Seed3dCallOptions,
 ): Promise<Record<string, unknown>> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${ARK_BASE}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${ARK_BASE}${path}`,
+    {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
     },
-  });
+    options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    "Seed3D",
+  );
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new ChatServiceError(
@@ -124,8 +138,23 @@ export async function waitForSeed3dTask(
 ): Promise<Record<string, unknown>> {
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
+  const timeoutError = () =>
+    new ChatServiceError(
+      `Seed3D 任务超时（id=${taskId}，可凭侧写续查）`,
+      504,
+      "seed3d_timeout",
+    );
   for (;;) {
-    const result = await pollSeed3dTask(taskId, options);
+    let result: Record<string, unknown>;
+    try {
+      result = await pollSeed3dTask(taskId, options);
+    } catch (error) {
+      // 单次请求超时/网络抖动不终止整条任务：等一个轮询间隔再查，整体仍由 deadline 兜底。
+      if (!isRetryableNetworkError(error)) throw error;
+      if (Date.now() > deadline) throw timeoutError();
+      await sleep(pollIntervalMs);
+      continue;
+    }
     const status = String(result.status ?? "").toLowerCase();
     await options.onStatus?.(status);
     if (TERMINAL_OK.has(status)) return result;
@@ -137,14 +166,8 @@ export async function waitForSeed3dTask(
         "seed3d_task_failed",
       );
     }
-    if (Date.now() > deadline) {
-      throw new ChatServiceError(
-        `Seed3D 任务超时（id=${taskId}，可凭侧写续查）`,
-        504,
-        "seed3d_timeout",
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (Date.now() > deadline) throw timeoutError();
+    await sleep(pollIntervalMs);
   }
 }
 

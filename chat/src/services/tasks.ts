@@ -1,4 +1,5 @@
 import { ChatServiceError, toErrorMessage } from "../common/errors";
+import { randomUUID } from "node:crypto";
 import {
   assetDir,
   assetIdentityFile,
@@ -20,6 +21,45 @@ import {
 /** 内存表负责即时通知；projects/<slug>/tasks/*.json 是跨重启的任务事实。 */
 const tasks = new Map<string, GenerationTask>();
 let taskSeq = 0;
+
+/**
+ * 本进程的身份。挂在 globalThis 上：`bun --hot` 只替换模块、保留全局对象，所以热重载
+ * 后它不变，真正的进程重启才会换新。用来区分「服务重启」（任务确实丢了）和「开发时
+ * 改了代码导致模块重载」（executor 还活着，只是内存表被重建）。
+ *
+ * 2026-09-26：热重载清空内存表，三个还在跑的任务被误判为「服务中断」，Agent 据此把
+ * 供应商侧早已完成的付费任务又提交了一遍。任务记录带上进程身份后就不会再误判。
+ */
+const BOOT_ID: string = (() => {
+  const holder = globalThis as { __chatspaceBootId?: string };
+  holder.__chatspaceBootId ??= randomUUID();
+  return holder.__chatspaceBootId;
+})();
+
+/**
+ * 卡死看门狗：同进程内的任务如果一直没有任何进展，`listTasks` 的「服务曾中断」判定
+ * 永远发现不了它——2026-09-26 的 Tripo 批量任务就挂在 running/generating 近两小时，
+ * 供应商侧其实早已成功。出网请求现在都有超时，这里再兜一层：静默超过这个时长即判失败。
+ * 预算取 60 分钟，高于任何一条供应商轮询 deadline（最长 30 分钟）加上产物下载的合法耗时。
+ */
+export const STALLED_TASK_TIMEOUT_MS = 60 * 60_000;
+
+/** 运行中但长期没有更新的任务 → 判定卡死；未卡死返回 undefined。 */
+function asStalledFailure(task: GenerationTask): GenerationTask | undefined {
+  if (task.status !== "running") return undefined;
+  const updated = Date.parse(task.updatedAt);
+  if (!Number.isFinite(updated)) return undefined;
+  if (Date.now() - updated <= STALLED_TASK_TIMEOUT_MS) return undefined;
+  return {
+    ...task,
+    status: "failed",
+    phase: "failed",
+    error:
+      `任务超过 ${Math.round(STALLED_TASK_TIMEOUT_MS / 60_000)} 分钟没有任何进展，已判定卡死。` +
+      "供应商侧可能已经完成，先用 resume-generation 凭侧写续跑（不重复付费），再考虑重试。",
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 /** 同一项目的长流程仍在运行时复用其任务，避免重复提交付费请求。 */
 export function findRunningTask(projectSlug: string, workflowId: string): GenerationTask | undefined {
@@ -75,6 +115,7 @@ export function startCustomTask(
     subject,
     status: "running",
     phase: "queued",
+    bootId: BOOT_ID,
     ...metadata,
     createdAt: now,
     updatedAt: now,
@@ -216,6 +257,13 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
           GenerationTaskSchema,
         );
         if (task.status === "running" && !tasks.has(task.id)) {
+          // 同进程热重载（bun --hot 改了代码）：executor 还活着，只是内存表被重建，
+          // 认领回内存表即可，绝不能当成「服务中断」——误判会让 Agent 重新提交付费请求。
+          if (task.bootId === BOOT_ID) {
+            tasks.set(task.id, task);
+            merged.set(task.id, task);
+            continue;
+          }
           const storage = getAssetStorage();
           const identityPublished =
             task.phase === "publishing" &&
@@ -246,7 +294,9 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
                 ...task,
                 status: "failed",
                 phase: "failed",
-                error: "本地服务曾在任务运行时中断，请重试",
+                error:
+                  "本地服务曾在任务运行时中断。供应商侧可能已经完成，" +
+                  "先用 resume-generation 凭侧写续跑（不重复付费），再考虑重试",
                 updatedAt: new Date().toISOString(),
               };
           await persistTask(task);
@@ -258,7 +308,16 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
     }
   }
   for (const task of tasks.values()) {
-    if (!projectSlug || task.projectSlug === projectSlug) merged.set(task.id, task);
+    if (projectSlug && task.projectSlug !== projectSlug) continue;
+    // 同进程内的卡死只能在这里发现：磁盘上仍是 running，重启判定不会触发。
+    const stalled = asStalledFailure(task);
+    if (stalled) {
+      tasks.set(stalled.id, stalled);
+      await persistTask(stalled);
+      merged.set(stalled.id, stalled);
+      continue;
+    }
+    merged.set(task.id, task);
   }
   return [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

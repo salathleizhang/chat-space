@@ -1,4 +1,5 @@
 import { ChatServiceError } from "../common/errors";
+import { API_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "../common/http";
 
 const ARK_3D_BASE = "https://ark.cn-beijing.volces.com/api/v3";
 
@@ -30,7 +31,8 @@ export async function submitArk3dTask(
       "hi3d_public_image_required",
     );
   }
-  const response = await (options.fetchFn ?? fetch)(
+  const response = await fetchWithTimeout(
+    options.fetchFn ?? fetch,
     `${ARK_3D_BASE}/contents/generations/tasks`,
     {
       method: "POST",
@@ -46,6 +48,8 @@ export async function submitArk3dTask(
         ],
       }),
     },
+    API_REQUEST_TIMEOUT_MS,
+    "火山 3D 任务提交",
   );
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import {
   projectAnalysisFile,
   projectCandidatesFile,
   projectSourceDir,
+  projectTaskFile,
 } from "../common/libraryPaths";
 import {
   AssetIdentitySchema,
@@ -15,6 +16,7 @@ import {
   RequestSidecarSchema,
   SceneAnalysisSchema,
 } from "../dto/library";
+import { GenerationTaskSchema } from "../dto/tasks";
 import { createProject, requireProject } from "../mastra/tools/projectTools";
 import {
   composeEmptyWorldPrompt,
@@ -26,7 +28,13 @@ import {
   setAssetStorage,
   writeJson,
 } from "./assetStorage";
-import { clearTasks, listTasks, resolve3dObjects } from "./tasks";
+import {
+  STALLED_TASK_TIMEOUT_MS,
+  clearTasks,
+  listTasks,
+  resolve3dObjects,
+  startCustomTask,
+} from "./tasks";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-generation-test-"));
 const storage = new LocalFileStorage(root);
@@ -303,5 +311,77 @@ describe("并行任务服务", () => {
     ]);
   });
 
+});
 
+describe("卡死看门狗", () => {
+  /** startCustomTask 的首次落盘是异步的；读磁盘前先等文件出现 */
+  async function waitForTaskFile(projectSlug: string, id: string): Promise<string> {
+    const path = projectTaskFile(projectSlug, id);
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (await storage.exists(path)) return path;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`任务文件未落盘：${path}`);
+  }
+
+  test("静默超过预算的运行中任务被判失败，不再永远停在 running", async () => {
+    await createProject(storage, { name: "卡死项目", slug: "stalled" });
+    // 永不返回的 executor：任务会一直留在内存表里，模拟出网请求挂住的那个窗口
+    const task = startCustomTask("3d", "stalled", "卡死的 3D 任务", () => new Promise(() => {}), {
+      assetSlug: "stuck-cat",
+    });
+    expect(task.status).toBe("running");
+
+    setSystemTime(new Date(Date.now() + STALLED_TASK_TIMEOUT_MS + 60_000));
+    try {
+      const listed = (await listTasks("stalled")).find((entry) => entry.id === task.id);
+      expect(listed?.status).toBe("failed");
+      expect(listed?.phase).toBe("failed");
+      expect(listed?.error).toContain("没有任何进展");
+      // 续跑提示必须留在错误里：否则用户会直接点重试，为同一个模型重复付费
+      expect(listed?.error).toContain("resume-generation");
+      // 落盘的失败状态要能被下一次读取看到
+      const persisted = await readJson(
+        storage,
+        projectTaskFile("stalled", task.id),
+        GenerationTaskSchema,
+      );
+      expect(persisted.status).toBe("failed");
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("仍在预算内的运行中任务保持 running", async () => {
+    await createProject(storage, { name: "正常项目", slug: "healthy" });
+    const task = startCustomTask("3d", "healthy", "正常任务", () => new Promise(() => {}));
+    const listed = (await listTasks("healthy")).find((entry) => entry.id === task.id);
+    expect(listed?.status).toBe("running");
+  });
+
+  test("同进程热重载（内存表被清空）不误判为服务中断", async () => {
+    await createProject(storage, { name: "热重载项目", slug: "hot-reload" });
+    const task = startCustomTask("3d", "hot-reload", "重载中的任务", () => new Promise(() => {}));
+    await waitForTaskFile("hot-reload", task.id);
+
+    // clearTasks 等价于 bun --hot 重建内存表：磁盘记录还在，executor 也还活着
+    clearTasks();
+    const listed = (await listTasks("hot-reload")).find((entry) => entry.id === task.id);
+    expect(listed?.status).toBe("running");
+    expect(listed?.error).toBeUndefined();
+  });
+
+  test("换了进程身份（真的重启过）才判服务中断，并提示先续跑", async () => {
+    await createProject(storage, { name: "重启项目", slug: "restarted" });
+    const task = startCustomTask("3d", "restarted", "重启前的任务", () => new Promise(() => {}));
+    // 磁盘记录保持 running，但把进程身份改成本次之外的旧值 = 服务确实重启过
+    const path = await waitForTaskFile("restarted", task.id);
+    const record = await readJson(storage, path, GenerationTaskSchema);
+    await writeJson(storage, path, GenerationTaskSchema, { ...record, bootId: "previous-boot" });
+    clearTasks();
+
+    const listed = (await listTasks("restarted")).find((entry) => entry.id === task.id);
+    expect(listed?.status).toBe("failed");
+    expect(listed?.error).toContain("resume-generation");
+  });
 });

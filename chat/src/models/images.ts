@@ -1,4 +1,5 @@
 import { ChatServiceError } from "../common/errors";
+import { IMAGE_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "../common/http";
 
 /**
  * 图片生成（文生图）+ 编辑（img2img）传输客户端，2026-07 合并自原
@@ -195,14 +196,20 @@ export async function generateImagesOpenAICompat(
     requestBody.n = input.count;
     requestBody.size = OPENAI_SIZE_BY_CANVAS[input.canvas];
   }
-  const response = await fetchFn(`${baseUrl.replace(/\/$/, "")}/images/generations`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json",
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${baseUrl.replace(/\/$/, "")}/images/generations`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
     },
-    body: JSON.stringify(requestBody),
-  });
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "图片生成",
+  );
   const body = await jsonOrThrow(response, "图片生成", "imagegen_failed");
   const data = (body.data ?? []) as Record<string, unknown>[];
   const images = data
@@ -237,22 +244,28 @@ export async function generateImageGoogle(
   options: ImageGenOptions,
 ): Promise<GeneratedImageRef> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${GOOGLE_BASE}/models/${model}:generateContent`, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": options.apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: input.prompt }] }],
-      generationConfig: {
-        responseModalities: ["IMAGE"],
-        responseFormat: {
-          image: { aspectRatio: ASPECT_RATIO_BY_CANVAS[input.canvas] },
-        },
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${GOOGLE_BASE}/models/${model}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": options.apiKey,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: input.prompt }] }],
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          responseFormat: {
+            image: { aspectRatio: ASPECT_RATIO_BY_CANVAS[input.canvas] },
+          },
+        },
+      }),
+    },
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "Gemini 图片生成",
+  );
   const body = await jsonOrThrow(response, "Gemini 图片生成", "imagegen_failed");
   const candidates = body.candidates as
     | { content?: { parts?: Record<string, unknown>[] } }[]
@@ -284,19 +297,25 @@ export async function generateImageOpenRouter(
   options: ImageGenOptions,
 ): Promise<GeneratedImageRef> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json",
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${OPENROUTER_BASE}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: input.prompt }],
+        modalities: ["image", "text"],
+        image_config: { aspect_ratio: ASPECT_RATIO_BY_CANVAS[input.canvas] },
+      }),
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: input.prompt }],
-      modalities: ["image", "text"],
-      image_config: { aspect_ratio: ASPECT_RATIO_BY_CANVAS[input.canvas] },
-    }),
-  });
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "OpenRouter 图片生成",
+  );
   const body = await jsonOrThrow(response, "OpenRouter 图片生成", "imagegen_failed");
   const choices = body.choices as
     | { message?: { images?: { image_url?: { url?: string } }[] } }[]
@@ -483,11 +502,17 @@ async function editImageGoogle(
     const { mimeType, base64 } = parseDataUri(image);
     parts.push({ inlineData: { mimeType, data: base64 } });
   }
-  const response = await fetchFn(`${GOOGLE_BASE}/models/${model}:generateContent`, {
-    method: "POST",
-    headers: { "x-goog-api-key": options.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ contents: [{ parts }] }),
-  });
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${GOOGLE_BASE}/models/${model}:generateContent`,
+    {
+      method: "POST",
+      headers: { "x-goog-api-key": options.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts }] }),
+    },
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "Gemini 图片编辑",
+  );
   const body = await jsonOrThrow(response, "Gemini 图片编辑", "imageedit_failed");
   const candidates = body.candidates as
     | { content?: { parts?: Record<string, unknown>[] } }[]
@@ -523,18 +548,24 @@ async function editImageOpenRouter(
     { type: "text", text: input.prompt },
     ...input.images.map((image) => ({ type: "image_url", image_url: { url: image } })),
   ];
-  const response = await fetchFn(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-      "Content-Type": "application/json",
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `${OPENROUTER_BASE}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content }],
+        modalities: ["image", "text"],
+      }),
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content }],
-      modalities: ["image", "text"],
-    }),
-  });
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "OpenRouter 图片编辑",
+  );
   const body = await jsonOrThrow(response, "OpenRouter 图片编辑", "imageedit_failed");
   const choices = body.choices as
     | { message?: { images?: { image_url?: { url?: string } }[] } }[]

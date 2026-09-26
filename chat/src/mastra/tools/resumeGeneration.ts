@@ -14,6 +14,7 @@ import {
 import {
   LogicalPathSchema,
   RequestSidecarSchema,
+  isResumableSidecar,
   type RequestSidecar,
 } from "../../dto/library";
 import { pollSkyboxExport, pollSkyboxGenerate } from "../../models/blockadelabs";
@@ -80,19 +81,14 @@ async function scanDir(
       const sidecar = await readJson(storage, path, RequestSidecarSchema);
       // 超时（504）等失败会写成 failed，但只要有 providerTaskId 就仍可重新轮询续跑；
       // 漏掉它们会让「可凭侧写续跑」的超时侧写永远无法在清单里被发现。
-      const hasProviderTaskId = Boolean(sidecar.providerTaskId);
-      if (
-        sidecar.status === "queued" ||
-        sidecar.status === "running" ||
-        (sidecar.status === "failed" && hasProviderTaskId)
-      ) {
+      if (isResumableSidecar(sidecar)) {
         found.push({
           sidecarPath: path,
           provider: sidecar.provider,
           model: sidecar.model,
           slug: sidecar.slug,
           status: sidecar.status,
-          hasProviderTaskId,
+          hasProviderTaskId: Boolean(sidecar.providerTaskId),
         });
       }
     } catch {

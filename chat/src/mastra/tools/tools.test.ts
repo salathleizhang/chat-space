@@ -303,6 +303,33 @@ describe("repairProjectAssets", () => {
     expect(report.repaired).toEqual([]);
     expect(report.checkedSidecars).toBeGreaterThan(0);
   });
+
+  test("已提交但没跑完的侧写归入 resumable，提示先续跑而不是重新提交", async () => {
+    const sourceDir = projectSourceDir("demo");
+    const pending = `${sourceDir}/.9-pending-thing-request.json`;
+    await writeJson(storage, pending, RequestSidecarSchema, {
+      schemaVersion: 1,
+      index: 9,
+      slug: "pending-thing",
+      provider: "tripo",
+      model: "v3/generation/image-to-model",
+      providerTaskId: "tripo-task-9",
+      params: { generation_mode: "single" },
+      status: "running",
+      outputs: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const report = await repairProjectAssets(storage, "demo", {
+      fetchFn: makeFakeFetch(),
+    });
+    expect(report.resumable).toContain(pending);
+    // 已成功的侧写不该被当成待续跑
+    expect(report.resumable).not.toContain(`${sourceDir}/.1-plate-request.json`);
+
+    await storage.remove(pending);
+  });
 });
 
 describe("writePlan", () => {

@@ -1,4 +1,10 @@
 import { ChatServiceError } from "../common/errors";
+import {
+  API_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  isRetryableNetworkError,
+  sleep,
+} from "../common/http";
 
 /**
  * Blockade Labs Skybox 客户端（api-documentation.blockadelabs.com 核实 2026-07）。
@@ -16,6 +22,8 @@ export interface BlockadeLabsOptions {
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /** 单次轮询的超时预算（默认 API_REQUEST_TIMEOUT_MS） */
+  requestTimeoutMs?: number;
   onStatus?: (status: string) => void | Promise<void>;
 }
 
@@ -57,13 +65,20 @@ async function pollUntilDone(
   for (;;) {
     let response: Response;
     try {
-      response = await fetchFn(url, { headers: headers(apiKey) });
-    } catch {
+      response = await fetchWithTimeout(
+        fetchFn,
+        url,
+        { headers: headers(apiKey) },
+        options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+        errorPrefix,
+      );
+    } catch (error) {
       // 瞬时网络错误不终止整条任务：等一个轮询间隔后继续，超时仍由 deadline 判定。
+      if (!isRetryableNetworkError(error)) throw error;
       if (Date.now() > deadline) {
         throw new ChatServiceError(`${errorPrefix}超时`, 504, "blockadelabs_timeout");
       }
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      await sleep(pollIntervalMs);
       continue;
     }
     const body = (await response.json().catch(() => ({}))) as SkyboxRequestBody;
@@ -105,17 +120,23 @@ export async function submitSkybox(
   options: BlockadeLabsOptions,
 ): Promise<{ obfuscatedId: string; requestId: string }> {
   const fetchFn = options.fetchFn ?? fetch;
-  const submitResponse = await fetchFn(`${ENDPOINT}/skybox`, {
-    method: "POST",
-    headers: headers(options.apiKey),
-    body: JSON.stringify({
-      prompt: params.prompt,
-      ...(params.styleId !== undefined ? { skybox_style_id: params.styleId } : {}),
-      ...(params.negativeText ? { negative_text: params.negativeText } : {}),
-      ...(params.enhancePrompt !== undefined ? { enhance_prompt: params.enhancePrompt } : {}),
-      ...(params.seed !== undefined ? { seed: params.seed } : {}),
-    }),
-  });
+  const submitResponse = await fetchWithTimeout(
+    fetchFn,
+    `${ENDPOINT}/skybox`,
+    {
+      method: "POST",
+      headers: headers(options.apiKey),
+      body: JSON.stringify({
+        prompt: params.prompt,
+        ...(params.styleId !== undefined ? { skybox_style_id: params.styleId } : {}),
+        ...(params.negativeText ? { negative_text: params.negativeText } : {}),
+        ...(params.enhancePrompt !== undefined ? { enhance_prompt: params.enhancePrompt } : {}),
+        ...(params.seed !== undefined ? { seed: params.seed } : {}),
+      }),
+    },
+    API_REQUEST_TIMEOUT_MS,
+    "Blockade Labs 提交",
+  );
   const submitBody = (await submitResponse.json().catch(() => ({}))) as SkyboxRequestBody;
   if (!submitResponse.ok) {
     throw new ChatServiceError(
@@ -161,11 +182,17 @@ export async function submitSkyboxExport(
   options: BlockadeLabsOptions,
 ): Promise<{ exportId: string }> {
   const fetchFn = options.fetchFn ?? fetch;
-  const submitResponse = await fetchFn(`${ENDPOINT}/skybox/export`, {
-    method: "POST",
-    headers: headers(options.apiKey),
-    body: JSON.stringify({ skybox_id: obfuscatedId, type_id: EXPORT_TYPE_HDR }),
-  });
+  const submitResponse = await fetchWithTimeout(
+    fetchFn,
+    `${ENDPOINT}/skybox/export`,
+    {
+      method: "POST",
+      headers: headers(options.apiKey),
+      body: JSON.stringify({ skybox_id: obfuscatedId, type_id: EXPORT_TYPE_HDR }),
+    },
+    API_REQUEST_TIMEOUT_MS,
+    "Blockade Labs 导出提交",
+  );
   const submitBody = (await submitResponse.json().catch(() => ({}))) as SkyboxRequestBody;
   if (!submitResponse.ok) {
     throw new ChatServiceError(

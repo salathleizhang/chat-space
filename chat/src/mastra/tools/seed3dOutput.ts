@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { ChatServiceError } from "../../common/errors";
+import { DOWNLOAD_REQUEST_TIMEOUT_MS, fetchWithTimeout, isTimeoutError } from "../../common/http";
 import type { AssetStorage } from "../../services/assetStorage";
 
 const MODEL_EXTENSIONS = ["glb", "gltf", "obj", "fbx", "stl", "usd", "usdz"] as const;
@@ -130,7 +131,13 @@ export async function downloadAndLandSeed3dOutput(
   url: string,
   target: Seed3dOutputTarget & { fetchFn?: typeof fetch },
 ): Promise<string> {
-  const response = await (target.fetchFn ?? fetch)(url);
+  const response = await fetchWithTimeout(
+    target.fetchFn ?? fetch,
+    url,
+    undefined,
+    DOWNLOAD_REQUEST_TIMEOUT_MS,
+    "Seed3D 产物下载",
+  );
   if (!response.ok) {
     throw new ChatServiceError(
       `Seed3D 产物下载失败（${response.status}）`,
@@ -138,7 +145,15 @@ export async function downloadAndLandSeed3dOutput(
       "seed3d_download_failed",
     );
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new ChatServiceError(`Seed3D 产物下载超时：${url}`, 504, "download_timeout");
+    }
+    throw error;
+  }
   if (/\.zip(?:\?|$)/i.test(url) && !isZip(bytes)) {
     throw new ChatServiceError(
       "Seed3D 返回的 ZIP 产物格式无效",

@@ -1,13 +1,14 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError } from "../../common/errors";
+import { DOWNLOAD_REQUEST_TIMEOUT_MS, fetchWithTimeout, isTimeoutError } from "../../common/http";
 import { parseRequestSidecarName } from "../../common/indexedFiles";
 import {
   assetDir,
   projectAssetsDir,
   projectSourceDir,
 } from "../../common/libraryPaths";
-import { RequestSidecarSchema, SlugSchema } from "../../dto/library";
+import { RequestSidecarSchema, SlugSchema, isResumableSidecar } from "../../dto/library";
 import {
   getAssetStorage,
   readJson,
@@ -33,7 +34,13 @@ export async function downloadToLibrary(
   options: DownloadOptions = {},
 ): Promise<void> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(url);
+  const response = await fetchWithTimeout(
+    fetchFn,
+    url,
+    undefined,
+    DOWNLOAD_REQUEST_TIMEOUT_MS,
+    "产物下载",
+  );
   if (!response.ok) {
     throw new ChatServiceError(
       `下载失败（${response.status}）：${url}`,
@@ -41,7 +48,15 @@ export async function downloadToLibrary(
       "download_failed",
     );
   }
-  await storage.writeBytes(targetPath, new Uint8Array(await response.arrayBuffer()));
+  try {
+    // 超时信号覆盖响应体读取：连接不断但不传数据时也要在这里中止，不能无限等。
+    await storage.writeBytes(targetPath, new Uint8Array(await response.arrayBuffer()));
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new ChatServiceError(`产物下载超时：${url}`, 504, "download_timeout");
+    }
+    throw error;
+  }
 }
 
 export interface RepairReport {
@@ -49,6 +64,12 @@ export interface RepairReport {
   repaired: string[];
   /** 本地缺失且侧写里没有可用 providerUrl，需要重新生成 */
   unrecoverable: string[];
+  /**
+   * 已提交但没跑完的侧写（queued/running，或失败但有 providerTaskId）。
+   * 这些必须先走 `resume-generation` 接续轮询与下载，**不要重新提交**——供应商侧
+   * 可能早就完成，重新提交就是重复付费（2026-09-26 的 Tripo 批量任务正是如此）。
+   */
+  resumable: string[];
 }
 
 async function repairDir(
@@ -62,6 +83,7 @@ async function repairDir(
     const sidecarPath = `${dirPath}/${name}`;
     const sidecar = await readJson(storage, sidecarPath, RequestSidecarSchema);
     report.checkedSidecars += 1;
+    if (isResumableSidecar(sidecar)) report.resumable.push(sidecarPath);
     const outputs: typeof sidecar.outputs = [];
     let outputsChanged = false;
     for (const output of sidecar.outputs) {
@@ -120,7 +142,12 @@ export async function repairProjectAssets(
   projectSlug: string,
   options: DownloadOptions & { assetSlug?: string } = {},
 ): Promise<RepairReport> {
-  const report: RepairReport = { checkedSidecars: 0, repaired: [], unrecoverable: [] };
+  const report: RepairReport = {
+    checkedSidecars: 0,
+    repaired: [],
+    unrecoverable: [],
+    resumable: [],
+  };
 
   if (options.assetSlug) {
     await repairDir(storage, assetDir(projectSlug, options.assetSlug), report, options);
@@ -139,7 +166,7 @@ export async function repairProjectAssets(
 export const repairAssetsTool = createTool({
   id: "repair-assets",
   description:
-    "按请求侧写补齐当前项目里缺失的本地文件（修复不产生新索引；不可恢复的会列出，需走原 workflow 重生成）",
+    "按请求侧写补齐当前项目里缺失的本地文件（修复不产生新索引）。返回 resumable 的侧写必须先用 resume-generation 接续（供应商侧可能已完成，重新提交等于重复付费），unrecoverable 的才需要走原 workflow 重生成",
   inputSchema: z.object({
     assetSlug: SlugSchema.optional(),
   }),

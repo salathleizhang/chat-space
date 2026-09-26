@@ -1,5 +1,11 @@
 import { createHash, createHmac } from "node:crypto";
 import { ChatServiceError } from "../common/errors";
+import {
+  API_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  isRetryableNetworkError,
+  sleep,
+} from "../common/http";
 
 /** 腾讯混元 UV 展开客户端；其余 3D 能力已移除。 */
 
@@ -13,6 +19,8 @@ export interface HunyuanCallOptions {
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /** 单次调用的超时预算（默认 API_REQUEST_TIMEOUT_MS） */
+  requestTimeoutMs?: number;
   onStatus?: (status: string) => void | Promise<void>;
 }
 
@@ -70,20 +78,26 @@ export async function callHunyuanAction(
   const secretSigning = createHmac("sha256", secretService).update("tc3_request").digest();
   const signature = createHmac("sha256", secretSigning).update(stringToSign).digest("hex");
 
-  const response = await fetchFn(`https://${HOST}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Host: HOST,
-      "X-TC-Action": action,
-      "X-TC-Version": VERSION,
-      "X-TC-Timestamp": String(timestamp),
-      Authorization:
-        `TC3-HMAC-SHA256 Credential=${secretId}/${scope}, ` +
-        `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  const response = await fetchWithTimeout(
+    fetchFn,
+    `https://${HOST}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Host: HOST,
+        "X-TC-Action": action,
+        "X-TC-Version": VERSION,
+        "X-TC-Timestamp": String(timestamp),
+        Authorization:
+          `TC3-HMAC-SHA256 Credential=${secretId}/${scope}, ` +
+          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      body,
     },
-    body,
-  });
+    options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    `混元 ${action}`,
+  );
   const json = (await response.json().catch(() => ({}))) as {
     Response?: Record<string, unknown> & { Error?: { Code?: string; Message?: string } };
   };
@@ -109,8 +123,23 @@ export async function waitForHunyuanJob(
 ): Promise<Record<string, unknown>> {
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
+  const timeoutError = () =>
+    new ChatServiceError(
+      `混元任务超时（JobId=${jobId}，可凭侧写续查）`,
+      504,
+      "hunyuan_timeout",
+    );
   for (;;) {
-    const result = await callHunyuanAction(queryAction, { JobId: jobId }, options);
+    let result: Record<string, unknown>;
+    try {
+      result = await callHunyuanAction(queryAction, { JobId: jobId }, options);
+    } catch (error) {
+      // 单次请求超时/网络抖动不终止整条任务：等一个轮询间隔再查，整体仍由 deadline 兜底。
+      if (!isRetryableNetworkError(error)) throw error;
+      if (Date.now() > deadline) throw timeoutError();
+      await sleep(pollIntervalMs);
+      continue;
+    }
     const status = String(result.Status ?? "").toUpperCase();
     await options.onStatus?.(status);
     if (status === "DONE") return result;
@@ -121,13 +150,7 @@ export async function waitForHunyuanJob(
         "hunyuan_task_failed",
       );
     }
-    if (Date.now() > deadline) {
-      throw new ChatServiceError(
-        `混元任务超时（JobId=${jobId}，可凭侧写续查）`,
-        504,
-        "hunyuan_timeout",
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (Date.now() > deadline) throw timeoutError();
+    await sleep(pollIntervalMs);
   }
 }
