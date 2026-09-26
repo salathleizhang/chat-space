@@ -228,6 +228,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     closePreviewFor,
     handleInspectionCaptured,
     send,
+    answerQuestion,
     stopStream,
     streaming,
   } = useAgentChat({
@@ -386,6 +387,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         onRemoveSelectedAsset={removeSelectedAsset}
         plan={sessionPlan}
         initiallyExpanded={pendingImages.length > 0}
+        onAnswerQuestion={answerQuestion}
       />
       {/* 放在 Dashboard 而不是资产列表里：用户切到图片/任务分区时，
           新 3D 模型仍能完成缩略图渲染并回填到对话。 */}

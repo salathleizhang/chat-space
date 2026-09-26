@@ -20,6 +20,7 @@ import {
   type ProjectPlan,
 } from "../../shared/lib/libraryApi";
 import { fetchEnvLlmProviders } from "../../shared/lib/capabilitiesClient";
+import type { AskUserAnswer, AskUserQuestion } from "../../shared/lib/chatClient";
 import { ACCEPTED_IMAGE_TYPES, imageFilesFromClipboard } from "../../shared/lib/imageAttachment";
 import type { SessionSummary } from "../../shared/lib/sessionsClient";
 import {
@@ -46,6 +47,7 @@ import {
 } from "../../shared/storage/apiKeys";
 import { PlanCard } from "./PlanCard";
 import { AgentAutoTurnCard } from "./AgentAutoTurnCard";
+import { AskUserCard } from "./AskUserCard";
 import { GeneratedMessageImages } from "./GeneratedMessageImages";
 import { LiquidMetalSendButton } from "./LiquidMetalSendButton";
 import { UploadedMessageImages } from "./UploadedMessageImages";
@@ -71,6 +73,15 @@ export interface ChatMessage {
   activities?: AgentMessageActivity[];
   /** 这一轮对话顶部唯一的 Agent 状态；步骤节点本身只使用圆点。 */
   agentStatus?: AgentMessageStatus;
+  /**
+   * ask-user 提问卡片：待回答时渲染成可点选卡片，回答后由 questionAnswer
+   * 记录用户选了什么、卡片转为只读。刷新或切换会话后仍可点选——卡片不依赖
+   * 任何服务端状态。
+   */
+  pendingQuestion?: AskUserQuestion;
+  questionAnswer?: AskUserAnswer;
+  /** 待回答的问题被用户跳过（直接打字回了别的）；卡片置灰但保留在历史里 */
+  supersededQuestion?: boolean;
 }
 
 /** Agent 自发续跑的本轮产物；图片路径来自资产库，落盘后随会话保存。 */
@@ -82,7 +93,8 @@ export interface AgentAutoTurn {
 
 export interface AgentMessageStatus {
   label: string;
-  status: "running" | "completed" | "failed";
+  /** waiting = 已把问题交给用户，等卡片被点选或用户直接输入 */
+  status: "running" | "waiting" | "completed" | "failed";
 }
 
 export interface AgentMessageActivity {
@@ -103,7 +115,8 @@ export interface ChatAssetAttachment {
 }
 
 export interface AgentActivity {
-  state: "idle" | "working" | "attention";
+  /** waiting = 已把问题交给用户，界面提示"等你决定"而不是"正在工作" */
+  state: "idle" | "working" | "waiting" | "attention";
   message: string;
 }
 
@@ -138,6 +151,8 @@ interface AgentDockProps {
   plan?: ProjectPlan | null;
   /** 首页携图创建项目时展开对话，直接显示上传与分析进度。 */
   initiallyExpanded?: boolean;
+  /** 用户在 ask-user 卡片上作出的选择；答案作为下一条用户消息发给 agent。 */
+  onAnswerQuestion?: (ownerMessageId: string, answer: AskUserAnswer) => void;
 }
 
 const SESSION_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
@@ -390,12 +405,14 @@ const MessageHistory = memo(function MessageHistory({
   expanded,
   activity,
   streaming,
+  onAnswerQuestion,
 }: {
   messages: ChatMessage[];
   plan?: ProjectPlan | null;
   expanded: boolean;
   activity: AgentActivity;
   streaming: boolean;
+  onAnswerQuestion?: (ownerMessageId: string, answer: AskUserAnswer) => void;
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -425,7 +442,11 @@ const MessageHistory = memo(function MessageHistory({
       />
       <span
         className={`truncate text-xs font-medium ${
-          status.status === "failed" ? "text-signal" : "text-ink-subtle"
+          status.status === "failed"
+            ? "text-signal"
+            : status.status === "waiting"
+              ? "text-accent"
+              : "text-ink-subtle"
         }`}
       >
         {status.label}
@@ -450,8 +471,12 @@ const MessageHistory = memo(function MessageHistory({
           : { label: "Completed", status: "completed" }
       : undefined;
     const turnStatus: AgentMessageStatus | undefined =
-      messageIndex === lastAssistantIndex && activity.state === "working"
-        ? { label: activity.message, status: "running" }
+      messageIndex === lastAssistantIndex &&
+      (activity.state === "working" || activity.state === "waiting")
+        ? {
+            label: activity.message,
+            status: activity.state === "waiting" ? "waiting" : "running",
+          }
         : message.agentStatus ?? fallbackStatus;
     const timelineRows: Array<
       | { key: string; kind: "tool"; activity: AgentMessageActivity }
@@ -603,6 +628,18 @@ const MessageHistory = memo(function MessageHistory({
         {message.images && message.images.length > 0 && (
           <GeneratedMessageImages paths={message.images} />
         )}
+        {message.pendingQuestion && (
+          <AskUserCard
+            question={message.pendingQuestion}
+            answer={message.questionAnswer}
+            /*
+              用户没点卡片、直接用文字回了别的：卡片置灰但保留在历史里，
+              让「Agent 问过什么、我没选」这件事仍然可追溯。
+            */
+            superseded={!message.questionAnswer && message.supersededQuestion}
+            onAnswer={(answer) => onAnswerQuestion?.(message.id, answer)}
+          />
+        )}
       </div>
     );
   };
@@ -637,9 +674,13 @@ const MessageHistory = memo(function MessageHistory({
           </div>
         ) : renderAssistantMessage(message, messageIndex),
       )}
-      {lastAssistantIndex === -1 && activity.state === "working" &&
+      {lastAssistantIndex === -1 &&
+        (activity.state === "working" || activity.state === "waiting") &&
         renderTurnStatus(
-          { label: activity.message, status: "running" },
+          {
+            label: activity.message,
+            status: activity.state === "waiting" ? "waiting" : "running",
+          },
           "live-agent",
         )}
       {plan && <PlanCard plan={plan} />}
@@ -665,6 +706,7 @@ export function AgentDock({
   onRemoveSelectedAsset,
   plan,
   initiallyExpanded = false,
+  onAnswerQuestion,
 }: AgentDockProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [text, setText] = useState("");
@@ -877,18 +919,23 @@ export function AgentDock({
           </button>
         </div>
 
-        {!expanded && activity.state === "working" && (
+        {!expanded &&
+          (activity.state === "working" || activity.state === "waiting") && (
           <div
-            data-agent-status
+            data-agent-status={activity.state === "waiting" ? "waiting" : "working"}
             role="status"
             aria-live="polite"
             className="mx-5 flex h-10 min-w-0 items-center gap-3"
           >
-            <ThinkingIndicator size={28} />
+            <ThinkingIndicator size={28} animated={activity.state === "working"} />
             <span className="shrink-0 text-[9px] font-medium uppercase tracking-[0.16em] text-ink-faint">
               Agent
             </span>
-            <span className="min-w-0 truncate text-xs font-medium text-ink-subtle">
+            <span
+              className={`min-w-0 truncate text-xs font-medium ${
+                activity.state === "waiting" ? "text-accent" : "text-ink-subtle"
+              }`}
+            >
               {activity.message}
             </span>
             {plan && plan.steps.some((s) => s.status === "in_progress") && (
@@ -914,6 +961,7 @@ export function AgentDock({
               expanded={expanded}
               activity={activity}
               streaming={streaming}
+              onAnswerQuestion={onAnswerQuestion}
             />
           </div>
         </div>

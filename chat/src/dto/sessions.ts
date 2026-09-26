@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AskUserQuestionSchema } from "./chat";
 import { LogicalPathSchema, ProjectPlanSchema, SlugSchema } from "./library";
 
 /** 会话历史契约（决策 8：会话与资产同源存储，归 chat/ 落盘 sessions/<id>.json） */
@@ -57,9 +58,26 @@ export const SessionMessageSchema = z.object({
   agentStatus: z
     .object({
       label: z.string().min(1),
-      status: z.enum(["running", "completed", "failed"]),
+      /** waiting = 已把问题交给用户，等卡片被点选或用户直接输入 */
+      status: z.enum(["running", "waiting", "completed", "failed"]),
     })
     .optional(),
+  /**
+   * ask-user 提问卡片：待回答时渲染成可点选卡片；回答后由 questionAnswer
+   * 记录用户选了什么，卡片转为只读。
+   */
+  pendingQuestion: AskUserQuestionSchema.optional(),
+  questionAnswer: z
+    .object({
+      questionId: z.string().min(1),
+      question: z.string().min(1).max(600),
+      optionIds: z.array(z.string().min(1)),
+      labels: z.array(z.string().min(1)).max(6),
+      text: z.string().min(1).max(1000).optional(),
+    })
+    .optional(),
+  /** 待回答的问题被用户跳过（直接打字回了别的）；卡片置灰但保留在历史里 */
+  supersededQuestion: z.boolean().optional(),
 });
 export type SessionMessage = z.infer<typeof SessionMessageSchema>;
 

@@ -431,6 +431,9 @@ export async function* streamChat(
       if (payload.toolName) {
         const taskIds = taskIdsFromToolResult(payload.result);
         const plan = planFromToolResult(payload.toolName, payload.result);
+        const question = payload.isError
+          ? undefined
+          : askUserQuestionFromToolResult(payload.result);
         yield {
           type: payload.isError ? "tool-error" : "tool-result",
           name: payload.toolName,
@@ -441,8 +444,18 @@ export async function* streamChat(
                 images: imagePathsFromToolResult(payload.toolName, payload.result),
                 taskIds,
                 plan,
+                question,
               }),
         };
+        /*
+          ask-user 提问后必须立刻停住这一轮：模型完全可能在同一条回复里把「问用户」
+          和付费工具一起调出来，光靠提示词纪律挡不住。
+
+          这里只结束生成器，真正的中止交给消费方（routes/chat.ts）在问题写进 SSE
+          之后触发：在生成器内部直接 abort 会让 for-await 的 return() 撞上一个已经
+          出错的流，把一次正常提问变成一条报错。
+        */
+        if (question) return;
       }
     } else if (chunk.type === "tool-error") {
       const payload = chunk.payload as {

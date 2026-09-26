@@ -3,10 +3,22 @@ import { streamSSE } from "hono/streaming";
 import { toErrorMessage } from "../common/errors";
 import { withServerCredentials } from "../config";
 import { ChatStreamRequestSchema, type ChatStreamEvent } from "../dto/chat";
-import { streamChat } from "../services/chatService";
+import { streamChat, type ChatDelta } from "../services/chatService";
 
 export const chatRoutes = new Hono();
 export const CHAT_HEARTBEAT_INTERVAL_MS = 15_000;
+
+/**
+ * 这一条增量之后必须中止本轮 agent run。目前只有一种情况：ask-user 已经把问题
+ * 交给用户，本轮不允许再执行任何工具——模型完全可能把「问用户」和付费生成放在
+ * 同一条回复里，光靠提示词纪律挡不住。
+ *
+ * 抽成具名判断是为了让这条安全不变量有唯一的出处：路由照着它中止，测试照着它
+ * 断言，将来新增"需要等用户"的增量也只需要改这里。
+ */
+export function endsAgentTurn(delta: ChatDelta): boolean {
+  return delta.type === "tool-result" && Boolean(delta.question);
+}
 
 type HeartbeatStream = {
   aborted: boolean;
@@ -69,7 +81,16 @@ chatRoutes.post("/stream", async (c) => {
             ...(delta.type === "tool-result" && delta.plan
               ? { plan: delta.plan }
               : {}),
+            ...(delta.type === "tool-result" && delta.question
+              ? { question: delta.question }
+              : {}),
           });
+        /*
+          ask-user 已把问题交给用户：中止这一轮 agent run，保证提问之后不可能再有
+          工具（尤其是付费生成）被执行。中止放在问题写进 SSE 之后，才是一次干净的
+          提问结束而不是半途断流；catch 里的 aborted 判断会顺带吞掉中止引发的异常。
+        */
+        if (endsAgentTurn(delta)) controller.abort();
       }
       await emit({ type: "done" });
     } catch (err) {

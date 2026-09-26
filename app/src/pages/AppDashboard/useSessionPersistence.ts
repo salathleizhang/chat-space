@@ -32,7 +32,7 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
 }
 
 function storedMessages(messages: ChatMessage[]) {
-  return messages.map(({ id, role, content, images, assets, autoTurn, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug }) => ({
+  return messages.map(({ id, role, content, images, assets, autoTurn, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug, pendingQuestion, questionAnswer, supersededQuestion }) => ({
     id,
     role,
     content,
@@ -43,6 +43,9 @@ function storedMessages(messages: ChatMessage[]) {
     ...(agentStatus ? { agentStatus } : {}),
     ...(pendingTaskIds?.length ? { pendingTaskIds } : {}),
     ...(pendingInspectionAssetSlug ? { pendingInspectionAssetSlug } : {}),
+    ...(pendingQuestion ? { pendingQuestion } : {}),
+    ...(questionAnswer ? { questionAnswer } : {}),
+    ...(supersededQuestion ? { supersededQuestion: true } : {}),
   }));
 }
 

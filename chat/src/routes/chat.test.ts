@@ -1,5 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { startChatHeartbeat } from "./chat";
+import { endsAgentTurn, startChatHeartbeat } from "./chat";
+
+describe("ask-user 提问后的硬停", () => {
+  const QUESTION = {
+    questionId: "q-1",
+    question: "是否继续？",
+    options: [{ id: "approve", label: "同意" }],
+    multiSelect: false,
+    allowOther: false,
+  };
+
+  test("带提问的 tool-result 结束本轮，其他增量都不结束", () => {
+    expect(
+      endsAgentTurn({ type: "tool-result", name: "ask-user", question: QUESTION }),
+    ).toBe(true);
+    expect(endsAgentTurn({ type: "tool-result", name: "start-3d-batch" })).toBe(false);
+    expect(endsAgentTurn({ type: "tool", name: "ask-user" })).toBe(false);
+    expect(endsAgentTurn({ type: "text", text: "正在生成" })).toBe(false);
+  });
+});
 
 describe("chat SSE heartbeat", () => {
   test("定期写标准 SSE 注释，停止后不再写入", async () => {

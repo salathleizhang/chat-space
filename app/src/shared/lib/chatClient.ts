@@ -4,12 +4,54 @@ import type { ProjectPlan } from "./libraryApi";
 
 /**
  * 消息部件：图片以资产库逻辑路径引用、chat 侧内联为 data URI；
- * 资产附件只传稳定 slug，由 chat 侧从当前项目状态解析。
+ * 资产附件只传稳定 slug，由 chat 侧从当前项目状态解析；
+ * 卡片回答（answer）把问题原文与选中项文字一起带回——服务端不保存提问状态。
  */
 export type OutgoingContentPart =
   | { type: "text"; text: string }
   | { type: "image"; path: string }
-  | { type: "asset"; assetSlug: string };
+  | { type: "asset"; assetSlug: string }
+  | ({ type: "answer" } & AskUserAnswer);
+
+/**
+ * ask-user 提问卡片：Agent 需要用户本人做决定（付费同意、方案取舍、对象确认）
+ * 时给出的可点选问题。选项内容完全由模型决定，前端只负责渲染与回传。
+ */
+export interface AskUserOption {
+  /** 稳定 id，回传时用它标识选中项 */
+  id: string;
+  /** 按钮文字，例如「同意」「停止」 */
+  label: string;
+  /** 第二行说明，例如将调用哪个平台、大概做什么 */
+  description?: string;
+  tone?: "default" | "primary" | "danger";
+  recommended?: boolean;
+}
+
+export interface AskUserQuestion {
+  questionId: string;
+  /** 卡片角标，例如「付费确认」 */
+  header?: string;
+  question: string;
+  /** 需要展开说明的清单，例如这一轮会跑哪些付费步骤 */
+  details?: string[];
+  options: AskUserOption[];
+  multiSelect: boolean;
+  /** 是否给一个自由输入逃生口 */
+  allowOther: boolean;
+}
+
+/** 用户在卡片上作出的选择；随下一条用户消息回到服务端。 */
+export interface AskUserAnswer {
+  questionId: string;
+  /** 原问题文本；服务端不保存提问状态，必须随答案一起回传 */
+  question: string;
+  optionIds: string[];
+  /** 与 optionIds 一一对应的可读文字 */
+  labels: string[];
+  /** allowOther 的自由输入 */
+  text?: string;
+}
 
 export interface OutgoingChatMessage {
   role: "user" | "assistant" | "system";
@@ -38,6 +80,7 @@ interface StreamHandlers {
     images?: string[],
     taskIds?: string[],
     plan?: ProjectPlan,
+    question?: AskUserQuestion,
   ) => void;
   onToolError?: (name: string, toolCallId?: string, message?: string) => void;
   onError: (message: string) => void;
@@ -142,6 +185,7 @@ export async function streamChat(
               images?: string[];
               taskIds?: string[];
               plan?: ProjectPlan;
+              question?: AskUserQuestion;
             }
           | {
               type: "tool-error";
@@ -162,6 +206,7 @@ export async function streamChat(
             event.images,
             event.taskIds,
             event.plan,
+            event.question,
           );
         else if (event.type === "tool-error")
           handlers.onToolError?.(event.name, event.toolCallId, event.message);

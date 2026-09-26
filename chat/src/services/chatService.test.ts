@@ -6,6 +6,7 @@ import { projectCandidatesFile } from "../common/libraryPaths";
 import type { ChatMessage } from "../dto/chat";
 import { CandidateRegistrySchema } from "../dto/library";
 import {
+  answerPartText,
   buildChatRequestContext,
   hasExplicitReferenceAnalysisIntent,
   imagePathsFromToolResult,
@@ -202,6 +203,46 @@ describe("planFromToolResult", () => {
     });
     expect(planFromToolResult("start-3d-batch", result)).toBeUndefined();
     expect(planFromToolResult("update-plan", { plan: { bad: true } })).toBeUndefined();
+  });
+});
+
+describe("answerPartText", () => {
+  test("把卡片点选还原成模型可读的回答", () => {
+    expect(
+      answerPartText({
+        type: "answer",
+        questionId: "q-1",
+        question: "是否继续？",
+        optionIds: ["approve"],
+        labels: ["同意"],
+      }),
+    ).toBe("【对提问的回答】问题：「是否继续？」（q-1）\n用户选择：同意");
+  });
+
+  test("自由输入与预设选项同时出现时都保留", () => {
+    const text = answerPartText({
+      type: "answer",
+      questionId: "q-2",
+      question: "选哪些对象？",
+      optionIds: ["chair"],
+      labels: ["休闲椅"],
+      text: "再加一个茶几",
+    });
+    expect(text).toContain("用户选择：休闲椅");
+    expect(text).toContain("用户补充：再加一个茶几");
+  });
+
+  test("只有自由输入时不留空的选项行", () => {
+    const text = answerPartText({
+      type: "answer",
+      questionId: "q-3",
+      question: "怎么办？",
+      optionIds: [],
+      labels: [],
+      text: "先只做底板",
+    });
+    expect(text).toContain("用户选择：（未选择预设选项）");
+    expect(text).toContain("用户补充：先只做底板");
   });
 });
 

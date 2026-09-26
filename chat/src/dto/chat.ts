@@ -18,17 +18,26 @@ export const ChatContentPartSchema = z.discriminatedUnion("type", [
    * ask-user 卡片的点选结果。服务端每轮都是无状态的，不保存任何提问状态，
    * 所以问题原文与选中项的可读文字必须随消息一起回来，才能拼出完整的上下文。
    */
-  z.object({
-    type: z.literal("answer"),
-    questionId: z.string().min(1),
-    /** 原问题文本；服务端据此把这一轮上下文补全 */
-    question: z.string().min(1).max(600),
-    optionIds: z.array(z.string().min(1)),
-    /** 与 optionIds 一一对应的可读文字 */
-    labels: z.array(z.string().min(1)).max(6),
-    /** allowOther 的自由输入 */
-    text: z.string().min(1).max(1000).optional(),
-  }),
+  z
+    .object({
+      type: z.literal("answer"),
+      questionId: z.string().min(1),
+      /** 原问题文本；服务端据此把这一轮上下文补全 */
+      question: z.string().min(1).max(600),
+      optionIds: z.array(z.string().min(1)),
+      /** 与 optionIds 一一对应的可读文字 */
+      labels: z.array(z.string().min(1)).max(6),
+      /** allowOther 的自由输入 */
+      text: z.string().min(1).max(1000).optional(),
+    })
+    /*
+      一一对应必须在这里锁住：服务端拿 labels 当"用户选了什么"报给模型，
+      数量对不上就会把用户的选择说错，而这属于会误导后续付费决策的错误。
+    */
+    .refine((part) => part.labels.length === part.optionIds.length, {
+      message: "labels 必须与 optionIds 一一对应",
+      path: ["labels"],
+    }),
 ]);
 export type ChatContentPart = z.infer<typeof ChatContentPartSchema>;
 

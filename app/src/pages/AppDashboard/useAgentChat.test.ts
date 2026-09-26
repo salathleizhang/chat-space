@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { act } from "react";
 import { deferred, flush, renderHook } from "../../test-utils";
 import type { ProjectPlan } from "../../shared/lib/libraryApi";
+import type {
+  AskUserAnswer,
+  AskUserQuestion,
+  OutgoingChatMessage,
+} from "../../shared/lib/chatClient";
 import type { ChatMessage } from "../../widgets/AgentDock";
 
 /**
@@ -28,6 +33,7 @@ type Handlers = {
     images?: string[],
     taskIds?: string[],
     plan?: ProjectPlan,
+    question?: AskUserQuestion,
   ) => void;
   onToolError: (name: string, toolCallId?: string) => void;
   onError: (m: string) => void;
@@ -1072,4 +1078,150 @@ test("关闭自检预览不会留下无法完成的等待状态", async () => {
     await h.unmount();
     globalThis.fetch = originalFetch;
   }
+});
+
+const QUESTION: AskUserQuestion = {
+  questionId: "q-1",
+  header: "付费确认",
+  question: "是否按上述计划生成？",
+  details: ["Seedream 生成参考图 1 张"],
+  options: [
+    { id: "approve", label: "同意", recommended: true },
+    { id: "stop", label: "停止", tone: "danger" },
+  ],
+  multiSelect: false,
+  allowOther: false,
+};
+
+const ANSWER: AskUserAnswer = {
+  questionId: "q-1",
+  question: QUESTION.question,
+  optionIds: ["approve"],
+  labels: ["同意"],
+};
+
+const assistantOf = (pushMessage: ReturnType<typeof harness>["pushMessage"]) =>
+  pushMessage.mock.calls
+    .map(([message]) => message)
+    .find((message) => message.role === "assistant")!;
+
+/** 按顺序重放某条消息上已发生的 updateMessage，得到它此刻的样子 */
+function replay(
+  updateMessage: ReturnType<typeof harness>["updateMessage"],
+  base: ChatMessage,
+) {
+  return updateMessage.mock.calls.reduce(
+    (message, call) => (call[0] === base.id ? call[1](message) : message),
+    base,
+  );
+}
+
+describe("ask-user 提问卡片", () => {
+  test("提问事件把卡片挂到本轮消息上，流结束后状态是等你决定而不是完成", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成椅子"));
+    const assistant = assistantOf(pushMessage);
+
+    await act(async () => handlersOf(0).onTool("ask-user", "tool-q"));
+    await act(async () =>
+      handlersOf(0).onToolResult("ask-user", "tool-q", undefined, undefined, undefined, QUESTION),
+    );
+    const withCard = replay(updateMessage, assistant);
+    expect(withCard.pendingQuestion).toEqual(QUESTION);
+    expect(withCard.agentStatus).toEqual({
+      label: "Waiting for your decision",
+      status: "waiting",
+    });
+
+    // 服务端提问后会中止本轮，客户端看到的是正常 done——不能当成"干完了"
+    await act(async () => handlersOf(0).onDone());
+    expect(replay(updateMessage, assistant).agentStatus).toEqual({
+      label: "Waiting for your decision",
+      status: "waiting",
+    });
+    // 等待回答不是"流在跑"，输入框必须保持可用
+    expect(h.result.current.streaming).toBe(false);
+
+    await h.unmount();
+  });
+
+  test("点选卡片把结构化答案作为下一条用户消息发出并续跑", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成椅子"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () =>
+      handlersOf(0).onToolResult("ask-user", "tool-q", undefined, undefined, undefined, QUESTION),
+    );
+    await act(async () => handlersOf(0).onDone());
+    pushMessage.mockClear();
+
+    await act(async () => h.result.current.answerQuestion(assistant.id, ANSWER));
+
+    const receipt = replay(updateMessage, assistant);
+    expect(receipt.questionAnswer).toEqual(ANSWER);
+    expect(receipt.pendingQuestion).toEqual(QUESTION);
+
+    const answerMessage = pushMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.questionAnswer)!;
+    expect(answerMessage.content).toBe("同意");
+
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const history = streamChat.mock.calls[1]![1] as OutgoingChatMessage[];
+    expect(history.at(-1)?.content).toEqual([
+      { type: "answer", ...ANSWER },
+      { type: "text", text: "同意" },
+    ]);
+
+    await h.unmount();
+  });
+
+  test("用户不点卡片直接打字：提问标成已忽略，卡片本身仍留在历史里", async () => {
+    const { mount, pushMessage, updateMessage, messagesRef } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成椅子"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () =>
+      handlersOf(0).onToolResult("ask-user", "tool-q", undefined, undefined, undefined, QUESTION),
+    );
+    await act(async () => handlersOf(0).onDone());
+    const withCard = replay(updateMessage, assistant);
+
+    messagesRef.current = [withCard];
+    updateMessage.mockClear();
+    await act(async () => h.result.current.send("算了，先只生成参考图"));
+
+    const superseded = replay(updateMessage, withCard);
+    expect(superseded.supersededQuestion).toBe(true);
+    expect(superseded.pendingQuestion).toEqual(QUESTION);
+
+    // 直接打字同样要接着跑，且新消息不带 answer 部件
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const history = streamChat.mock.calls[1]![1] as OutgoingChatMessage[];
+    expect(history.at(-1)?.content).toBe("算了，先只生成参考图");
+
+    await h.unmount();
+  });
+
+  test("换会话后不再认为本轮停在提问上", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount("proj-a");
+    await act(async () => h.result.current.send("生成椅子"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () =>
+      handlersOf(0).onToolResult("ask-user", "tool-q", undefined, undefined, undefined, QUESTION),
+    );
+
+    await act(async () => h.rerender("proj-b"));
+    await act(async () => handlersOf(0).onDone());
+
+    expect(replay(updateMessage, assistant).agentStatus).toEqual({
+      label: "Completed",
+      status: "completed",
+    });
+
+    await h.unmount();
+  });
 });

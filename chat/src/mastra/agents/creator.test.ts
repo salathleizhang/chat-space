@@ -5,6 +5,20 @@ import { createCreatorAgent } from "./creator";
 describe("creator 工具可用性", () => {
   test("没有当前消息图片时不向模型提供 analyze-reference", async () => {
     const tools = await createCreatorAgent({ apiKey: "sk-test" }).listTools();
+    expect(tools["ask-user"]).toBeDefined();
+    const askUserSchema = z.toJSONSchema(
+      (tools["ask-user"] as unknown as { inputSchema: z.ZodType }).inputSchema,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown> };
+    // 选项内容由模型决定，工具只暴露这些字段（questionId 由服务端补，模型看不到）
+    expect(Object.keys(askUserSchema.properties ?? {}).sort()).toEqual([
+      "allowOther",
+      "details",
+      "header",
+      "multiSelect",
+      "options",
+      "question",
+    ]);
     expect(tools["update-plan"]).toBeDefined();
     expect(tools["generate-reference-images"]).toBeDefined();
     expect(tools["generate-skybox"]).toBeDefined();

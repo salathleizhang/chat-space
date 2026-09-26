@@ -1,4 +1,5 @@
 import { chatFetch, chatResponseError } from "./sse";
+import type { AskUserAnswer, AskUserQuestion } from "./chatClient";
 import type { ProjectPlan } from "./libraryApi";
 
 /** 会话历史客户端（决策 8：会话由 chat/ 落盘资产库，换浏览器不丢） */
@@ -31,8 +32,18 @@ export interface SessionMessage {
   /** 每轮 Assistant 消息顶部的状态摘要。 */
   agentStatus?: {
     label: string;
-    status: "running" | "completed" | "failed";
+    /** waiting = 已把问题交给用户，等卡片被点选或用户直接输入 */
+    status: "running" | "waiting" | "completed" | "failed";
   };
+  /**
+   * ask-user 提问卡片：待回答时渲染成可点选卡片；回答后由 questionAnswer
+   * 记录用户选了什么，卡片转为只读。恢复会话后卡片仍可点选——它不依赖任何
+   * 服务端状态。
+   */
+  pendingQuestion?: AskUserQuestion;
+  questionAnswer?: AskUserAnswer;
+  /** 待回答的问题被用户跳过（直接打字回了别的）；卡片置灰但保留在历史里 */
+  supersededQuestion?: boolean;
 }
 
 export interface StoredSession {

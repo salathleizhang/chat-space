@@ -31,7 +31,9 @@ Tripo3D 支持单图与多视角模型生成。`generate-reference-images(mode=m
 
 模型后处理统一走 Tripo v3：`retopologize` 使用 `/mesh/decimate`，`rig-model` 使用 `/animations/rig`；`generate-animation` 当前未向 Agent 注册，动作生成已禁用。`generate-character` 组合“图生 3D → biped 绑骨”（会产生两次付费任务）。Tripo 当前没有为已有模型单独执行 UV 展开的端点，因此只有 `unwrap-uv` 保留混元实现；Tripo P 系列生成接口的 UV 开关只在新模型生成时生效，不能替代后处理 UV 展开。
 
-需要从整张图片生成完整场景时，Creator 先用 `analyze-reference` 提取对象并等待确认；获得对象选择和整条付费计划的同意后，把该次分析的 `runId` 与可选的 `selectedSlugs` 交给注册到 Agent 的 `one-shot-scene` Mastra Workflow。Workflow 首步保存确认结果，再依次完成逐对象参考图、干净底板、World Labs 空环境和 Seed3D 物体模型。后台任务会等全部模型落盘才标记成功；普通单步生成仍使用各自的工具。服务中断后正在运行的总任务会标记失败；再次运行会复用同一确认结果、已成功的请求侧写和产物完成剩余阶段，进行中的供应商请求仍可用 `resume-generation` 恢复。
+需要从整张图片生成完整场景时，Creator 先用 `analyze-reference` 提取对象，再用 `ask-user` 卡片让用户勾选对象并确认整条付费计划；获得确认后，把该次分析的 `runId` 与可选的 `selectedSlugs` 交给注册到 Agent 的 `one-shot-scene` Mastra Workflow。Workflow 首步保存确认结果，再依次完成逐对象参考图、干净底板、World Labs 空环境和 Seed3D 物体模型。后台任务会等全部模型落盘才标记成功；普通单步生成仍使用各自的工具。服务中断后正在运行的总任务会标记失败；再次运行会复用同一确认结果、已成功的请求侧写和产物完成剩余阶段，进行中的供应商请求仍可用 `resume-generation` 恢复。
+
+`ask-user` 是 Agent 需要用户本人做决定时的统一出口：付费操作同意、方案取舍、对象确认都走它，不再用自然语言提问后等用户打字。问题由模型给出（角标、正文、明细、选项、是否多选、是否允许自由输入），工作台渲染成可点选卡片；服务端在提问写进 SSE 后立即中止本轮 agent run，因此提问之后不可能再有工具被调用。用户点选后，答案作为一条带结构化 `answer` 部件的用户消息回到下一轮；用户直接打字回答时，卡片置灰保留在历史里。卡片与答案随会话落盘，刷新或换浏览器后仍可点选——它不依赖任何服务端状态。
 
 对话模型下拉菜单提供四个模型：GLM 5.3 Flash、DeepSeek V4.1 Flash、Doubao-Seed-Evolving、Doubao-Seed-2.1-pro，共用本机的 `VOLC_KEY` 和火山方舟地址 `https://ark.cn-beijing.volces.com/api/v3`。自动选择默认使用 GLM 5.3 Flash；旧版 `glm-5.3` 选择会迁移到 Flash，已移除的 Seed 2.0 Lite 选择会回退到默认模型。可用 `VOLC_LLM_BASE_URL` 覆盖地址，用 `VOLC_LLM_MODEL` 单独覆盖自动选择的默认模型。四个选项的实际模型 ID 或专属接入点 ID 可分别覆盖：
 

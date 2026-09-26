@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { taskSubjectLabel } from "../../shared/lib/taskText";
 import {
   streamChat,
+  type AskUserAnswer,
   type ChatResume,
   type LlmRequestConfig,
   type OutgoingChatMessage,
@@ -22,6 +23,7 @@ import {
 import type {
   AgentActivity,
   AgentAutoTurn,
+  AgentMessageStatus,
   ChatAssetAttachment,
   ChatMessage,
 } from "../../widgets/AgentDock";
@@ -65,8 +67,11 @@ const IMAGE_OUTPUT_TOOLS = new Set([
  * 时间线是"这一步做了什么"的记录，查询本身不是一步——展示出来会和它正在等的那个
  * 生成步骤抢同一块地方，读起来像多了一步"checking generation progress"。
  * 失败仍然落一行：查不到状态是要让用户看见的，不该静默。
+ *
+ * ask-user 属于另一类静默：它的可见产物就是那张提问卡片，再在时间线上补一个
+ * "asking for your decision" 节点等于把同一步说两遍。
  */
-const SILENT_ACTIVITY_TOOLS = new Set(["list-generation-tasks"]);
+const SILENT_ACTIVITY_TOOLS = new Set(["list-generation-tasks", "ask-user"]);
 
 /**
  * 生产步骤不进时间线：长耗时生成（3D / 世界 / 天空盒 / 后处理…）以及紧随其后的
@@ -86,6 +91,7 @@ const BACKGROUND_ACTIVITY_TOOLS = new Set([
 ]);
 
 const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
+  "ask-user": "Asking for your decision",
   "update-plan": "Updating plan",
   "generate-reference-images": "Generating image",
   "generate-skybox": "Generating skybox",
@@ -219,6 +225,11 @@ export function useAgentChat({
   const backgroundTasksRef = useRef(new Map<string, string>());
   const inspectionWaitRef = useRef<{ ownerId: string; assetSlug: string } | null>(null);
   const identifyingRef = useRef(false);
+  /**
+   * 本轮是否停在 ask-user 提问上。onDone 需要它来决定这一轮是"完成"还是
+   * "等你决定"——提问后服务端会主动中止本轮，光看流结束分不出这两者。
+   */
+  const pendingQuestionRef = useRef(false);
   const registeredTasksRef = useRef(new Set<string>());
   const registeredInspectionsRef = useRef(new Set<string>());
   const generationEpochRef = useRef(0);
@@ -239,6 +250,7 @@ export function useAgentChat({
     pendingTaskSettlementsRef.current = [];
     pendingInspectionRef.current = null;
     pendingIdentifyRef.current = null;
+    pendingQuestionRef.current = false;
     setWaiting(false);
   }, [sessionId]);
   /**
@@ -293,6 +305,7 @@ export function useAgentChat({
     pendingTaskSettlementsRef.current = [];
     pendingInspectionRef.current = null;
     pendingIdentifyRef.current = null;
+    pendingQuestionRef.current = false;
     setPreview((current) => current ? { ...current, inspection: null } : current);
     syncWaiting();
     abortRef.current?.abort();
@@ -338,6 +351,7 @@ export function useAgentChat({
       registeredInspectionsRef.current.clear();
       inspectionWaitRef.current = null;
       identifyingRef.current = false;
+      pendingQuestionRef.current = false;
     };
   }, []);
 
@@ -387,34 +401,46 @@ export function useAgentChat({
    * 资产只发 slug，显示名/缩略图只是 UI 快照，服务端会按当前项目真实状态解析。
    */
   const toOutgoingHistory = (list: ChatMessage[]): OutgoingChatMessage[] =>
-    list.flatMap<OutgoingChatMessage>(({ role, content, images, assets }) => {
-      const hasText = content.trim().length > 0;
+    list.flatMap<OutgoingChatMessage>(
+      ({ role, content, images, assets, questionAnswer }) => {
+        const hasText = content.trim().length > 0;
 
-      /*
-       * 旧会话里可能残留早期实现创建的空 assistant 占位气泡。它对上下文没有信息量，
-       * 却会被 chat DTO 的 `content.min(1)` 拒绝，表现为下一次发送时报
-       * `messages.N.content: Too small`。在请求边界过滤一次，已落盘的旧会话也能自愈。
-       */
-      if (role !== "user") {
-        return hasText ? [{ role, content }] : [];
-      }
+        /*
+         * 旧会话里可能残留早期实现创建的空 assistant 占位气泡。它对上下文没有信息量，
+         * 却会被 chat DTO 的 `content.min(1)` 拒绝，表现为下一次发送时报
+         * `messages.N.content: Too small`。在请求边界过滤一次，已落盘的旧会话也能自愈。
+         */
+        if (role !== "user") {
+          return hasText ? [{ role, content }] : [];
+        }
 
-      const hasAttachments =
-        (assets && assets.length > 0) || (images && images.length > 0);
-      if (!hasAttachments) {
-        return hasText ? [{ role, content }] : [];
-      }
+        /*
+         * 卡片回答必须走结构化部件：服务端每轮都是无状态的，只有把问题原文与选中项
+         * 文字一起带上，它才能拼出「这是在回答哪个问题」。content 里那句「同意」
+         * 只是给人看的显示文本。
+         */
+        const hasAttachments =
+          (assets && assets.length > 0) ||
+          (images && images.length > 0) ||
+          Boolean(questionAnswer);
+        if (!hasAttachments) {
+          return hasText ? [{ role, content }] : [];
+        }
 
-      const parts: OutgoingContentPart[] = [
-        ...(assets ?? []).map(({ assetSlug }) => ({
-          type: "asset" as const,
-          assetSlug,
-        })),
-        ...(hasText ? [{ type: "text" as const, text: content }] : []),
-        ...(images ?? []).map((path) => ({ type: "image" as const, path })),
-      ];
-      return parts.length > 0 ? [{ role, content: parts }] : [];
-    });
+        const parts: OutgoingContentPart[] = [
+          ...(assets ?? []).map(({ assetSlug }) => ({
+            type: "asset" as const,
+            assetSlug,
+          })),
+          ...(questionAnswer
+            ? [{ type: "answer" as const, ...questionAnswer }]
+            : []),
+          ...(hasText ? [{ type: "text" as const, text: content }] : []),
+          ...(images ?? []).map((path) => ({ type: "image" as const, path })),
+        ];
+        return parts.length > 0 ? [{ role, content: parts }] : [];
+      },
+    );
 
   /** agent 自检请求（inspect-asset 工具事件）：打开小窗并触发四视角截图 */
   const failInspection = (message: string) => {
@@ -777,10 +803,14 @@ export function useAgentChat({
             void startIdentify(args.assetSlugs);
           }
         },
-        onToolResult: (name, toolCallId, images, taskIds, updatedPlan) => {
+        onToolResult: (name, toolCallId, images, taskIds, updatedPlan, question) => {
           if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
           replying = false;
+          if (question) pendingQuestionRef.current = true;
+          const status: AgentMessageStatus = question
+            ? { label: "Waiting for your decision", status: "waiting" }
+            : { label: "Thinking", status: "running" };
           updateMessage(assistantId, (message) => {
             const nextImages = images?.filter(
               (path) => !message.images?.includes(path),
@@ -790,7 +820,10 @@ export function useAgentChat({
               ...(nextImages && nextImages.length > 0
                 ? { images: [...(message.images ?? []), ...nextImages] }
                 : {}),
-              agentStatus: { label: "Thinking", status: "running" },
+              ...(question
+                ? { pendingQuestion: question, supersededQuestion: undefined }
+                : {}),
+              agentStatus: status,
               activities: message.activities?.map((item) =>
                 (toolCallId ? item.id === toolCallId : item.toolName === name) &&
                 item.status === "running"
@@ -803,7 +836,11 @@ export function useAgentChat({
               ),
             };
           });
-          setActivity({ state: "working", message: "Thinking" });
+          setActivity(
+            question
+              ? { state: "waiting", message: "Waiting for your decision" }
+              : { state: "working", message: "Thinking" },
+          );
           if (name === "update-plan" && updatedPlan) {
             sessionPlanRef.current = updatedPlan;
             onPlanUpdated?.(updatedPlan);
@@ -879,6 +916,12 @@ export function useAgentChat({
           abortRef.current = null;
           activeAssistantIdRef.current = null;
           markStreaming(false);
+          /*
+            提问后服务端会主动中止本轮，所以流同样是正常结束的——光看"流结束"分不出
+            "干完了"和"在等你决定"。pendingQuestionRef 在 onToolResult 里同步置位，
+            这里据此把状态行与结束提示分开。
+          */
+          const waitingForAnswer = pendingQuestionRef.current;
           updateMessage(assistantId, (message) => {
             const activities = message.activities?.map((item) =>
               item.status === "running"
@@ -896,20 +939,24 @@ export function useAgentChat({
             );
             return {
               ...message,
-              agentStatus: hasFailedStep
-                ? { label: "Some steps failed", status: "failed" }
-                : hasPendingWork()
-                  ? { label: inspectionWaitRef.current ? "Inspecting generated model" : "Generating; will continue automatically", status: "running" }
-                : { label: "Completed", status: "completed" },
+              agentStatus: waitingForAnswer
+                ? { label: "Waiting for your decision", status: "waiting" }
+                : hasFailedStep
+                  ? { label: "Some steps failed", status: "failed" }
+                  : hasPendingWork()
+                    ? { label: inspectionWaitRef.current ? "Inspecting generated model" : "Generating; will continue automatically", status: "running" }
+                    : { label: "Completed", status: "completed" },
               activities,
             };
           });
           setActivity(
-            hasPendingWork()
-              ? { state: "working", message: inspectionWaitRef.current
-                  ? "Inspecting generated model"
-                  : "Generating; will continue automatically" }
-              : { state: "idle", message: "Agent finished responding" },
+            waitingForAnswer
+              ? { state: "waiting", message: "Waiting for your decision" }
+              : hasPendingWork()
+                ? { state: "working", message: inspectionWaitRef.current
+                    ? "Inspecting generated model"
+                    : "Generating; will continue automatically" }
+                : { state: "idle", message: "Agent finished responding" },
           );
           // agent 可能更新了计划或产出了资产：刷新派生状态
           bumpRefresh();
@@ -945,6 +992,24 @@ export function useAgentChat({
     );
   };
 
+  /**
+   * 用户没点卡片、直接在输入框里回了别的：把还挂着的提问标成"已忽略"。
+   *
+   * 不删除问题本身——「Agent 问过什么、我当时没选」在历史里仍然可追溯；
+   * 卡片只是置灰，不再可点。用户想真正回答时仍可以点旧卡片，那会另起一轮。
+   */
+  const supersedePendingQuestions = () => {
+    for (const message of messagesRef.current) {
+      if (message.role !== "assistant") continue;
+      if (!message.pendingQuestion || message.questionAnswer) continue;
+      updateMessage(message.id, (current) => ({
+        ...current,
+        supersededQuestion: true,
+      }));
+    }
+    pendingQuestionRef.current = false;
+  };
+
   const send = (
     text: string,
     imageFiles?: File[],
@@ -953,6 +1018,7 @@ export function useAgentChat({
     // 提前拦一道：拦在这里才不会推入一条注定得不到回复的用户消息
     // （startStream 里那道是真正的不变量，两者不重复，职责不同）
     if (streamingRef.current || uploadingRef.current || hasPendingWork()) return;
+    supersedePendingQuestions();
     if (imageFiles && imageFiles.length > 0) {
       const controller = new AbortController();
       uploadAbortRef.current = controller;
@@ -969,6 +1035,37 @@ export function useAgentChat({
     };
     const history = toOutgoingHistory([...messagesRef.current, userMessage]);
     pushMessage(userMessage);
+    startStream(history);
+  };
+
+  /**
+   * 用户在 ask-user 卡片上作出选择：把结构化答案作为一条用户消息发出去，
+   * 原 assistant 消息上的卡片随之转为只读回执。
+   *
+   * 走的是普通用户消息而不是 `resume`：这是用户本人的输入，应当留在会话历史里，
+   * 也让下一轮的上下文天然带上"我问了什么、用户选了什么"。
+   */
+  const answerQuestion = (ownerMessageId: string, answer: AskUserAnswer) => {
+    if (streamingRef.current || uploadingRef.current || hasPendingWork()) return;
+    pendingQuestionRef.current = false;
+    updateMessage(ownerMessageId, (message) => ({
+      ...message,
+      questionAnswer: answer,
+      supersededQuestion: undefined,
+      agentStatus: { label: "Answered", status: "completed" },
+    }));
+    const display =
+      [...answer.labels, ...(answer.text ? [answer.text] : [])].join("、") ||
+      "已回答";
+    const userMessage: ChatMessage = {
+      id: nextId(),
+      role: "user",
+      content: display,
+      questionAnswer: answer,
+    };
+    const history = toOutgoingHistory([...messagesRef.current, userMessage]);
+    pushMessage(userMessage);
+    setActivity({ state: "working", message: "Thinking" });
     startStream(history);
   };
 
@@ -1009,6 +1106,7 @@ export function useAgentChat({
     closePreviewFor,
     handleInspectionCaptured,
     send,
+    answerQuestion,
     stopStream,
     streaming: streaming || uploading || waiting,
   };

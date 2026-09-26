@@ -85,6 +85,90 @@ describe("ChatStreamEventSchema 工具错误", () => {
   });
 });
 
+describe("ChatStreamEventSchema ask-user 提问", () => {
+  const question = {
+    questionId: "q-1",
+    header: "付费确认",
+    question: "是否按上述计划生成？",
+    options: [
+      { id: "approve", label: "同意", recommended: true },
+      { id: "stop", label: "停止", tone: "danger" as const },
+    ],
+    multiSelect: false,
+    allowOther: false,
+  };
+
+  test("提问随 tool-result 透传，缺 questionId 的结果不算提问", () => {
+    expect(
+      ChatStreamEventSchema.parse({
+        type: "tool-result",
+        name: "ask-user",
+        toolCallId: "tool-q",
+        question,
+      }),
+    ).toMatchObject({ question: { questionId: "q-1" } });
+    expect(() =>
+      ChatStreamEventSchema.parse({
+        type: "tool-result",
+        name: "ask-user",
+        question: { ...question, questionId: undefined },
+      }),
+    ).toThrow();
+  });
+
+  test("请求接受卡片回答部件，并带上问题原文与可读选项", () => {
+    const parsed = ChatStreamRequestSchema.parse({
+      ...baseRequest,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "answer",
+              questionId: "q-1",
+              question: "是否按上述计划生成？",
+              optionIds: ["approve"],
+              labels: ["同意"],
+            },
+            { type: "text", text: "同意" },
+          ],
+        },
+      ],
+    });
+    expect(parsed.messages[0]!.content).toEqual([
+      {
+        type: "answer",
+        questionId: "q-1",
+        question: "是否按上述计划生成？",
+        optionIds: ["approve"],
+        labels: ["同意"],
+      },
+      { type: "text", text: "同意" },
+    ]);
+  });
+
+  test("回答必须能定位到问题：缺问题原文或选项文字都拒绝", () => {
+    const answerPart = (patch: Record<string, unknown>) => ({
+      ...baseRequest,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "answer", questionId: "q-1", question: "是否继续？", optionIds: [], labels: [], ...patch },
+          ],
+        },
+      ],
+    });
+    expect(() =>
+      ChatStreamRequestSchema.parse(answerPart({ question: undefined })),
+    ).toThrow();
+    expect(() =>
+      ChatStreamRequestSchema.parse(answerPart({ labels: ["同意"] })),
+    ).toThrow();
+    expect(ChatStreamRequestSchema.parse(answerPart({ text: "先只做底板" })).messages).toHaveLength(1);
+  });
+});
+
 describe("ChatStreamRequestSchema 会话计划", () => {
   test("接受当前会话计划并为旧快照补 revision", () => {
     const parsed = ChatStreamRequestSchema.parse({
