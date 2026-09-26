@@ -24,7 +24,7 @@ describe("server-only provider migration", () => {
 
   test("旧版不支持的模型与供应商偏好不会继续选中", () => {
     localStorage.setItem("gabo.llmSettings:v1", JSON.stringify({ model: "gpt-4o" }));
-    localStorage.setItem("gabo.threeDProviderSettings:v1", JSON.stringify({ provider: "meshy" }));
+    localStorage.setItem("gabo.threeDProviderSettings:v1", JSON.stringify({ provider: "removed-provider" }));
     localStorage.setItem("gabo.imageGenerateModelSettings:v1", JSON.stringify({ model: "nano-banana" }));
     expect(loadLlmSettings().model).toBe("");
     expect(loadThreeDProviderSettings().provider).toBe("");

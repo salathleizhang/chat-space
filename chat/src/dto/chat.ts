@@ -41,6 +41,7 @@ export const ChatStreamRequestSchema = z.object({
   /** 仅本机服务注入的凭证，浏览器提交的同名字段会被丢弃。 */
   worldLabsApiKey: z.string().min(1).optional(),
   tripo3dApiKey: z.string().min(1).optional(),
+  hunyuanApiKey: z.string().min(1).optional(),
   seed3dApiKey: z.string().min(1).optional(),
   volcengineApiKey: z.string().min(1).optional(),
   threeDProvider: z.enum(["seed3d-direct", "hyper3d-volc", "hi3d-volc", "tripo-direct"]).optional(),

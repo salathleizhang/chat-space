@@ -131,45 +131,6 @@ describe("resumeGeneration · 新渠道", () => {
     expect(sidecar.outputs[0]?.path).toBe(`${dir}/0-seed-chair.glb`);
   });
 
-  test("meshy 侧写：接续轮询任务并落盘（沿用原索引）", async () => {
-    const dir = assetDir("rz", "meshy-crate");
-    await writeJson(storage, `${dir}/.3-meshy-crate-request.json`, RequestSidecarSchema, {
-      schemaVersion: 1,
-      index: 3,
-      slug: "meshy-crate",
-      provider: "meshy",
-      model: "/openapi/v1/retexture",
-      providerTaskId: "mt-1",
-      params: {},
-      status: "running",
-      outputs: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    const meshyFetch = (async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.startsWith("https://cdn.fake/")) {
-        return new Response(BYTES.buffer.slice(0), { status: 200 });
-      }
-      return jsonResponse({
-        status: "SUCCEEDED",
-        model_urls: { glb: "https://cdn.fake/re.glb" },
-      });
-    }) as typeof fetch;
-
-    await expect(resumeGeneration(storage, `${dir}/.3-meshy-crate-request.json`, {
-      meshyApiKey: "mk",
-      fetchFn: meshyFetch,
-      pollIntervalMs: 1,
-    })).rejects.toThrow("已停用");
-    const sidecar = await readJson(
-      storage,
-      `${dir}/.3-meshy-crate-request.json`,
-      RequestSidecarSchema,
-    );
-    expect(sidecar.status).toBe("running");
-  });
-
   test("缺对应渠道 key 时明确报错", async () => {
     const dir = assetDir("rz", "no-key");
     await writeJson(storage, `${dir}/.0-no-key-request.json`, RequestSidecarSchema, {

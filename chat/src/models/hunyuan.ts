@@ -1,16 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { ChatServiceError } from "../common/errors";
 
-/**
- * 腾讯混元生 3D 直连客户端（ai3d.tencentcloudapi.com，TC3-HMAC-SHA256 签名；
- * 全部 Action 经官方 API 文档 PDF 核实 2026-07，Version 2025-05-13）：
- * 生成 Submit/QueryHunyuanTo3DProJob、人物 Submit/DescribeProfileTo3DJob、
- * UV Submit/DescribeHunyuanTo3DUVJob、纹理/拓扑/组件/动作/格式转换同族。
- * 查询返回：Status（WAIT/RUN/FAIL/DONE）+ ResultFile3Ds[{Type, Url}]。
- * 输入约定：图片走 Image{Base64/Url}；3D 模型走 InputFile3D{Url, Type}——只收公网 URL
- * （用侧写记录的 providerUrl，24 小时有效期）。
- * BYOK key 约定格式："SecretId:SecretKey"（腾讯云双凭证拼一格）。
- */
+/** 腾讯混元 UV 展开客户端；其余 3D 能力已移除。 */
 
 const HOST = "ai3d.tencentcloudapi.com";
 const SERVICE = "ai3d";
@@ -24,6 +15,10 @@ export interface HunyuanCallOptions {
   timeoutMs?: number;
   onStatus?: (status: string) => void | Promise<void>;
 }
+
+export type HunyuanUvAction =
+  | "SubmitHunyuanTo3DUVJob"
+  | "DescribeHunyuanTo3DUVJob";
 
 function splitKey(apiKey: string): { secretId: string; secretKey: string } {
   const sep = apiKey.indexOf(":");
@@ -43,7 +38,7 @@ function sha256Hex(data: string): string {
 
 /** TC3-HMAC-SHA256 签名调用（POST JSON） */
 export async function callHunyuanAction(
-  action: string,
+  action: HunyuanUvAction,
   payload: Record<string, unknown>,
   options: HunyuanCallOptions,
 ): Promise<Record<string, unknown>> {
@@ -104,41 +99,11 @@ export async function callHunyuanAction(
   return result;
 }
 
-export interface HunyuanSubmitParams {
-  prompt?: string;
-  imageBase64?: string;
-  faceCount?: number;
-  generateType?: "Normal" | "LowPoly" | "Geometry" | "Sketch";
-  enablePbr?: boolean;
-}
-
-export async function submitHunyuanTo3DProJob(
-  params: HunyuanSubmitParams,
-  options: HunyuanCallOptions,
-): Promise<string> {
-  const result = await callHunyuanAction(
-    "SubmitHunyuanTo3DProJob",
-    {
-      ...(params.prompt ? { Prompt: params.prompt } : {}),
-      ...(params.imageBase64 ? { ImageBase64: params.imageBase64 } : {}),
-      ...(params.faceCount !== undefined ? { FaceCount: params.faceCount } : {}),
-      ...(params.generateType ? { GenerateType: params.generateType } : {}),
-      ...(params.enablePbr !== undefined ? { EnablePBR: params.enablePbr } : {}),
-    },
-    options,
-  );
-  const jobId = result.JobId;
-  if (typeof jobId !== "string" || !jobId) {
-    throw new ChatServiceError("混元提交响应缺少 JobId", 502, "hunyuan_request_failed");
-  }
-  return jobId;
-}
-
 const TERMINAL_FAIL = new Set(["FAIL", "FAILED"]);
 
 /** 轮询直至 DONE（Status：WAIT/RUN/FAIL/DONE），返回查询响应（含 ResultFile3Ds） */
 export async function waitForHunyuanJob(
-  queryAction: string,
+  queryAction: "DescribeHunyuanTo3DUVJob",
   jobId: string,
   options: HunyuanCallOptions,
 ): Promise<Record<string, unknown>> {

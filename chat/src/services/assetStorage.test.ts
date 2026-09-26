@@ -79,7 +79,7 @@ describe("JSON 契约读写", () => {
       index: 0,
       slug: "arm",
       provider: "volcengine",
-      model: "hunyuan-3d",
+      model: "provider-3d",
       status: "queued" as const,
       outputs: [],
       createdAt: now,

@@ -15,6 +15,7 @@ const EnvSchema = z.object({
   CHATSPACE_WEB_ORIGINS: z.string().optional(),
   VOLC_KEY: z.string().min(1).optional(),
   TRIPO_KEY: z.string().min(1).optional(),
+  HUNYUAN_KEY: z.string().min(1).optional(),
   TRIPO_IMAGE_MODEL: z.string().min(1).default(DEFAULT_TRIPO_IMAGE_MODEL),
   WORLDLABS_KEY: z.string().min(1).optional(),
   VOLC_LLM_BASE_URL: z.url().default("https://ark.cn-beijing.volces.com/api/v3"),
@@ -51,12 +52,14 @@ const serverKeys = {
   volcengineApiKey: env.VOLC_KEY,
   seed3dApiKey: env.VOLC_KEY,
   tripo3dApiKey: env.TRIPO_KEY,
+  hunyuanApiKey: env.HUNYUAN_KEY,
   worldLabsApiKey: env.WORLDLABS_KEY,
 };
 
 export const configuredProviders = {
   volcengine: Boolean(env.VOLC_KEY),
   tripo3d: Boolean(env.TRIPO_KEY),
+  hunyuan: Boolean(env.HUNYUAN_KEY),
   worldlabs: Boolean(env.WORLDLABS_KEY),
 } as const;
 export const configuredEnvLlmProviders = env.VOLC_KEY ? ["volcengine"] : [];

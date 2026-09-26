@@ -12,7 +12,8 @@ import {
 
 const providers = [
   { id: "volcengine", label: "Volcano Engine Ark", hint: "GLM 5.3 Flash · DeepSeek V4.1 Flash · Doubao-Seed-Evolving · Doubao-Seed-2.1-pro · Seedream · Seed3D · Hyper3D · Hi3D" },
-  { id: "tripo3d", label: "Tripo3D", hint: "3D model generation · Texture regeneration · Segmentation" },
+  { id: "tripo3d", label: "Tripo3D", hint: "3D generation · Retopology · Rigging · Animation · Texture · Segmentation" },
+  { id: "hunyuan", label: "Tencent Hunyuan", hint: "UV unwrapping only" },
   { id: "worldlabs", label: "World Labs", hint: "Marble scene generation" },
 ] as const;
 
@@ -32,6 +33,7 @@ export function SettingsDialog() {
         setStatus({
           volcengine: payload.providers?.volcengine === true,
           tripo3d: payload.providers?.tripo3d === true,
+          hunyuan: payload.providers?.hunyuan === true,
           worldlabs: payload.providers?.worldlabs === true,
         });
       })

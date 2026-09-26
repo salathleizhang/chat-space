@@ -183,7 +183,7 @@ const MIME_BY_EXT: Record<string, string> = {
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   webp: "image/webp",
-  // 3D 模型（供 Meshy 等直连渠道以 data URI 收模型输入）
+  // 3D 模型（二进制读取供直连供应商上传）
   glb: "model/gltf-binary",
   gltf: "model/gltf+json",
   obj: "model/obj",

@@ -1,6 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
+import { extractFileUrls } from "../../common/fileUrls";
 import {
   formatIndexedName,
   parseRequestSidecarName,
@@ -18,11 +19,6 @@ import {
 import { pollSkyboxExport, pollSkyboxGenerate } from "../../models/blockadelabs";
 import { waitForHunyuanJob } from "../../models/hunyuan";
 import { extractSeed3dFileUrls, waitForSeed3dTask } from "../../models/seed3d";
-import {
-  extractMeshyFileUrls,
-  waitForMeshyTask,
-  type MeshyCapabilityPath,
-} from "../../models/meshy";
 import { waitForTripoTask } from "../../models/tripo";
 import {
   extractWorldAssetUrls,
@@ -54,7 +50,6 @@ import {
 
 export interface ResumeKeys {
   worldLabsApiKey?: string;
-  meshyApiKey?: string;
   tripo3dApiKey?: string;
   /** "SecretId:SecretKey" */
   hunyuanApiKey?: string;
@@ -63,12 +58,6 @@ export interface ResumeKeys {
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
 }
-
-/** 混元 Submit → 查询 Action 的特例映射（其余按 Submit→Describe 规则） */
-const HUNYUAN_QUERY_BY_SUBMIT: Record<string, string> = {
-  SubmitHunyuanTo3DProJob: "QueryHunyuanTo3DProJob",
-  SubmitHunyuan3DPartJob: "QueryHunyuan3DPartJob",
-};
 
 export interface ResumableEntry {
   sidecarPath: string;
@@ -142,7 +131,7 @@ export async function resumeGeneration(
   keys: ResumeKeys,
 ): Promise<ResumeResult> {
   const sidecar = await readJson(storage, sidecarPath, RequestSidecarSchema);
-  if (!["volcengine", "seed3d", "ark-hyper3d", "ark-hitem3d", "tripo", "world-labs"].includes(sidecar.provider)) {
+  if (!["volcengine", "seed3d", "ark-hyper3d", "ark-hitem3d", "tripo", "hunyuan", "world-labs"].includes(sidecar.provider)) {
     throw new ChatServiceError(
       `供应商「${sidecar.provider}」已停用，无法续跑该历史任务`,
       409,
@@ -223,9 +212,9 @@ export async function resumeGeneration(
       files.push(path);
       outputs.push({ path, providerUrl: url });
     };
-    /** meshy/tripo/hunyuan 通用：扫描任务结果里的产物 URL 全部落盘（沿用原索引） */
+    /** Tripo/混元通用：扫描任务结果里的产物 URL 全部落盘（沿用原索引） */
     const landScannedUrls = async (value: unknown) => {
-      const refs = extractMeshyFileUrls(value);
+      const refs = extractFileUrls(value);
       const seen = new Set<string>();
       for (const ref of refs) {
         if (seen.has(ref.url)) continue;
@@ -285,20 +274,6 @@ export async function resumeGeneration(
           ),
         );
       }
-    } else if (sidecar.provider === "meshy") {
-      if (!keys.meshyApiKey) {
-        throw new ChatServiceError("续跑 Meshy 任务需要 Meshy API key", 401, "missing_meshy_key");
-      }
-      const task = await waitForMeshyTask(
-        sidecar.model as MeshyCapabilityPath,
-        sidecar.providerTaskId,
-        {
-          apiKey: keys.meshyApiKey,
-          fetchFn: keys.fetchFn,
-          pollIntervalMs: keys.pollIntervalMs,
-        },
-      );
-      await landScannedUrls(task);
     } else if (sidecar.provider === "tripo") {
       if (!keys.tripo3dApiKey) {
         throw new ChatServiceError("续跑 Tripo 任务需要 Tripo3D API key", 401, "missing_tripo_key");
@@ -310,16 +285,21 @@ export async function resumeGeneration(
       });
       await landScannedUrls(data.output ?? data);
     } else if (sidecar.provider === "hunyuan") {
+      if (sidecar.model !== "SubmitHunyuanTo3DUVJob") {
+        throw new ChatServiceError(
+          `混元能力「${sidecar.model}」已停用；当前只保留 UV 展开续跑`,
+          409,
+          "provider_unsupported",
+        );
+      }
       if (!keys.hunyuanApiKey) {
         throw new ChatServiceError(
-          "续跑混元任务需要混元 API key（SecretId:SecretKey）",
+          "续跑 UV 展开需要本机 HUNYUAN_KEY（SecretId:SecretKey）",
           401,
           "missing_hunyuan_key",
         );
       }
-      const queryAction =
-        HUNYUAN_QUERY_BY_SUBMIT[sidecar.model] ?? sidecar.model.replace(/^Submit/, "Describe");
-      const result = await waitForHunyuanJob(queryAction, sidecar.providerTaskId, {
+      const result = await waitForHunyuanJob("DescribeHunyuanTo3DUVJob", sidecar.providerTaskId, {
         apiKey: keys.hunyuanApiKey,
         fetchFn: keys.fetchFn,
         pollIntervalMs: keys.pollIntervalMs,
@@ -426,7 +406,6 @@ export const resumeGenerationTool = createTool({
     }
     return resumeGeneration(getAssetStorage(), input.sidecarPath, {
       worldLabsApiKey: optionalContextString(context, "worldLabsApiKey"),
-      meshyApiKey: optionalContextString(context, "meshyApiKey"),
       tripo3dApiKey: optionalContextString(context, "tripo3dApiKey"),
       hunyuanApiKey: optionalContextString(context, "hunyuanApiKey"),
       seed3dApiKey:

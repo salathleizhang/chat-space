@@ -34,7 +34,6 @@ export function requireCurrentProject(context: ToolContextLike | undefined): str
 /** BYOK 供应商 key 的 context 字段名（与 dto/chat.ts 请求字段、app 设置一一对应） */
 export type ProviderKeyName =
   | "worldLabsApiKey"
-  | "meshyApiKey"
   | "tripo3dApiKey"
   | "hunyuanApiKey"
   | "seed3dApiKey"

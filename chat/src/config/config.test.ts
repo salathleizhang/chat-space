@@ -20,6 +20,7 @@ describe("server credentials", () => {
       volcengineApiKey: "local-volc",
       seed3dApiKey: "local-volc",
       tripo3dApiKey: "local-tripo",
+      hunyuanApiKey: "local-secret-id:local-secret-key",
     },
     {
       baseUrl: "https://ark.example/api/v3",
@@ -36,6 +37,7 @@ describe("server credentials", () => {
       projectSlug: "demo",
       volcengineApiKey: "browser-volc",
       tripo3dApiKey: "browser-tripo",
+      hunyuanApiKey: "browser-hunyuan",
       llm: {
         apiKey: "browser-llm",
         provider: "openai",
@@ -47,6 +49,7 @@ describe("server credentials", () => {
       volcengineApiKey: "local-volc",
       seed3dApiKey: "local-volc",
       tripo3dApiKey: "local-tripo",
+      hunyuanApiKey: "local-secret-id:local-secret-key",
       llm: {
         apiKey: "local-volc",
         provider: "volcengine",

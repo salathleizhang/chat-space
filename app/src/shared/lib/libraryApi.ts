@@ -183,7 +183,7 @@ function latestByExt(files: string[], ext: string): string | null {
 }
 
 const MODEL_FILE_RE = /^(\d+)-.*\.(glb|gltf|obj|fbx)$/i;
-const PART_SEGMENT_OPERATIONS = new Set(["v3/mesh/segment", "SubmitHunyuan3DPartJob"]);
+const PART_SEGMENT_OPERATIONS = new Set(["v3/mesh/segment"]);
 
 /** 最新一代的全部模型文件（部件分割等一次生成多个部件时全部列出） */
 function latestModelFiles(files: string[]): string[] {

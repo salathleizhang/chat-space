@@ -56,7 +56,7 @@ async function findSidecarModelUrl(
   return { url: best.url, type: best.type, fresh: Number.isFinite(age) && age < PROVIDER_URL_FRESH_MS };
 }
 
-/** 资产最新模型的公网 URL（与 meshy/tripo 渠道同一「最新模型」语义） */
+/** 资产最新模型的公网 URL。 */
 export async function resolveModelPublicUrl(
   storage: AssetStorage,
   projectSlug: string,

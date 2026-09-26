@@ -13,7 +13,6 @@ export interface RunKeys {
   /** AgentDock 当前图片生成模型；天空盒编辑等工具直接消费，不暴露为工具参数。 */
   imageGenerateModel?: ChatStreamRequest["imageGenerateModel"];
   worldLabsApiKey?: string;
-  meshyApiKey?: string;
   tripo3dApiKey?: string;
   hunyuanApiKey?: string;
   seed3dApiKey?: string;
@@ -32,7 +31,6 @@ export function buildRequestContext(keys: RunKeys): RequestContext {
   if (keys.referenceAnalysisAllowed) ctx.set("referenceAnalysisAllowed", true);
   if (keys.imageGenerateModel) ctx.set("imageGenerateModel", keys.imageGenerateModel);
   if (keys.worldLabsApiKey) ctx.set("worldLabsApiKey", keys.worldLabsApiKey);
-  if (keys.meshyApiKey) ctx.set("meshyApiKey", keys.meshyApiKey);
   if (keys.tripo3dApiKey) ctx.set("tripo3dApiKey", keys.tripo3dApiKey);
   if (keys.hunyuanApiKey) ctx.set("hunyuanApiKey", keys.hunyuanApiKey);
   if (keys.seed3dApiKey) ctx.set("seed3dApiKey", keys.seed3dApiKey);

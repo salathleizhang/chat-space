@@ -237,6 +237,7 @@ export function buildChatRequestContext(
     referenceAnalysisAllowed,
     worldLabsApiKey: request.worldLabsApiKey,
     tripo3dApiKey: request.tripo3dApiKey,
+    hunyuanApiKey: request.hunyuanApiKey,
     seed3dApiKey: request.seed3dApiKey,
     volcengineApiKey: request.volcengineApiKey,
     imageGenerateModel: request.imageGenerateModel,

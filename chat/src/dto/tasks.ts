@@ -4,13 +4,10 @@ import { LogicalPathSchema, ReferenceImageViewsSchema, SlugSchema } from "./libr
 /** 生成任务契约；历史 provider ID 只用于读取旧任务元数据。 */
 
 export const BATCH_3D_PROVIDER_IDS = [
-  "hunyuan",
-  "meshy",
   "trellis",
   "tripo3d",
   "rodin",
   "tripo-direct",
-  "hunyuan-direct",
   "hyper3d-direct",
   "seed3d-direct",
   "hyper3d-volc",
