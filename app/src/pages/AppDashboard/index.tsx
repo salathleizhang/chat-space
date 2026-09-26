@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AgentDock } from "../../widgets/AgentDock";
+import type { LiveTransforms } from "../../widgets/Viewport/liveTransforms";
 import type { LibraryAsset } from "../../shared/lib/libraryApi";
 import {
   activateEnvironmentAsset,
@@ -21,6 +22,7 @@ import { ThumbnailRenderer } from "../../widgets/ModelList/ThumbnailRenderer";
 import { useThumbnailQueue } from "../../widgets/ModelList/useThumbnailQueue";
 import { Sidebar, type SectionId } from "../../widgets/Sidebar";
 import { Viewport } from "../../widgets/Viewport";
+import { createLiveTransforms } from "../../widgets/Viewport/liveTransforms";
 import { useAgentChat } from "./useAgentChat";
 import { useChatMessages } from "./useChatMessages";
 import { useProjectState } from "./useProjectState";
@@ -68,6 +70,13 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
    * 与 `focusedId` 是两件事：选中是"我在操作哪个"，聚焦是"相机看向哪个"（双击触发）。
    */
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 拖拽期间的实时摆放表。住在这里而不是 Viewport 里，因为**右侧栏要订阅它**才能让数字
+   * 跟着手走——它是两侧唯一的共同祖先。用 lazy ref 保证整个工作台只有一份实例。
+   */
+  const liveRef = useRef<LiveTransforms | null>(null);
+  if (!liveRef.current) liveRef.current = createLiveTransforms();
+  const live = liveRef.current;
   const [refreshKey, setRefreshKey] = useState(0);
   const bumpRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
   const focusAsset = useCallback((asset: LibraryAsset) => setFocusedId(asset.id), []);
@@ -156,7 +165,6 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     sceneTransforms,
     handleSceneSaveError,
   );
-
   const { tasks, pollTasks, onThumbnailGenerated } = useTaskPolling({
     projectSlug,
     enabled: sessionReady,
@@ -297,6 +305,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         currentSkybox={currentSkybox}
         currentWorld={currentWorld}
         transforms={transforms}
+        live={live}
         onTransformCommit={commitTransforms}
         onSelectAsset={selectAsset}
         onClearSelection={clearSelection}

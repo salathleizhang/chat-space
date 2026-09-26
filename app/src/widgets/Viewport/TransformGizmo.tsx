@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import * as THREE from "three";
 import type { AssetTransform } from "../../shared/lib/libraryApi";
+import type { LiveTransforms } from "./liveTransforms";
 import type { AssetPlacement } from "./scenePlacement";
 
 export const TRANSFORM_MODES = ["translate", "rotate", "scale"] as const;
@@ -10,8 +11,6 @@ export type TransformMode = (typeof TRANSFORM_MODES)[number];
 /** 变换参考系：world = 世界轴，local = 对象自身轴（Blender 的 Global/Local） */
 export type TransformSpace = "world" | "local";
 
-/** 拖拽期间的实时摆放表，key 是资产 id；空表 = 当前没有人在拖 */
-export type LiveTransforms = Map<string, AssetPlacement>;
 
 export interface GizmoMember {
   id: string;

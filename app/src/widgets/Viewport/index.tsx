@@ -40,11 +40,11 @@ import { ModelMesh } from "./ModelMesh";
 import { LAYOUTS, gridTemplateFor, type CameraKind, type LayoutMode, type Projection } from "./paneLayouts";
 import { PaneCamera } from "./PaneCamera";
 import { computeSceneLayout, type AssetPlacement } from "./scenePlacement";
+import type { LiveTransforms } from "./liveTransforms";
 import {
   TransformGizmo,
   TRANSFORM_MODES,
   type GizmoMember,
-  type LiveTransforms,
   type TransformMode,
   type TransformSpace,
 } from "./TransformGizmo";
@@ -63,6 +63,11 @@ interface ViewportProps {
   currentWorld?: string;
   /** 用户用 gizmo 调过的资产摆放（按 assetSlug，来自 scene.json）；没记录的走网格默认位 */
   transforms?: Record<string, AssetTransform>;
+  /**
+   * 拖拽期间的实时摆放表。**由上层创建并注入**：右侧栏要订阅同一份表才能让数字跟着手走，
+   * 所以它不能住在这里（见 liveTransforms.ts）。
+   */
+  live: LiveTransforms;
   /** gizmo 松手时提交这一轮动过的资产摆放（乐观更新 + 防抖落盘在上层） */
   onTransformCommit?: (updates: Record<string, AssetTransform>) => void;
   /** 点击场景中的模型：additive（shift）时增减，否则替换为只含这一个 */
@@ -403,7 +408,6 @@ function SceneContents({
 }
 
 const DEFAULT_SKYBOX_URL = "/env/sky.exr";
-
 export const Viewport = memo(function Viewport({
   assets,
   focusedId,
@@ -411,6 +415,7 @@ export const Viewport = memo(function Viewport({
   currentSkybox,
   currentWorld,
   transforms,
+  live,
   onTransformCommit,
   onSelectAsset,
   onClearSelection,
@@ -517,16 +522,14 @@ export const Viewport = memo(function Viewport({
   const panes = LAYOUTS[paneLayout];
 
   /*
-    gizmo 拖拽的两件共享状态，都刻意用 ref 而不是 state：
-    - live：拖拽期间的实时摆放表，各窗格每帧读它（见 PlacedAsset）。走 state 的话每帧
-      重渲染整棵场景树，必卡。
+    gizmo 拖拽的共享状态：
+    - live：拖拽期间的实时摆放表，**由上层注入**（见 liveTransforms.ts）——右侧栏也要订阅它
+      才能让数字跟着手走，所以这份状态住在两侧的共同祖先里。各窗格每帧命令式读它，不重渲染。
     - pickSuppressedRef：正在操作 gizmo。gizmo 的网格没有 R3F 事件处理器，不在拾取集合
       （internal.interaction）里，所以点在它上面对 R3F 而言就是"点空了"——不挡一下的话，
       在 gizmo 上小幅拖动后松手会被判成点空白而清空选中，选中一没 gizmo 也就跟着消失了；
       拖动幅度小于 2px 阈值时，还可能把 gizmo 背后的另一个模型给选上。
   */
-  const liveRef = useRef<LiveTransforms>(new Map());
-  const live = liveRef.current;
   const pickSuppressedRef = useRef(false);
 
   const handleSelectAsset = useCallback(
