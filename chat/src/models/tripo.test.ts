@@ -16,6 +16,12 @@ function hangingFetch(): typeof fetch {
     })) as typeof fetch;
 }
 
+/** 最坏情况：既不返回，也不理会 abort（Bun 在连接被静默断开时的真实表现） */
+function deafFetch(): typeof fetch {
+  return ((_input: string | URL | Request, _init?: RequestInit) =>
+    new Promise<Response>(() => {})) as typeof fetch;
+}
+
 describe("waitForTripoTask", () => {
   test("轮询请求一直不返回时在 deadline 内失败，不再永远停在 running", async () => {
     const started = Date.now();
@@ -31,6 +37,21 @@ describe("waitForTripoTask", () => {
     expect((error as ChatServiceError).code).toBe("tripo_timeout");
     expect((error as ChatServiceError).status).toBe(504);
     // deadline 是硬上限：单次请求超时只是重试，不会把整个任务拖长
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  test("查询请求完全不理会 abort 时仍在 deadline 内失败（2026-09-26 卡 37 分钟的回归）", async () => {
+    const started = Date.now();
+    const error = await waitForTripoTask("task-deaf", {
+      apiKey: "tsk_test",
+      fetchFn: deafFetch(),
+      pollIntervalMs: 5,
+      timeoutMs: 120,
+      requestTimeoutMs: 20,
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ChatServiceError);
+    expect((error as ChatServiceError).code).toBe("tripo_timeout");
     expect(Date.now() - started).toBeLessThan(3_000);
   });
 

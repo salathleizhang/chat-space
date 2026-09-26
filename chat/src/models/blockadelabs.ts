@@ -1,10 +1,6 @@
 import { ChatServiceError } from "../common/errors";
-import {
-  API_REQUEST_TIMEOUT_MS,
-  fetchWithTimeout,
-  isRetryableNetworkError,
-  sleep,
-} from "../common/http";
+import { API_REQUEST_TIMEOUT_MS, fetchWithTimeout, readBodyWithTimeout } from "../common/http";
+import { pollProviderTask } from "../common/polling";
 
 /**
  * Blockade Labs Skybox 客户端（api-documentation.blockadelabs.com 核实 2026-07）。
@@ -59,59 +55,57 @@ async function pollUntilDone(
   options: BlockadeLabsOptions,
   errorPrefix: string,
 ): Promise<SkyboxRequestBody> {
-  const pollIntervalMs = options.pollIntervalMs ?? 5_000;
-  const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
+  const timeoutError = () =>
+    new ChatServiceError(`${errorPrefix}超时`, 504, "blockadelabs_timeout");
 
-  for (;;) {
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(
+  return pollProviderTask<SkyboxRequestBody>({
+    label: errorPrefix,
+    timeoutMs: options.timeoutMs ?? 15 * 60_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    pollIntervalMs: options.pollIntervalMs ?? 5_000,
+    ...(options.onStatus ? { onStatus: options.onStatus } : {}),
+    timeoutError,
+    attempt: async (signal, requestTimeoutMs) => {
+      const response = await fetchWithTimeout(
         fetchFn,
         url,
-        { headers: headers(apiKey) },
-        options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+        { headers: headers(apiKey), signal },
+        requestTimeoutMs,
         errorPrefix,
       );
-    } catch (error) {
-      // 瞬时网络错误不终止整条任务：等一个轮询间隔后继续，超时仍由 deadline 判定。
-      if (!isRetryableNetworkError(error)) throw error;
-      if (Date.now() > deadline) {
-        throw new ChatServiceError(`${errorPrefix}超时`, 504, "blockadelabs_timeout");
-      }
-      await sleep(pollIntervalMs);
-      continue;
-    }
-    const body = (await response.json().catch(() => ({}))) as SkyboxRequestBody;
-    if (!response.ok) {
-      throw new ChatServiceError(
-        `${errorPrefix}轮询失败（${response.status}）`,
-        502,
-        "blockadelabs_poll_failed",
+      const body = await readBodyWithTimeout(
+        () => response.json().catch(() => ({})) as Promise<SkyboxRequestBody>,
+        requestTimeoutMs,
+        errorPrefix,
       );
-    }
-    await options.onStatus?.(body.status ?? "unknown");
-    if (isTerminal(body.status)) {
-      if (body.status !== "complete") {
+      if (!response.ok) {
         throw new ChatServiceError(
+          `${errorPrefix}轮询失败（${response.status}）`,
+          502,
+          "blockadelabs_poll_failed",
+        );
+      }
+      return body;
+    },
+    statusOf: (body) => body.status ?? "unknown",
+    // 终态（complete/abort/error）都算「不用再等」；失败在 failureOf 里给说法。
+    isDone: (body) => body.status === "complete" && Boolean(body.file_url),
+    failureOf: (body) => {
+      if (!isTerminal(body.status)) return undefined;
+      if (body.status !== "complete") {
+        return new ChatServiceError(
           `${errorPrefix}失败：${body.error_message ?? body.status}`,
           502,
           "blockadelabs_generation_failed",
         );
       }
-      if (!body.file_url) {
-        throw new ChatServiceError(
-          `${errorPrefix}完成但没有 file_url`,
-          502,
-          "blockadelabs_bad_response",
-        );
-      }
-      return body;
-    }
-    if (Date.now() > deadline) {
-      throw new ChatServiceError(`${errorPrefix}超时`, 504, "blockadelabs_timeout");
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-  }
+      return new ChatServiceError(
+        `${errorPrefix}完成但没有 file_url`,
+        502,
+        "blockadelabs_bad_response",
+      );
+    },
+  });
 }
 
 /** 提交生成请求，立即返回续跑所需的 id（不轮询）；供调用方在崩溃窗口前落盘侧写。 */

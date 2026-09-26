@@ -3,9 +3,9 @@ import { ChatServiceError } from "../common/errors";
 import {
   API_REQUEST_TIMEOUT_MS,
   fetchWithTimeout,
-  isRetryableNetworkError,
-  sleep,
+  readBodyWithTimeout,
 } from "../common/http";
+import { pollProviderTask } from "../common/polling";
 
 /** 腾讯混元 UV 展开客户端；其余 3D 能力已移除。 */
 
@@ -49,9 +49,13 @@ export async function callHunyuanAction(
   action: HunyuanUvAction,
   payload: Record<string, unknown>,
   options: HunyuanCallOptions,
+  /** 轮询时传入任务级 signal，让总预算能真的打断请求 */
+  override: { signal?: AbortSignal; requestTimeoutMs?: number } = {},
 ): Promise<Record<string, unknown>> {
   const { secretId, secretKey } = splitKey(options.apiKey);
   const fetchFn = options.fetchFn ?? fetch;
+  const requestTimeoutMs =
+    override.requestTimeoutMs ?? options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS;
   const body = JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1000);
   const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
@@ -83,6 +87,7 @@ export async function callHunyuanAction(
     `https://${HOST}`,
     {
       method: "POST",
+      ...(override.signal ? { signal: override.signal } : {}),
       headers: {
         "Content-Type": "application/json",
         Host: HOST,
@@ -95,12 +100,17 @@ export async function callHunyuanAction(
       },
       body,
     },
-    options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    requestTimeoutMs,
     `混元 ${action}`,
   );
-  const json = (await response.json().catch(() => ({}))) as {
-    Response?: Record<string, unknown> & { Error?: { Code?: string; Message?: string } };
-  };
+  const json = await readBodyWithTimeout(
+    () =>
+      response.json().catch(() => ({})) as Promise<{
+        Response?: Record<string, unknown> & { Error?: { Code?: string; Message?: string } };
+      }>,
+    requestTimeoutMs,
+    `混元 ${action}`,
+  );
   const result = json.Response ?? {};
   if (!response.ok || result.Error) {
     const error = result.Error;
@@ -121,36 +131,32 @@ export async function waitForHunyuanJob(
   jobId: string,
   options: HunyuanCallOptions,
 ): Promise<Record<string, unknown>> {
-  const pollIntervalMs = options.pollIntervalMs ?? 10_000;
-  const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
   const timeoutError = () =>
     new ChatServiceError(
       `混元任务超时（JobId=${jobId}，可凭侧写续查）`,
       504,
       "hunyuan_timeout",
     );
-  for (;;) {
-    let result: Record<string, unknown>;
-    try {
-      result = await callHunyuanAction(queryAction, { JobId: jobId }, options);
-    } catch (error) {
-      // 单次请求超时/网络抖动不终止整条任务：等一个轮询间隔再查，整体仍由 deadline 兜底。
-      if (!isRetryableNetworkError(error)) throw error;
-      if (Date.now() > deadline) throw timeoutError();
-      await sleep(pollIntervalMs);
-      continue;
-    }
-    const status = String(result.Status ?? "").toUpperCase();
-    await options.onStatus?.(status);
-    if (status === "DONE") return result;
-    if (TERMINAL_FAIL.has(status)) {
-      throw new ChatServiceError(
+
+  return pollProviderTask<Record<string, unknown>>({
+    label: `混元 ${queryAction}`,
+    timeoutMs: options.timeoutMs ?? 15 * 60_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    pollIntervalMs: options.pollIntervalMs ?? 10_000,
+    ...(options.onStatus ? { onStatus: options.onStatus } : {}),
+    timeoutError,
+    attempt: (signal, requestTimeoutMs) =>
+      callHunyuanAction(queryAction, { JobId: jobId }, options, { signal, requestTimeoutMs }),
+    statusOf: (result) => String(result.Status ?? "").toUpperCase(),
+    isDone: (result) => String(result.Status ?? "").toUpperCase() === "DONE",
+    failureOf: (result) => {
+      const status = String(result.Status ?? "").toUpperCase();
+      if (!TERMINAL_FAIL.has(status)) return undefined;
+      return new ChatServiceError(
         `混元任务失败：${result.ErrorMessage ?? status}`,
         502,
         "hunyuan_task_failed",
       );
-    }
-    if (Date.now() > deadline) throw timeoutError();
-    await sleep(pollIntervalMs);
-  }
+    },
+  });
 }

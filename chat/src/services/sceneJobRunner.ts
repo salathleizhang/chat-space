@@ -1,4 +1,5 @@
 import { ChatServiceError, toErrorMessage } from "../common/errors";
+import { Deadline } from "../common/http";
 import {
   assetDir,
   assetIdentityFile,
@@ -98,25 +99,48 @@ async function updateNode(
   });
 }
 
+/**
+ * 等子任务结束。
+ *
+ * 子任务自己的轮询已经有硬预算（见 common/polling.ts），这里再兜一层：父任务不该因为
+ * 一个永远停在 running 的子任务而无期限等下去——那正是「场景任务卡住」的最后一段路径。
+ * 预算比卡死看门狗（60 分钟）宽，避免正常的长下载被误判。
+ */
+const MODEL_TASK_WAIT_TIMEOUT_MS = 90 * 60_000;
+
 async function waitForModelTask(projectSlug: string, taskId: string): Promise<string[]> {
-  for (;;) {
-    const task = await getTask(projectSlug, taskId);
-    if (!task || task.status === "running") {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      continue;
+  const deadline = new Deadline(
+    MODEL_TASK_WAIT_TIMEOUT_MS,
+    () =>
+      new ChatServiceError(
+        `等待物体生成任务超时（task_id=${taskId}）：超过 ${MODEL_TASK_WAIT_TIMEOUT_MS / 60_000} 分钟仍未结束。` +
+          "产物可能已经落盘，先用 list-generation-tasks 确认，再用 repair-assets 补齐缺失文件。",
+        504,
+        "scene_model_wait_timeout",
+      ),
+  );
+  try {
+    for (;;) {
+      const task = await deadline.guard(getTask(projectSlug, taskId));
+      if (!task || task.status === "running") {
+        await deadline.guard(new Promise((resolve) => setTimeout(resolve, 500)));
+        continue;
+      }
+      if (task.status === "failed") {
+        throw new ChatServiceError(
+          `物体生成失败：${task.error ?? "未知错误"}`,
+          502,
+          "scene_model_failed",
+        );
+      }
+      const files = renderablePathsFromResult(task.result);
+      if (files.length === 0) {
+        throw new ChatServiceError("物体生成完成但没有可渲染模型文件", 502, "scene_model_empty");
+      }
+      return files;
     }
-    if (task.status === "failed") {
-      throw new ChatServiceError(
-        `物体生成失败：${task.error ?? "未知错误"}`,
-        502,
-        "scene_model_failed",
-      );
-    }
-    const files = renderablePathsFromResult(task.result);
-    if (files.length === 0) {
-      throw new ChatServiceError("物体生成完成但没有可渲染模型文件", 502, "scene_model_empty");
-    }
-    return files;
+  } finally {
+    deadline.dispose();
   }
 }
 

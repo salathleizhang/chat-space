@@ -4,9 +4,9 @@ import {
   API_REQUEST_TIMEOUT_MS,
   UPLOAD_REQUEST_TIMEOUT_MS,
   fetchWithTimeout,
-  isRetryableNetworkError,
-  sleep,
+  readBodyWithTimeout,
 } from "../common/http";
+import { pollProviderTask } from "../common/polling";
 
 /**
  * Tripo3D 直连客户端（Bearer tsk_ key；v3 REST 细节经官方文档核实 2026-09）。
@@ -351,8 +351,7 @@ export async function waitForTripoTask(
   options: TripoCallOptions,
 ): Promise<Record<string, unknown>> {
   const fetchFn = options.fetchFn ?? fetch;
-  const pollIntervalMs = options.pollIntervalMs ?? 10_000;
-  const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
+  const label = "Tripo 任务查询";
   const url = `${V3_BASE}/tasks/${taskId}`;
   const timeoutError = () =>
     new ChatServiceError(
@@ -361,41 +360,43 @@ export async function waitForTripoTask(
       "tripo_timeout",
     );
 
-  for (;;) {
-    let response: Response;
-    let payload: Record<string, unknown>;
-    try {
-      response = await fetchWithTimeout(
+  const result = await pollProviderTask<{ data: Record<string, unknown>; status: string }>({
+    label,
+    timeoutMs: options.timeoutMs ?? 15 * 60_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    pollIntervalMs: options.pollIntervalMs ?? 10_000,
+    ...(options.onStatus ? { onStatus: options.onStatus } : {}),
+    timeoutError,
+    attempt: async (signal, requestTimeoutMs) => {
+      const response = await fetchWithTimeout(
         fetchFn,
         url,
-        { headers: authHeader(options.apiKey) },
-        options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
-        "Tripo 任务查询",
+        { headers: authHeader(options.apiKey), signal },
+        requestTimeoutMs,
+        label,
       );
-      payload = await jsonOrEmpty(response);
-    } catch (error) {
-      // 单次请求超时/网络抖动不终止整条任务：等一个轮询间隔再查，整体仍由 deadline 兜底。
-      if (!isRetryableNetworkError(error)) throw error;
-      if (Date.now() > deadline) throw timeoutError();
-      await sleep(pollIntervalMs);
-      continue;
-    }
-    if (!response.ok) {
-      throw new ChatServiceError(
-        `Tripo 任务查询失败（${response.status}）`,
-        502,
-        "tripo_status_failed",
+      const payload = await readBodyWithTimeout(
+        () => jsonOrEmpty(response),
+        requestTimeoutMs,
+        label,
       );
-    }
-    const data = dataOf(payload);
-    const status = typeof data.status === "string" ? data.status : "unknown";
-    await options.onStatus?.(status);
+      if (!response.ok) {
+        throw new ChatServiceError(
+          `Tripo 任务查询失败（${response.status}）`,
+          502,
+          "tripo_status_failed",
+        );
+      }
+      const data = dataOf(payload);
+      return { data, status: typeof data.status === "string" ? data.status : "unknown" };
+    },
+    statusOf: (result) => result.status,
+    isDone: (result) => result.status === "success",
+    failureOf: (result) =>
+      TERMINAL_FAILURES.has(result.status)
+        ? new ChatServiceError(`Tripo 任务失败：${result.status}`, 502, "tripo_task_failed")
+        : undefined,
+  });
 
-    if (status === "success") return data;
-    if (TERMINAL_FAILURES.has(status)) {
-      throw new ChatServiceError(`Tripo 任务失败：${status}`, 502, "tripo_task_failed");
-    }
-    if (Date.now() > deadline) throw timeoutError();
-    await sleep(pollIntervalMs);
-  }
+  return result.data;
 }

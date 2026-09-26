@@ -1,10 +1,6 @@
 import { ChatServiceError } from "../common/errors";
-import {
-  API_REQUEST_TIMEOUT_MS,
-  fetchWithTimeout,
-  isRetryableNetworkError,
-  sleep,
-} from "../common/http";
+import { API_REQUEST_TIMEOUT_MS, fetchWithTimeout, readBodyWithTimeout } from "../common/http";
+import { pollProviderTask } from "../common/polling";
 
 /**
  * World Labs Marble 客户端（对应上游 generate-world.mjs）。
@@ -174,73 +170,76 @@ export async function submitMarbleWorld(
   };
 }
 
-/** 仅轮询已存在的 operation（侧写续跑用，不重新提交） */
+/**
+ * 仅轮询已存在的 operation（侧写续跑用，不重新提交）。
+ *
+ * 走公共骨架：每一次查询都有硬上限，总预算到点必然兑现。这里曾经是「供应商 5 分钟完成、
+ * 本机 37 分钟没动静、30 分钟 deadline 一次没触发」的地方——因为 deadline 只在 await
+ * 返回之后才检查，请求挂住时那行永远走不到。
+ */
 export async function pollMarbleOperation(
   operationId: string,
   options: WorldLabsOptions,
 ): Promise<MarbleWorldResponse> {
   const fetchFn = options.fetchFn ?? fetch;
-  const pollIntervalMs = options.pollIntervalMs ?? 15_000;
-  const deadline = Date.now() + (options.timeoutMs ?? 30 * 60_000);
+  const label = "World Labs 轮询";
+  const timeoutError = () =>
+    new ChatServiceError(
+      `World Labs 生成超时（operation_id=${operationId}，可凭侧写续查）`,
+      504,
+      "worldlabs_timeout",
+    );
 
-  for (;;) {
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(
+  const operation = await pollProviderTask<MarbleOperation>({
+    label,
+    timeoutMs: options.timeoutMs ?? 30 * 60_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    pollIntervalMs: options.pollIntervalMs ?? 15_000,
+    ...(options.onStatus ? { onStatus: options.onStatus } : {}),
+    timeoutError,
+    attempt: async (signal, requestTimeoutMs) => {
+      const response = await fetchWithTimeout(
         fetchFn,
         `${ENDPOINT}/operations/${operationId}`,
-        { headers: { "WLT-Api-Key": options.apiKey } },
-        options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
-        "World Labs 轮询",
+        { headers: { "WLT-Api-Key": options.apiKey }, signal },
+        requestTimeoutMs,
+        label,
       );
-    } catch (error) {
-      // 瞬时网络错误不终止整条任务：等一个轮询间隔后继续，超时仍由 deadline 判定。
-      if (!isRetryableNetworkError(error)) throw error;
-      if (Date.now() > deadline) {
-        throw new ChatServiceError(
-          `World Labs 生成超时（operation_id=${operationId}）`,
-          504,
-          "worldlabs_timeout",
-        );
-      }
-      await sleep(pollIntervalMs);
-      continue;
-    }
-    const body = (await response.json().catch(() => ({}))) as MarbleOperation;
-    if (!response.ok) {
-      throw new ChatServiceError(
-        `World Labs 轮询失败（${response.status}）`,
-        502,
-        "worldlabs_poll_failed",
+      const body = await readBodyWithTimeout(
+        () => response.json().catch(() => ({})) as Promise<MarbleOperation>,
+        requestTimeoutMs,
+        label,
       );
-    }
-    await options.onStatus?.(body.done ? "completed" : "running");
-    if (body.done) {
-      if (body.error) {
+      if (!response.ok) {
         throw new ChatServiceError(
-          `World Labs 生成失败：${JSON.stringify(body.error).slice(0, 300)}`,
+          `World Labs 轮询失败（${response.status}）`,
           502,
-          "worldlabs_failed",
+          "worldlabs_poll_failed",
         );
       }
-      if (!body.response) {
-        throw new ChatServiceError(
-          "World Labs operation 完成但没有 response",
-          502,
-          "worldlabs_bad_response",
-        );
-      }
-      return body.response;
-    }
-    if (Date.now() > deadline) {
-      throw new ChatServiceError(
-        `World Labs 生成超时（operation_id=${operationId}）`,
-        504,
-        "worldlabs_timeout",
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      return body;
+    },
+    statusOf: (body) => (body.done ? "completed" : "running"),
+    // 带 error 的 done 走 failureOf，不能当成成功。
+    isDone: (body) => Boolean(body.done) && !body.error,
+    failureOf: (body) =>
+      body.done && body.error
+        ? new ChatServiceError(
+            `World Labs 生成失败：${JSON.stringify(body.error).slice(0, 300)}`,
+            502,
+            "worldlabs_failed",
+          )
+        : undefined,
+  });
+
+  if (!operation.response) {
+    throw new ChatServiceError(
+      "World Labs operation 完成但没有 response",
+      502,
+      "worldlabs_bad_response",
+    );
   }
+  return operation.response;
 }
 
 export interface WorldAssetUrls {

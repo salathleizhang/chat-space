@@ -2,9 +2,9 @@ import { ChatServiceError } from "../common/errors";
 import {
   API_REQUEST_TIMEOUT_MS,
   fetchWithTimeout,
-  isRetryableNetworkError,
-  sleep,
+  readBodyWithTimeout,
 } from "../common/http";
+import { pollProviderTask } from "../common/polling";
 
 /**
  * 火山方舟 Seed3D 图生 3D 客户端（ark.cn-beijing.volces.com/api/v3，Bearer）。
@@ -55,23 +55,33 @@ async function callArk(
   path: string,
   init: RequestInit,
   options: Seed3dCallOptions,
+  /** 轮询时传入任务级 signal 与更细的标签，让总预算能真的打断请求 */
+  override: { signal?: AbortSignal; requestTimeoutMs?: number; label?: string } = {},
 ): Promise<Record<string, unknown>> {
   const fetchFn = options.fetchFn ?? fetch;
+  const label = override.label ?? "Seed3D";
+  const requestTimeoutMs =
+    override.requestTimeoutMs ?? options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS;
   const response = await fetchWithTimeout(
     fetchFn,
     `${ARK_BASE}${path}`,
     {
       ...init,
+      ...(override.signal ? { signal: override.signal } : {}),
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
         "Content-Type": "application/json",
         ...(init.headers ?? {}),
       },
     },
-    options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
-    "Seed3D",
+    requestTimeoutMs,
+    label,
   );
-  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const body = await readBodyWithTimeout(
+    () => response.json().catch(() => ({})) as Promise<Record<string, unknown>>,
+    requestTimeoutMs,
+    label,
+  );
   if (!response.ok) {
     throw new ChatServiceError(
       `Seed3D 请求失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
@@ -124,8 +134,14 @@ export async function submitSeed3dTask(
 export async function pollSeed3dTask(
   taskId: string,
   options: Seed3dCallOptions,
+  override: { signal?: AbortSignal; requestTimeoutMs?: number } = {},
 ): Promise<Record<string, unknown>> {
-  return callArk(`/contents/generations/tasks/${encodeURIComponent(taskId)}`, {}, options);
+  return callArk(
+    `/contents/generations/tasks/${encodeURIComponent(taskId)}`,
+    {},
+    options,
+    { label: "Seed3D 任务查询", ...override },
+  );
 }
 
 const TERMINAL_FAIL = new Set(["failed", "cancelled", "canceled", "expired"]);
@@ -136,39 +152,35 @@ export async function waitForSeed3dTask(
   taskId: string,
   options: Seed3dCallOptions,
 ): Promise<Record<string, unknown>> {
-  const pollIntervalMs = options.pollIntervalMs ?? 10_000;
-  const deadline = Date.now() + (options.timeoutMs ?? 15 * 60_000);
   const timeoutError = () =>
     new ChatServiceError(
       `Seed3D 任务超时（id=${taskId}，可凭侧写续查）`,
       504,
       "seed3d_timeout",
     );
-  for (;;) {
-    let result: Record<string, unknown>;
-    try {
-      result = await pollSeed3dTask(taskId, options);
-    } catch (error) {
-      // 单次请求超时/网络抖动不终止整条任务：等一个轮询间隔再查，整体仍由 deadline 兜底。
-      if (!isRetryableNetworkError(error)) throw error;
-      if (Date.now() > deadline) throw timeoutError();
-      await sleep(pollIntervalMs);
-      continue;
-    }
-    const status = String(result.status ?? "").toLowerCase();
-    await options.onStatus?.(status);
-    if (TERMINAL_OK.has(status)) return result;
-    if (TERMINAL_FAIL.has(status)) {
+
+  return pollProviderTask<Record<string, unknown>>({
+    label: "Seed3D 任务查询",
+    timeoutMs: options.timeoutMs ?? 15 * 60_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
+    pollIntervalMs: options.pollIntervalMs ?? 10_000,
+    ...(options.onStatus ? { onStatus: options.onStatus } : {}),
+    timeoutError,
+    attempt: (signal, requestTimeoutMs) =>
+      pollSeed3dTask(taskId, options, { signal, requestTimeoutMs }),
+    statusOf: (result) => String(result.status ?? "").toLowerCase(),
+    isDone: (result) => TERMINAL_OK.has(String(result.status ?? "").toLowerCase()),
+    failureOf: (result) => {
+      const status = String(result.status ?? "").toLowerCase();
+      if (!TERMINAL_FAIL.has(status)) return undefined;
       const error = result.error as { message?: string } | undefined;
-      throw new ChatServiceError(
+      return new ChatServiceError(
         `Seed3D 任务失败：${error?.message ?? status}`,
         502,
         "seed3d_task_failed",
       );
-    }
-    if (Date.now() > deadline) throw timeoutError();
-    await sleep(pollIntervalMs);
-  }
+    },
+  });
 }
 
 /** Seed3D 输出 URL 的文件扩展名白名单。 */
