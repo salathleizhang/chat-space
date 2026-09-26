@@ -488,6 +488,82 @@ describe("AgentDock 会话计划", () => {
   });
 });
 
+describe("AgentDock ask-user 提问卡片", () => {
+  const QUESTION = {
+    questionId: "q-1",
+    header: "付费确认",
+    question: "是否按上述计划生成？",
+    options: [
+      { id: "approve", label: "同意", recommended: true },
+      { id: "stop", label: "停止", tone: "danger" as const },
+    ],
+    multiSelect: false,
+    allowOther: false,
+  };
+
+  test("卡片留在提问那条 assistant 消息里，并使用与计划卡相同的居中阅读宽度", async () => {
+    const { container } = await render({
+      messages: [
+        { id: "u1", role: "user", content: "把天空盒改一下" },
+        {
+          id: "a1",
+          role: "assistant",
+          content: "还有一件事需要确认。",
+          pendingQuestion: QUESTION,
+          agentStatus: { label: "Waiting for your decision", status: "waiting" },
+        },
+      ],
+    });
+    await act(async () =>
+      (container.querySelector(
+        'button[aria-label="Expand agent"]',
+      ) as HTMLButtonElement).click(),
+    );
+
+    const history = container.querySelector("#agent-dock-history")!;
+    const message = history.querySelector("[data-agent-message]")!;
+    const card = message.querySelector("[data-ask-user-card]")!;
+
+    expect(card).not.toBeNull();
+    // 在消息气泡内部：mx-auto 才有效（消息容器不是 flex，self-center 不生效）
+    expect(card.classList.contains("mx-auto")).toBe(true);
+    expect(card.classList.contains("max-w-xl")).toBe(true);
+    expect(card.classList.contains("w-full")).toBe(true);
+    expect(card.classList.contains("bg-fill!")).toBe(true);
+    expect(message.textContent).toContain("还有一件事需要确认。");
+    expect(message.querySelector('[data-agent-turn-status="waiting"]')).not.toBeNull();
+  });
+
+  test("点选项把回答交回提问那条消息的 id", async () => {
+    const onAnswerQuestion = mock((_id: string, _answer: unknown) => {});
+    const { container } = await render({
+      messages: [
+        { id: "a1", role: "assistant", content: "", pendingQuestion: QUESTION },
+      ],
+      onAnswerQuestion: onAnswerQuestion as never,
+    });
+    await act(async () =>
+      (container.querySelector(
+        'button[aria-label="Expand agent"]',
+      ) as HTMLButtonElement).click(),
+    );
+
+    await act(async () =>
+      (container.querySelector(
+        '[data-ask-user-option="approve"]',
+      ) as HTMLButtonElement).click(),
+    );
+
+    expect(onAnswerQuestion).toHaveBeenCalledTimes(1);
+    expect(onAnswerQuestion.mock.calls[0]![0]).toBe("a1");
+    expect(onAnswerQuestion.mock.calls[0]![1]).toMatchObject({
+      questionId: "q-1",
+      optionIds: ["approve"],
+      labels: ["同意"],
+    });
+  });
+});
+
 describe("AgentDock 状态行", () => {
   test("assistant 生成的参考图显示为可弹窗预览的缩略图", async () => {
     const path = "projects/demo/source/0-ref.png";

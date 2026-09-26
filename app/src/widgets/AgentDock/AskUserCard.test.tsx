@@ -57,7 +57,12 @@ const optionButton = (container: HTMLElement, id: string) =>
 describe("AskUserCard 待回答", () => {
   test("渲染问题、角标、明细与全部选项", async () => {
     const { container } = await render();
-    expect(container.querySelector("[data-ask-user-card]")?.getAttribute("data-ask-user-card")).toBe("pending");
+    const card = container.querySelector("[data-ask-user-card]")!;
+    expect(card.getAttribute("data-ask-user-card")).toBe("pending");
+    // 卡片在消息气泡内部，靠 mx-auto 居中；宽度与计划卡一致
+    expect(card.classList.contains("mx-auto")).toBe(true);
+    expect(card.classList.contains("max-w-xl")).toBe(true);
+    expect(card.classList.contains("w-full")).toBe(true);
     expect(container.textContent).toContain("是否按上述计划生成？");
     expect(container.textContent).toContain("付费确认");
     expect(container.querySelectorAll("[data-ask-user-details] li")).toHaveLength(2);

@@ -49,7 +49,12 @@ export function AskUserCard({
   return (
     <Panel
       data-ask-user-card={answer ? "answered" : superseded ? "superseded" : "pending"}
-      className="mt-2 w-full max-w-xl self-start bg-fill! px-4 py-3.5"
+      /*
+        mx-auto 而不是 self-center：这张卡在 assistant 消息气泡内部（消息容器不是
+        flex），self-* 不会生效；PlanCard 是历史容器的直接 flex 子项才用 self-center。
+        两者最终都以 max-w-xl 居中在同一阅读宽度上。
+      */
+      className="mx-auto mt-2 w-full max-w-xl bg-fill! px-4 py-3.5"
     >
       <div data-ask-user-header className="flex items-start justify-between gap-3">
         <span className="min-w-0 text-sm font-semibold leading-5 text-ink-strong">
