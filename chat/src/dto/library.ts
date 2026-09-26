@@ -192,14 +192,50 @@ export const AssetTransformSchema = z.object({
 });
 export type AssetTransform = z.infer<typeof AssetTransformSchema>;
 
+/** 可被工程图片覆盖的贴图通道（three 材质槽位名，与 app 侧 materialOverrides 同表） */
+export const MaterialTextureSlotSchema = z.enum([
+  "map",
+  "normalMap",
+  "roughnessMap",
+  "metalnessMap",
+  "aoMap",
+  "emissiveMap",
+  "alphaMap",
+]);
+export type MaterialTextureSlot = z.infer<typeof MaterialTextureSlotSchema>;
+
+/**
+ * 单个资产的材质覆盖（scene.json 的 materials 条目）。**只做贴图替换，不换材质类**：
+ * 覆盖的实现是从供应商文件里的原材质克隆一份、只补用户改过的槽位，所以 glTF 的
+ * clearcoat/transmission、OBJ 的 specular、unlit 材质都原样保留。
+ *
+ * 稀疏到槽位：`textures` 里没有的通道沿用模型自带贴图，**不是**"清空该通道"——清空在
+ * app 侧没有独立语义，因为用户能做的事只有"换成另一张图"和"换回原图"。
+ *
+ * 曾经有过一个 `shader` 档位字段（可切成 Standard/Phong/Toon… 等九个预设），已移除：
+ * 这个面板的主要工作是换贴图，多出来的档位要么与"保持原材质"逐像素相同，要么是把
+ * 外观改成用户调不回来的样子。旧文件里残留的 `shader` 键会被 zod 默认的 strip 丢掉，
+ * 读取不受影响。
+ */
+export const AssetMaterialSchema = z.object({
+  /** partialRecord：稀疏是常态，七个通道里通常只覆盖一两个 */
+  textures: z.partialRecord(MaterialTextureSlotSchema, LogicalPathSchema).default({}),
+});
+export type AssetMaterial = z.infer<typeof AssetMaterialSchema>;
+
 /**
  * 场景摆放（scene.json）：用户在 3D 视口里用 gizmo 调过的资产变换，按 assetSlug 索引。
  * **只记用户手动摆过的那些**——没有条目的资产由 app 侧按创建顺序算网格默认位（纯派生，
  * 不落盘）。所以这份文件天然稀疏，新资产不需要预先写入。
+ *
+ * `materials` 是同一份文件里的**兄弟表**而不是塞进 `AssetTransform`：写入是按键浅合并，
+ * 嵌进变换值里的话，一次只带 transforms 的保存会把该资产的材质整份抹掉。旧文件没有这个键，
+ * default 让读取照常通过。
  */
 export const SceneLayoutSchema = z.object({
   schemaVersion: z.literal(1),
   transforms: z.record(SlugSchema, AssetTransformSchema),
+  materials: z.record(SlugSchema, AssetMaterialSchema).default({}),
   updatedAt: z.iso.datetime(),
 });
 export type SceneLayout = z.infer<typeof SceneLayoutSchema>;

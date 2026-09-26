@@ -3,7 +3,7 @@ import { z } from "zod";
 import { formatIndexedName, nextIndex } from "../common/indexedFiles";
 import { projectSourceDir } from "../common/libraryPaths";
 import { slugifyOrFallback } from "../common/slug";
-import { AssetTransformSchema, SlugSchema } from "../dto/library";
+import { AssetMaterialSchema, AssetTransformSchema, SlugSchema } from "../dto/library";
 import { getAssetStorage } from "../services/assetStorage";
 import {
   activateEnvironmentAsset,
@@ -14,7 +14,7 @@ import {
   listProjects,
   requireProject,
   saveAssetThumbnail,
-  writeSceneTransforms,
+  writeSceneLayout,
 } from "../mastra/tools/projectTools";
 import { saveInspectionSheet } from "../mastra/tools/inspectTools";
 
@@ -61,9 +61,15 @@ projectRoutes.get("/:slug/state", async (c) => {
   return c.json(await getProjectState(getAssetStorage(), slug));
 });
 
+/**
+ * 场景文档的局部更新：两张表都可选，各自按资产 slug 浅合并进现有 scene.json
+ * （不是整份覆盖）。摆放由 gizmo 防抖提交，材质由右侧栏每次改完立即提交，
+ * 两条链路共用同一个端点，因此共用服务端同一把文件锁。
+ */
 const SaveSceneSchema = z.object({
-  /** 只带这一轮 gizmo 动过的资产，服务端合并进现有 scene.json（不是整份覆盖） */
-  transforms: z.record(SlugSchema, AssetTransformSchema),
+  /** 只带这一轮动过的资产 */
+  transforms: z.record(SlugSchema, AssetTransformSchema).optional(),
+  materials: z.record(SlugSchema, AssetMaterialSchema).optional(),
 });
 
 const ActivateEnvironmentSchema = z.object({
@@ -85,11 +91,14 @@ projectRoutes.put("/:slug/environment", async (c) => {
   return c.json({ project });
 });
 
-/** 场景摆放落盘：视口里用 gizmo 调完位置/旋转/缩放后由 app 防抖提交 */
+/** 场景文档落盘：摆放（gizmo 调完防抖提交）与材质（右侧栏改完立即提交） */
 projectRoutes.put("/:slug/scene", async (c) => {
   const slug = SlugSchema.parse(c.req.param("slug"));
   const req = SaveSceneSchema.parse(await c.req.json());
-  const scene = await writeSceneTransforms(getAssetStorage(), slug, req.transforms);
+  const scene = await writeSceneLayout(getAssetStorage(), slug, {
+    transforms: req.transforms,
+    materials: req.materials,
+  });
   return c.json({ scene });
 });
 

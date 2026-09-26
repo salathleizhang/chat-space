@@ -23,6 +23,7 @@ import {
   setCurrentSkybox,
   setCurrentWorld,
   slugify,
+  writeSceneLayout,
   writeSceneTransforms,
 } from "./projectTools";
 
@@ -652,5 +653,143 @@ describe("writeSceneTransforms", () => {
     await expect(writeSceneTransforms(storage, "no-such-project", {})).rejects.toThrow(
       "不存在",
     );
+  });
+});
+
+describe("writeSceneLayout 材质", () => {
+  test("只提交材质时不动摆放，只提交摆放时不动材质", async () => {
+    await createProject(storage, { name: "材质", slug: "material-demo" });
+    await writeSceneLayout(storage, "material-demo", {
+      transforms: {
+        chair: { position: [1, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      materials: {
+        chair: { textures: { map: "projects/material-demo/source/1-ref.png" } },
+      },
+    });
+
+    // 只提交摆放：材质必须留下（这正是把 materials 放成兄弟表而不是塞进 transform 的原因）
+    await writeSceneTransforms(storage, "material-demo", {
+      chair: { position: [4, 0, 4], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+    let scene = (await getProjectState(storage, "material-demo")).scene;
+    expect(scene?.transforms.chair?.position).toEqual([4, 0, 4]);
+    expect(scene?.materials.chair?.textures.map).toBe(
+      "projects/material-demo/source/1-ref.png",
+    );
+
+    // 只提交材质：摆放必须留下
+    await writeSceneLayout(storage, "material-demo", {
+      materials: { table: { textures: { normalMap: "projects/material-demo/source/2-n.png" } } },
+    });
+    scene = (await getProjectState(storage, "material-demo")).scene;
+    expect(scene?.transforms.chair?.position).toEqual([4, 0, 4]);
+    expect(scene?.materials.chair?.textures.map).toBe(
+      "projects/material-demo/source/1-ref.png",
+    );
+    expect(scene?.materials.table?.textures.normalMap).toBe(
+      "projects/material-demo/source/2-n.png",
+    );
+  });
+
+  test("旧 scene.json 没有 materials 键也能读，写回后补上空表", async () => {
+    await createProject(storage, { name: "旧摆放", slug: "material-legacy" });
+    // 旧版本写下的文件：只有 schemaVersion/transforms/updatedAt，没有 materials
+    await storage.writeText(
+      "projects/material-legacy/scene.json",
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          transforms: {
+            chair: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          },
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const readBack = (await getProjectState(storage, "material-legacy")).scene;
+    expect(readBack?.transforms.chair?.position).toEqual([1, 2, 3]);
+    expect(readBack?.materials).toEqual({});
+
+    await writeSceneLayout(storage, "material-legacy", {
+      materials: { chair: { textures: { map: "projects/material-legacy/source/1-ref.png" } } },
+    });
+    const rewritten = JSON.parse(
+      await storage.readText("projects/material-legacy/scene.json"),
+    ) as { materials?: unknown };
+    expect(rewritten.materials).toEqual({
+      chair: { textures: { map: "projects/material-legacy/source/1-ref.png" } },
+    });
+  });
+
+  test("材质里的 shader 档位已移除：旧文件残留的键读取时被丢掉，不报错", async () => {
+    await createProject(storage, { name: "旧档位", slug: "material-shader-legacy" });
+    // 曾经写过 shader 字段的旧文件；直接删值会让整个工程读不出来（校验失败抛 500），
+    // 所以靠 zod 默认 strip 丢掉它，只保留贴图
+    await storage.writeText(
+      "projects/material-shader-legacy/scene.json",
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          transforms: {},
+          materials: {
+            chair: { shader: "wireframe", textures: { map: "projects/material-shader-legacy/source/1-ref.png" } },
+          },
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const scene = (await getProjectState(storage, "material-shader-legacy")).scene;
+    expect(scene?.materials.chair?.textures.map).toBe(
+      "projects/material-shader-legacy/source/1-ref.png",
+    );
+    expect(scene?.materials.chair).not.toHaveProperty("shader");
+
+    // 再写一次之后，文件里也不再残留 shader
+    await writeSceneLayout(storage, "material-shader-legacy", { transforms: {} });
+    const rewritten = JSON.parse(
+      await storage.readText("projects/material-shader-legacy/scene.json"),
+    ) as { materials?: Record<string, unknown> };
+    expect(rewritten.materials?.chair).not.toHaveProperty("shader");
+  });
+
+  test("删除资产时材质与摆放一起摘掉", async () => {
+    await createProject(storage, { name: "删材质", slug: "material-delete" });
+    await storage.writeBytes("projects/material-delete/assets/stool/0-stool.glb", PNG_BYTES);
+    await writeSceneLayout(storage, "material-delete", {
+      transforms: {
+        stool: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      materials: { stool: { textures: {} } },
+    });
+
+    await deleteAsset(storage, "material-delete", "stool");
+    const scene = (await getProjectState(storage, "material-delete")).scene;
+    expect(scene?.transforms.stool).toBeUndefined();
+    expect(scene?.materials.stool).toBeUndefined();
+  });
+
+  test("拒绝未知贴图通道与穿越路径", async () => {
+    await createProject(storage, { name: "坏材质", slug: "material-bad" });
+    await expect(
+      writeSceneLayout(storage, "material-bad", {
+        materials: {
+          chair: { textures: { nope: "projects/material-bad/source/1-ref.png" } as never },
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      writeSceneLayout(storage, "material-bad", {
+        materials: {
+          chair: { textures: { map: "../escape.png" } },
+        },
+      }),
+    ).rejects.toThrow();
   });
 });

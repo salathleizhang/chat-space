@@ -28,6 +28,7 @@ import {
   SceneLayoutSchema,
   SlugSchema,
   type AssetIdentity,
+  type AssetMaterial,
   type AssetTransform,
   type Project,
   type ProjectPlan,
@@ -318,19 +319,25 @@ export async function getProjectState(
   };
 }
 
+/** scene.json 的一次局部更新：两张表都可选，各自按键浅合并 */
+export interface ScenePatch {
+  transforms?: Record<string, AssetTransform>;
+  materials?: Record<string, AssetMaterial>;
+}
+
 /**
- * 合并式写入场景摆放（scene.json）。与 `setCurrentSkybox` 同属"读 → patch → 整体写回"
- * 的局部更新式 mutator：app 侧一次只提交这轮 gizmo 动过的那几个资产，其余条目原样保留
+ * 合并式写入场景文档（scene.json）。与 `setCurrentSkybox` 同属"读 → patch → 整体写回"
+ * 的局部更新式 mutator：app 侧一次只提交这轮动过的那几个资产，其余条目原样保留
  * ——视口里两个人（或两个窗口）先后拖不同的模型，后写的不该把先写的抹掉。
- */
-/**
+ *
  * scene.json 是一个读改写文档。把同一项目的所有变更串行化，否则两个窗口同时拖不同
  * 资产时可能都读到旧快照，后写入者会把先写入者整份覆盖。队尾即使失败也不能阻塞后续。
+ * 摆放与材质共用一个锁：它们是同一份文件，分开加锁等于没加。
  */
-export async function writeSceneTransforms(
+export async function writeSceneLayout(
   storage: AssetStorage,
   projectSlug: string,
-  transforms: Record<string, AssetTransform>,
+  patch: ScenePatch,
 ): Promise<SceneLayout> {
   const path = projectSceneFile(projectSlug);
   return withMetadataMutationLock(path, async () => {
@@ -340,7 +347,8 @@ export async function writeSceneTransforms(
       : null;
     const next: SceneLayout = {
       schemaVersion: 1,
-      transforms: { ...current?.transforms, ...transforms },
+      transforms: { ...current?.transforms, ...patch.transforms },
+      materials: { ...current?.materials, ...patch.materials },
       updatedAt: new Date().toISOString(),
     };
     await writeJson(storage, path, SceneLayoutSchema, next);
@@ -348,11 +356,20 @@ export async function writeSceneTransforms(
   });
 }
 
+/** 只提交摆放的调用方（gizmo 拖拽落盘、场景分析的测试夹具）走的窄入口 */
+export async function writeSceneTransforms(
+  storage: AssetStorage,
+  projectSlug: string,
+  transforms: Record<string, AssetTransform>,
+): Promise<SceneLayout> {
+  return writeSceneLayout(storage, projectSlug, { transforms });
+}
+
 /**
- * 资产删除后摘掉它的摆放记录。不清的话，删掉 `chair` 再导入一个同名 `chair`
- * （slug 复用）会继承上一个资产的位置——跟列表缩略图 `seenRef` 那个坑同源。
+ * 资产删除后摘掉它的摆放与材质记录。不清的话，删掉 `chair` 再导入一个同名 `chair`
+ * （slug 复用）会继承上一个资产的位置与材质——跟列表缩略图 `seenRef` 那个坑同源。
  */
-async function dropSceneTransform(
+async function dropSceneEntries(
   storage: AssetStorage,
   projectSlug: string,
   assetSlug: string,
@@ -361,11 +378,15 @@ async function dropSceneTransform(
   await withMetadataMutationLock(path, async () => {
     if (!(await storage.exists(path))) return;
     const scene = await readJson(storage, path, SceneLayoutSchema);
-    if (!(assetSlug in scene.transforms)) return;
-    const { [assetSlug]: _dropped, ...rest } = scene.transforms;
+    const hasTransform = assetSlug in scene.transforms;
+    const hasMaterial = assetSlug in scene.materials;
+    if (!hasTransform && !hasMaterial) return;
+    const { [assetSlug]: _droppedTransform, ...transforms } = scene.transforms;
+    const { [assetSlug]: _droppedMaterial, ...materials } = scene.materials;
     await writeJson(storage, path, SceneLayoutSchema, {
       ...scene,
-      transforms: rest,
+      transforms,
+      materials,
       updatedAt: new Date().toISOString(),
     });
   });
@@ -575,7 +596,7 @@ export async function deleteAsset(
     throw new ChatServiceError(`资产「${assetSlug}」不存在`, 404, "asset_not_found");
   }
   await storage.remove(dir);
-  await dropSceneTransform(storage, projectSlug, assetSlug);
+  await dropSceneEntries(storage, projectSlug, assetSlug);
   await mutateProject(storage, projectSlug, (project) => {
     if (
       project.currentSkybox !== assetSlug &&
