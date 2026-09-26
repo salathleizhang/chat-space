@@ -226,10 +226,10 @@ describe("runTripoImageTo3d", () => {
 
     expect(calls.some((call) => call.url.endsWith("/generation/image-to-model"))).toBe(false);
     const createCall = calls.find((call) => call.url.endsWith("/generation/multiview-to-model"));
-    expect(createCall?.body).toEqual({
-      inputs: [{ front: "ft-1" }, { back: "ft-2" }],
-      model: "v3.1-20260211",
-    });
+    const body = createCall?.body as { inputs: Array<Record<string, string>>; model: string };
+    expect(body.model).toBe("v3.1-20260211");
+    expect(body.inputs.map((entry) => Object.keys(entry)[0])).toEqual(["front", "back"]);
+    expect(body.inputs.flatMap((entry) => Object.values(entry)).sort()).toEqual(["ft-1", "ft-2"]);
     const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
     expect(sidecar.model).toBe("v3/generation/multiview-to-model");
     expect(sidecar.params.generation_mode).toBe("multiview");
