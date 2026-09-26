@@ -72,7 +72,7 @@ describe("extractSeed3dFileUrls", () => {
     ).toEqual(["https://tos.fake/abc?sig=xyz"]);
   });
 
-  test("按扩展名兜底认 usd/usdz——meshy 那份扩展名表没有这两个", () => {
+  test("按扩展名兜底识别 usd/usdz", () => {
     const urls = extractSeed3dFileUrls({
       outputs: ["https://cdn.fake/a.usdz", "https://cdn.fake/b.usd", "https://cdn.fake/c.txt"],
     });

@@ -34,12 +34,12 @@ import { downloadAndLandSeed3dOutput } from "./seed3dOutput";
 
 /**
  * 火山方舟 Seed3D 直连能力（seed3d-direct 渠道）——图生 3D，一张参考图 + 可选
- * 输出规格，产出带纹理与 PBR 材质的模型。图片走 data URI（与 hunyuan-direct 同
- * 取舍：本地优先，免上传基础设施），输出规格经 `models/seed3d.ts` 拼成该家独有的
+ * 输出规格，产出带纹理与 PBR 材质的模型。图片走 data URI（本地优先，免上传
+ * 基础设施），输出规格经 `models/seed3d.ts` 拼成该家独有的
  * `--subdivisionlevel/--fileformat` 文本命令。
  *
  * 无后处理能力（贴图/绑骨/分割等方舟这边没有对应端点），所以本文件只有生成一件事，
- * 比 hunyuanOps/tripoOps 薄很多。
+ * 比 tripoOps 薄很多。
  */
 
 /** doubao-seed3d-2-0-260328 的档位实际面数（官方文档 2026-07），仅用于提示与侧写 */
@@ -63,7 +63,7 @@ export interface Seed3dOpResult {
   taskId: string;
 }
 
-/** 参考图优先级与 hunyuanOps.resolveSingleImage 同语义（显式 > 身份绑定 > 最新源图） */
+/** 参考图优先级：显式 > 身份绑定 > 最新源图。 */
 export async function resolveSingleImage(
   storage: AssetStorage,
   projectSlug: string,
@@ -202,7 +202,7 @@ export async function downloadSeed3dOutputs(
   return files;
 }
 
-/** seed3d-direct 的批量 3D 生成（与 hunyuanOps.startHunyuan3dBatch 同构） */
+/** seed3d-direct 的批量 3D 生成。 */
 export function startSeed3d3dBatch(
   projectSlug: string,
   objects: GenerationObject[],

@@ -148,7 +148,7 @@ export async function waitForSeed3dTask(
   }
 }
 
-/** usd/usdz 是 Seed3D 独有的输出档，meshy 那份扩展名表没有，故本文件自带一份 */
+/** Seed3D 输出 URL 的文件扩展名白名单。 */
 const SEED3D_FILE_URL_RE = /\.(glb|obj|usdz?|zip|png|jpe?g|webp)(\?|$)/i;
 
 /**
