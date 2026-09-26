@@ -10,6 +10,11 @@
  *     .analyze-reference-<id>.json 待用户确认的参考图分析草稿（成功确认后删除）
  *     plan.json                    agent 的当前计划（no-op 状态，非可执行结构）
  *     scene.json                   共享场景摆放（用户在视口里手动调过的资产变换）
+ *     scene-spec.json              当前可修订的场景事实（对象清单与源图）
+ *     scene-spec-revisions/
+ *       <revision>.json            场景事实历史版本
+ *     scene-jobs/
+ *       <job-id>.json              完整场景的节点图、依赖与 QA 状态
  *     source/
  *       N-<slug>.<ext>             索引源图（0 = 原始输入）
  *       <image>.json               逐图分析
@@ -47,6 +52,22 @@ export const projectPlanFile = (projectSlug: string) =>
 
 export const projectSceneFile = (projectSlug: string) =>
   `${projectDir(projectSlug)}/scene.json`;
+
+/** 生成用的场景事实与视口摆放 scene.json 分开，避免两种 revision 互相污染。 */
+export const projectSceneSpecFile = (projectSlug: string) =>
+  `${projectDir(projectSlug)}/scene-spec.json`;
+
+export const projectSceneSpecRevisionsDir = (projectSlug: string) =>
+  `${projectDir(projectSlug)}/scene-spec-revisions`;
+
+export const projectSceneSpecRevisionFile = (projectSlug: string, revision: number) =>
+  `${projectSceneSpecRevisionsDir(projectSlug)}/${revision}.json`;
+
+export const projectSceneJobsDir = (projectSlug: string) =>
+  `${projectDir(projectSlug)}/scene-jobs`;
+
+export const projectSceneJobFile = (projectSlug: string, jobId: string) =>
+  `${projectSceneJobsDir(projectSlug)}/${jobId}.json`;
 
 export const projectSourceDir = (projectSlug: string) =>
   `${projectDir(projectSlug)}/source`;

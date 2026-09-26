@@ -14,6 +14,7 @@ import { runSkyboxGeneration } from "../mastra/tools/skyboxGen";
 import { runProjectWorldGeneration } from "../mastra/tools/worldGen";
 import { getAssetStorage, readJson, writeJson } from "./assetStorage";
 import { readCandidates } from "./candidateRegistry";
+import { mutateSceneJob, readSceneJob } from "./sceneJobs";
 import {
   type GenerationObject,
 } from "./modelPublishing";
@@ -185,7 +186,7 @@ export async function resolve3dObjects(
     : [...bySlug.values()];
   if (objects.length === 0) {
     throw new ChatServiceError(
-      "项目里没有可生成的对象。文生单物体参考图时请给 generate-reference-images 传 assetSlug，然后直接用同一 slug 启动 3D；完整场景请先用 analyze-reference 获取候选，再把确认选择交给 one-shot-scene Workflow",
+      "项目里没有可生成的对象。文生单物体参考图时请给 generate-reference-images 传 assetSlug，然后直接用同一 slug 启动 3D；完整场景请先用 analyze-reference 获取候选，再把确认选择交给 start-scene-job",
       409,
       "no_objects",
     );
@@ -265,6 +266,50 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
             continue;
           }
           const storage = getAssetStorage();
+          if (task.workflowId.startsWith("scene-job:")) {
+            const jobId = task.workflowId.slice("scene-job:".length);
+            try {
+              const job = await readSceneJob(storage, task.projectSlug, jobId);
+              if (job.status === "succeeded") {
+                task = {
+                  ...task,
+                  status: "succeeded",
+                  phase: "completed",
+                  result: {
+                    jobId,
+                    specRevision: job.specRevision,
+                    outputs: job.nodes["final-review"]?.outputs ?? [],
+                  },
+                  updatedAt: new Date().toISOString(),
+                };
+              } else {
+                await mutateSceneJob(storage, task.projectSlug, jobId, (current) => ({
+                  ...current,
+                  status: "paused",
+                  nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [
+                    id,
+                    node.status === "running"
+                      ? { ...node, status: "pending" as const, error: undefined }
+                      : node,
+                  ])),
+                }));
+                task = {
+                  ...task,
+                  status: "failed",
+                  phase: "failed",
+                  error:
+                    "本地服务曾在场景任务运行时中断。节点状态已保留，" +
+                    "请恢复同一 SceneJob，不要重建已完成节点",
+                  updatedAt: new Date().toISOString(),
+                };
+              }
+              await persistTask(task);
+              merged.set(task.id, task);
+              continue;
+            } catch {
+              // 损坏/缺失的 SceneJob 回退到下面通用中断判定。
+            }
+          }
           const identityPublished =
             task.phase === "publishing" &&
             task.assetSlug &&

@@ -9,6 +9,7 @@ import {
 import { projectAnalysisFile, projectSourceDir } from "../../common/libraryPaths";
 import {
   LogicalPathSchema,
+  ObjectCandidateSchema,
   RequestSidecarSchema,
   SceneAnalysisSchema,
   SlugSchema,
@@ -34,9 +35,9 @@ import { requireProject } from "./projectTools";
 /**
  * 图片编辑能力（img2img）：给定库内输入图 + 指令，产出编辑后的新图，落盘 source/
  * 新索引 + 侧写。模型×渠道选路、按渠道分发调用都下沉到 models/images.ts。
- * 本文件只管编辑特有的业务逻辑：输入图存在性校验 + plate 特化（读场景分析→
- * 合成"只删不补"移除 prompt→最新源图）。仍是场景级能力，服务 one-shot 管线的
- * world 生成前置步骤，跟资产级的参考图编辑（referenceImage.ts）不是一回事，
+ * 本文件只管编辑特有的业务逻辑：输入图存在性校验 + plate 特化（显式输入，或读场景分析→
+ * 合成"只删不补"移除 prompt→源图）。它既可独立调用，也是 SceneJob 的 world
+ * 生成前置步骤，跟资产级的参考图编辑（referenceImage.ts）不是一回事，
  * 见该文件头注。
  */
 
@@ -156,8 +157,13 @@ export async function runLibraryImageEdit(
 
 // ---------- plate：分析驱动的"只删不补"特化 ----------
 
-export const PlateInputSchema = z.object({
+export const PlateInputObjectSchema = z.object({
   projectSlug: SlugSchema,
+  /**
+   * 独立调用时显式给出要移除的对象，不需要 analysis.json。
+   * 与 objectSlugs 互斥：后者只是对旧场景分析的过滤器。
+   */
+  objectsToRemove: z.array(ObjectCandidateSchema).min(1).optional(),
   /** 不填 = 移除分析里的全部已确认对象 */
   objectSlugs: z.array(SlugSchema).optional(),
   /** 不填 = 最高索引的可见源图 */
@@ -165,6 +171,9 @@ export const PlateInputSchema = z.object({
   extraInstructions: z.string().optional(),
   model: z.enum(IMAGE_EDIT_MODEL_IDS).default("seedream"),
   channel: z.enum(IMAGE_CHANNELS).optional(),
+});
+export const PlateInputSchema = PlateInputObjectSchema.refine((input) => !(input.objectsToRemove && input.objectSlugs), {
+  message: "objectsToRemove 与 objectSlugs 不能同时使用",
 });
 export type PlateInput = z.input<typeof PlateInputSchema>;
 
@@ -182,7 +191,10 @@ export function composePlatePrompt(
   return extraInstructions ? `${base} ${extraInstructions}` : base;
 }
 
-/** 干净底板：读参考图分析 → 组移除 prompt → 使用同一张参考图 → 图片编辑 */
+/**
+ * 干净底板：显式 objectsToRemove 是真正的独立能力；省略时才回退读取
+ * analysis.json，兼容旧 one-shot 与 generate-reference-images(mode=plate) 调用。
+ */
 export async function runPlateGeneration(
   storage: AssetStorage,
   rawInput: PlateInput,
@@ -193,18 +205,20 @@ export async function runPlateGeneration(
   await requireProject(storage, input.projectSlug);
 
   const analysisPath = projectAnalysisFile(input.projectSlug);
-  if (!(await storage.exists(analysisPath))) {
+  const analysis = (await storage.exists(analysisPath))
+    ? await readJson(storage, analysisPath, SceneAnalysisSchema)
+    : undefined;
+  if (!input.objectsToRemove && !analysis) {
     throw new ChatServiceError(
-      `项目「${input.projectSlug}」还没有场景分析，请先用 analyze-reference 获取候选，再由 one-shot-scene Workflow 确认对象清单`,
+      `项目「${input.projectSlug}」没有场景分析；独立生成底板时请显式传入 sourceImage 和 objectsToRemove`,
       409,
-      "analysis_missing",
+      "plate_objects_missing",
     );
   }
-  const analysis = await readJson(storage, analysisPath, SceneAnalysisSchema);
 
-  const objects = input.objectSlugs
-    ? analysis.objects.filter((o) => input.objectSlugs!.includes(o.slug))
-    : analysis.objects;
+  const objects = input.objectsToRemove ?? (input.objectSlugs
+    ? analysis!.objects.filter((o) => input.objectSlugs!.includes(o.slug))
+    : analysis!.objects);
   if (objects.length === 0) {
     throw new ChatServiceError(
       "没有可移除的对象（分析对象清单为空或过滤后为空）",
@@ -217,7 +231,7 @@ export async function runPlateGeneration(
   let resolvedSource = input.sourceImage;
   if (!resolvedSource) {
     // 新分析永远只绑定显式参考图；latest 仅兼容没有 sources 的早期 analysis.json。
-    resolvedSource = analysis.sources[0];
+    resolvedSource = analysis?.sources[0];
     if (!resolvedSource) {
       const latest = pickLatestSourceImage(await storage.list(sourceDir));
       if (latest) resolvedSource = `${sourceDir}/${latest}`;

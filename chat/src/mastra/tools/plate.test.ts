@@ -103,7 +103,7 @@ describe("runPlateGeneration", () => {
     expect(String(sidecar.params.prompt)).toContain("Removal only");
   });
 
-  test("没有分析时快速失败，指引先跑参考图分析", async () => {
+  test("没有分析也没有显式对象时快速失败", async () => {
     await createProject(storage, { name: "空项目", slug: "empty" });
     expect(
       runPlateGeneration(
@@ -112,7 +112,27 @@ describe("runPlateGeneration", () => {
         { volcengineApiKey: "sk-test" },
         { fetchFn: fakeFetch },
       ),
-    ).rejects.toThrow("one-shot-scene Workflow");
+    ).rejects.toThrow("sourceImage 和 objectsToRemove");
+  });
+
+  test("独立模式：显式源图和移除对象不依赖场景分析", async () => {
+    const source = `${projectSourceDir("empty")}/0-room.png`;
+    await storage.writeBytes(source, PNG_BYTES);
+    const result = await runPlateGeneration(
+      storage,
+      {
+        projectSlug: "empty",
+        sourceImage: source,
+        objectsToRemove: [
+          { slug: "chair", name: "椅子", description: "木质餐椅" },
+        ],
+      },
+      { volcengineApiKey: "sk-test" },
+      { fetchFn: fakeFetch },
+    );
+    expect(result.output).toBe(`${projectSourceDir("empty")}/1-plate.png`);
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(String(sidecar.params.prompt)).toContain("木质餐椅");
   });
 });
 

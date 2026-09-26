@@ -6,6 +6,7 @@ import {
   analyzeSceneTool,
   analyzeReferenceTool,
   askUserTool,
+  generateCleanPlateTool,
   generateCharacterTool,
   generateReferenceImagesTool,
   generateSkyboxTool,
@@ -13,16 +14,19 @@ import {
   identifyAssetTool,
   inspectAssetTool,
   listGenerationTasksTool,
+  getSceneJobTool,
   repairAssetsTool,
   retopologizeTool,
   rigModelTool,
   resumeGenerationTool,
+  retrySceneJobNodesTool,
+  reviseSceneJobTool,
   segmentPartsTool,
   start3dBatchTool,
+  startSceneJobTool,
   startWorldTaskTool,
   updatePlanTool,
 } from "../tools";
-import { oneShotSceneWorkflow } from "../workflows/oneShot";
 
 /**
  * 本机服务注入凭证和固定 LLM 端点；Agent 工具只注册已支持的渠道。
@@ -40,6 +44,7 @@ export function createCreatorAgent(
       "ask-user": askUserTool,
       "update-plan": updatePlanTool,
       "generate-reference-images": generateReferenceImagesTool,
+      "generate-clean-plate": generateCleanPlateTool,
       "generate-skybox": generateSkyboxTool,
       "generate-texture": generateTextureTool,
       "analyze-scene": analyzeSceneTool,
@@ -48,6 +53,10 @@ export function createCreatorAgent(
         : {}),
       "start-3d-batch": start3dBatchTool,
       "start-world-task": startWorldTaskTool,
+      "start-scene-job": startSceneJobTool,
+      "revise-scene-job": reviseSceneJobTool,
+      "retry-scene-job-nodes": retrySceneJobNodesTool,
+      "get-scene-job": getSceneJobTool,
       "segment-parts": segmentPartsTool,
       "retopologize": retopologizeTool,
       "rig-model": rigModelTool,
@@ -57,9 +66,6 @@ export function createCreatorAgent(
       "list-generation-tasks": listGenerationTasksTool,
       "resume-generation": resumeGenerationTool,
       "repair-assets": repairAssetsTool,
-    },
-    workflows: {
-      "one-shot-scene": oneShotSceneWorkflow,
     },
     model: {
       providerId: "byok-openai-compatible",

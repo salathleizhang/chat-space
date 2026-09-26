@@ -121,7 +121,8 @@ export function imagePathsFromToolResult(
   if (!result || typeof result !== "object") return undefined;
   const record = result as Record<string, unknown>;
   const candidates =
-    toolName === "generate-reference-images" || toolName === "generateReferenceImagesTool"
+    toolName === "generate-reference-images" || toolName === "generateReferenceImagesTool" ||
+      toolName === "generate-clean-plate" || toolName === "generateCleanPlateTool"
       ? record.images
       : toolName === "generate-skybox" || toolName === "generateSkyboxTool"
         ? [record.image]
@@ -141,7 +142,7 @@ export function imagePathsFromToolResult(
   return paths.length > 0 ? paths : undefined;
 }
 
-/** 工具和 Mastra Workflow 的返回形状中提取后台任务 id。 */
+/** 工具与旧 Mastra Workflow 兼容返回形状中提取后台任务 id。 */
 export function taskIdsFromToolResult(result: unknown): string[] | undefined {
   if (!result || typeof result !== "object") return undefined;
   const outer = result as { result?: unknown; task?: unknown; tasks?: unknown };
@@ -385,7 +386,7 @@ export async function* streamChat(
               "ID 由服务端按这个选择钉住，你不需要在 provider 参数上另作选择；向用户说明付费计划时按这个模型报。" +
               (threeDSelection.provider === "seed3d-direct"
                 ? ""
-                : "注意 one-shot-scene Workflow 的单物体模型固定用 Seed3D，与这个选择无关，涉及完整场景时要先说明。"),
+                : "注意 SceneJob 的单物体模型当前固定用 Seed3D，与这个选择无关，涉及完整场景时要先说明。"),
           ]
         : []),
       ...(request.imageGenerateModel

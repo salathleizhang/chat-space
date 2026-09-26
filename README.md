@@ -25,7 +25,7 @@ bun run dev
 | `HUNYUAN_KEY` | 腾讯混元 UV 展开专用，格式为 `SecretId:SecretKey` |
 | `WORLDLABS_KEY` | World Labs Marble 场景 |
 
-World Labs 单步任务有两种模式：`direct` 直接用最新源图和可选文字提示词生成世界，不要求图片分析；传 `sourceImage: null` 可只用文字。`empty-environment` 根据已有的一键场景确认记录排除独立对象，生成空环境。`one-shot-scene` Workflow 使用空环境模式。
+World Labs 单步任务有两种模式：`direct` 直接用最新源图和可选文字提示词生成世界，不要求图片分析；传 `sourceImage: null` 可只用文字。`empty-environment` 根据已有的完整场景确认记录排除独立对象，生成空环境。完整场景的 SceneJob 世界节点会使用干净底板和明确的空环境提示词；单独生成世界仍可直接调用 `start-world-task(mode=direct)`，不需要先启动完整场景。
 
 Tripo3D 支持单图与多视角模型生成。`generate-reference-images(mode=multiview)` 可把目标已有的一张干净参考图扩展为前、左、后、右四视图并绑定视角元数据；之后 `start-3d-batch(provider=tripo-direct)` 默认自动使用多视角接口，也可用 `tripoGenerationMode=single|multiview` 显式选择。
 
@@ -33,7 +33,9 @@ Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度�
 
 模型后处理统一走 Tripo v3：`retopologize` 使用 `/mesh/decimate`，`rig-model` 使用 `/animations/rig`；`generate-animation` 当前未向 Agent 注册，动作生成已禁用。`generate-character` 组合“图生 3D → biped 绑骨”（会产生两次付费任务）。Tripo 当前没有为已有模型单独执行 UV 展开的端点，因此只有 `unwrap-uv` 保留混元实现；Tripo P 系列生成接口的 UV 开关只在新模型生成时生效，不能替代后处理 UV 展开。
 
-需要从整张图片生成完整场景时，Creator 先用 `analyze-reference` 提取对象，再用 `ask-user` 卡片让用户勾选对象并确认整条付费计划；获得确认后，把该次分析的 `runId` 与可选的 `selectedSlugs` 交给注册到 Agent 的 `one-shot-scene` Mastra Workflow。Workflow 首步保存确认结果，再依次完成逐对象参考图、干净底板、World Labs 空环境和 Seed3D 物体模型。后台任务会等全部模型落盘才标记成功；普通单步生成仍使用各自的工具。服务中断后正在运行的总任务会标记失败；再次运行会复用同一确认结果、已成功的请求侧写和产物完成剩余阶段，进行中的供应商请求仍可用 `resume-generation` 恢复。
+需要从整张图片生成完整场景时，Creator 先用 `analyze-reference` 提取对象，再用 `ask-user` 卡片让用户勾选对象并确认整条付费计划；获得确认后，把该次分析的 `runId` 与可选的 `selectedSlugs` 交给 `start-scene-job`。服务端会把确认结果保存成可版本化的 `SceneSpec`，并创建持久化 `SceneJob` DAG：各对象的参考图和干净底板可以并行，单个模型只依赖对应参考图，World Labs 空环境只依赖底板，最后汇总等待世界与全部模型。节点记录输入指纹、尝试次数、产物和状态，因此中断后可以从未完成节点恢复，而不必整条重来。
+
+完整场景并不是唯一入口：`generate-clean-plate` 可以只生成或继续清理底板，`start-world-task(mode=direct)` 可以只生成世界，参考图与模型也保留各自的独立工具。发现漏掉家具时用 `revise-scene-job` 增补对象，只新增该对象的参考图和模型，并把受影响的底板、世界与最终汇总标为待重建；底板不够干净时用 `retry-scene-job-nodes` 重跑 `plate`，只连带重建 World 与最终汇总，已经成功的物体模型保持不变。旧的 `one-shot-scene` 源码暂留兼容，但不再注册到 Creator Agent。
 
 `ask-user` 是 Agent 需要用户本人做决定时的统一出口：付费操作同意、方案取舍、对象确认都走它，不再用自然语言提问后等用户打字。问题由模型给出（角标、正文、明细、选项、是否多选、是否允许自由输入），工作台渲染成可点选卡片；服务端在提问写进 SSE 后立即中止本轮 agent run，因此提问之后不可能再有工具被调用。用户点选后，答案作为一条带结构化 `answer` 部件的用户消息回到下一轮；用户直接打字回答时，卡片置灰保留在历史里。卡片与答案随会话落盘，刷新或换浏览器后仍可点选——它不依赖任何服务端状态。
 
@@ -61,7 +63,7 @@ Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度�
 | Tripo P1 | `tripo-direct` | `P1-20260311` | — |
 | Tripo P2 | `tripo-direct` | `P2-20260801` | — |
 
-菜单项与模型 ID 的对应关系在 `chat/src/models/threeD.ts`（选择键是稳定契约，模型 ID 才允许被 env 覆盖）。旧版浏览器里保存的渠道偏好（Seed3D / Hyper3D / Hi3D / Tripo3D）会在加载时迁移成对应渠道的默认模型。完整场景的 `one-shot-scene` Workflow 单物体模型固定用 Seed3D，不跟随这个选择。
+菜单项与模型 ID 的对应关系在 `chat/src/models/threeD.ts`（选择键是稳定契约，模型 ID 才允许被 env 覆盖）。旧版浏览器里保存的渠道偏好（Seed3D / Hyper3D / Hi3D / Tripo3D）会在加载时迁移成对应渠道的默认模型。完整场景 SceneJob 的单物体模型目前固定用 Seed3D，不跟随这个选择。
 
 运行检查：
 

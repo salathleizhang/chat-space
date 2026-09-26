@@ -2,6 +2,7 @@
 export { askUserTool } from "./askUser";
 export { repairAssetsTool } from "./assetRepair";
 export { buildCadModelTool, getCadSourceTool } from "./cadOps";
+export { generateCleanPlateTool } from "./cleanPlate";
 export { unwrapUvTool } from "./hunyuanOps";
 export { identifyAssetTool } from "./identifyTools";
 export { inspectAssetTool } from "./inspectTools";
@@ -9,6 +10,12 @@ export { retopologizeTool, rigModelTool } from "./meshOps";
 export { generateTextureTool } from "./textureOps";
 export { analyzeReferenceTool } from "./referenceAnalysis";
 export { updatePlanTool } from "./planTools";
+export {
+  getSceneJobTool,
+  retrySceneJobNodesTool,
+  reviseSceneJobTool,
+  startSceneJobTool,
+} from "./sceneJobOps";
 export { analyzeSceneTool } from "./sceneAnalysis";
 export { generateReferenceImagesTool } from "./referenceImage";
 export { generateCharacterTool, segmentPartsTool } from "./tripoOps";

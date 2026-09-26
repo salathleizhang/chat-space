@@ -21,6 +21,11 @@ describe("creator 工具可用性", () => {
     ]);
     expect(tools["update-plan"]).toBeDefined();
     expect(tools["generate-reference-images"]).toBeDefined();
+    expect(tools["generate-clean-plate"]).toBeDefined();
+    expect(tools["start-scene-job"]).toBeDefined();
+    expect(tools["revise-scene-job"]).toBeDefined();
+    expect(tools["retry-scene-job-nodes"]).toBeDefined();
+    expect(tools["get-scene-job"]).toBeDefined();
     expect(tools["generate-skybox"]).toBeDefined();
     const skyboxSchema = z.toJSONSchema(
       (tools["generate-skybox"] as unknown as { inputSchema: z.ZodType }).inputSchema,
@@ -58,18 +63,13 @@ describe("creator 工具可用性", () => {
     expect(Object.keys(tools)).not.toContain("generateReferenceImagesTool");
   });
 
-  test("完整场景以 Workflow 注册，不占用自定义工具入口", async () => {
+  test("新完整场景以 SceneJob 工具启动，旧 Workflow 不再向 Agent 暴露", async () => {
     const agent = createCreatorAgent({ apiKey: "sk-test" });
     const workflows = await agent.listWorkflows();
-    expect(workflows["one-shot-scene"]).toBeDefined();
-    const schema = z.toJSONSchema(
-      workflows["one-shot-scene"]!.inputSchema as z.ZodType,
-      { io: "input" },
-    ) as { properties?: Record<string, unknown>; required?: string[] };
-    expect(schema.properties).toHaveProperty("runId");
-    expect(schema.properties).toHaveProperty("selectedSlugs");
-    expect(schema.required).toContain("runId");
-    expect(Object.keys(await agent.listTools())).not.toContain("run-one-shot");
+    expect(workflows["one-shot-scene"]).toBeUndefined();
+    const tools = await agent.listTools();
+    expect(tools["start-scene-job"]).toBeDefined();
+    expect(Object.keys(tools)).not.toContain("run-one-shot");
   });
 
   test("当前消息有图且明确要求参考图分析时才提供 analyze-reference", async () => {

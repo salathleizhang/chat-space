@@ -44,6 +44,9 @@ function llmConfig(): LlmRequestConfig {
 /** 启动即返回、靠 useTaskPolling 逐个回报的生成任务工具 */
 const TASK_STARTING_TOOLS = new Set([
   "workflow-one-shot-scene",
+  "start-scene-job",
+  "revise-scene-job",
+  "retry-scene-job-nodes",
   "start-3d-batch",
   "start-world-task",
   "start-skybox-task",
@@ -58,6 +61,7 @@ const TASK_STARTING_TOOLS = new Set([
 /** 完成后会立刻在 source/ 落盘图片，需要同步刷新图片库。 */
 const IMAGE_OUTPUT_TOOLS = new Set([
   "generate-reference-images",
+  "generate-clean-plate",
   "generate-skybox",
   "edit-reference-image",
 ]);
@@ -71,7 +75,7 @@ const IMAGE_OUTPUT_TOOLS = new Set([
  * ask-user 属于另一类静默：它的可见产物就是那张提问卡片，再在时间线上补一个
  * "asking for your decision" 节点等于把同一步说两遍。
  */
-const SILENT_ACTIVITY_TOOLS = new Set(["list-generation-tasks", "ask-user"]);
+const SILENT_ACTIVITY_TOOLS = new Set(["list-generation-tasks", "get-scene-job", "ask-user"]);
 
 /**
  * 生产步骤不进时间线：长耗时生成（3D / 世界 / 天空盒 / 后处理…）以及紧随其后的
@@ -94,6 +98,7 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "ask-user": "Asking for your decision",
   "update-plan": "Updating plan",
   "generate-reference-images": "Generating image",
+  "generate-clean-plate": "Generating clean scene plate",
   "generate-skybox": "Generating skybox",
   "edit-reference-image": "Editing reference image",
   "analyze-scene": "Analyzing current scene",
@@ -102,6 +107,10 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   analyzeReferenceTool: "Analyzing reference image",
   "generate-plate": "Generating scene base image",
   "workflow-one-shot-scene": "Generating complete scene",
+  "start-scene-job": "Generating complete scene",
+  "revise-scene-job": "Updating complete scene",
+  "retry-scene-job-nodes": "Rebuilding scene outputs",
+  "get-scene-job": "Checking complete scene status",
   "start-3d-batch": "Starting 3D generation",
   "start-world-task": "Generating 3D world",
   "start-skybox-task": "Generating skybox",
@@ -184,7 +193,7 @@ interface UseAgentChatOptions {
  * 图片上传统一走对话（2026-07 起不再有独立的手动 uncover workflow 与
  * 「自动模式」开关）：上传后把图片和指令拼成一条带图用户消息交给 agent，
  * 只有明确进入参考图资产提取时，才依次调用 analyze-reference →
- * one-shot-scene Workflow 内确认对象并生成；普通图片直接由多模态 agent 阅读，
+ * start-scene-job 内确认对象并创建可修订场景任务；普通图片直接由多模态 agent 阅读，
  * 粒度全靠对话里的指令决定。
  */
 export function useAgentChat({

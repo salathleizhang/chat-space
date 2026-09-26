@@ -96,6 +96,14 @@ describe("imagePathsFromToolResult", () => {
       }),
     ).toEqual(["projects/demo/source/2-plate.png"]);
   });
+
+  test("独立干净底板工具也能把结果交给工作台", () => {
+    expect(
+      imagePathsFromToolResult("generate-clean-plate", {
+        images: ["projects/demo/source/3-plate.png"],
+      }),
+    ).toEqual(["projects/demo/source/3-plate.png"]);
+  });
 });
 
 describe("taskIdsFromToolResult", () => {

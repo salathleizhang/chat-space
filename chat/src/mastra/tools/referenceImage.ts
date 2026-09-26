@@ -47,7 +47,7 @@ import {
 } from "../../services/assetStorage";
 import { mutateCandidates, readCandidates } from "../../services/candidateRegistry";
 import { downloadToLibrary } from "./assetRepair";
-import { PlateInputSchema, runPlateGeneration } from "./imageEdit";
+import { PlateInputObjectSchema, PlateInputSchema, runPlateGeneration } from "./imageEdit";
 import { requireProject } from "./projectTools";
 import { optionalContextString, requireCurrentProject } from "./requestContext";
 
@@ -707,7 +707,7 @@ export const GenerateReferenceImagesInputSchema = z.union([
   MultiviewReferenceImageParamsSchema.omit({ projectSlug: true }).extend({
     mode: z.literal("multiview"),
   }),
-  PlateInputSchema.omit({ projectSlug: true }).extend({
+  PlateInputObjectSchema.omit({ projectSlug: true }).extend({
     mode: z.literal("plate"),
     prompt: z.never().optional(),
   }),
@@ -820,7 +820,7 @@ export async function runGenerateReferenceImages(
 export const generateReferenceImagesTool = createTool({
   id: "generate-reference-images",
   description:
-    "统一图片生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent。mode=edit 是图生图编辑资产参考图。mode=multiview 使用 Tripo 把目标已有的一张干净参考图扩展为前/左/后/右四视图，需要 assetSlug，可用 sourceImage 指定输入；结果带视角标记并供 Tripo 多视角 3D 生成。mode=plate 是从已确认的场景参考图移除对象、生成空场景底板。完整场景链路请启动 one-shot-scene Workflow。",
+    "统一参考图生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent。mode=edit 是图生图编辑资产参考图。mode=multiview 使用 Tripo 把目标已有的一张干净参考图扩展为前/左/后/右四视图。mode=plate 仅为旧调用兼容；新的独立底板请求使用 generate-clean-plate，完整场景用 start-scene-job。",
   inputSchema: GenerateReferenceImagesToolSchema,
   execute: async (input, context) =>
     runGenerateReferenceImages(

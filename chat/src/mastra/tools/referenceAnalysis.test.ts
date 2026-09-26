@@ -15,6 +15,8 @@ import {
   setAssetStorage,
 } from "../../services/assetStorage";
 import { clearTasks, getTask } from "../../services/tasks";
+import { readSceneJob } from "../../services/sceneJobs";
+import { createAndStartSceneJob } from "../../services/sceneJobRunner";
 import { buildRequestContext } from "../../services/workflowRuns";
 import { oneShotSceneWorkflow, runOneShotWorkflow } from "../workflows/oneShot";
 import { createProject } from "./projectTools";
@@ -402,5 +404,38 @@ describe("one-shot-scene Workflow（确认后逐阶段完成并落盘）", () =>
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     throw new Error("完整场景后台任务未完成");
+  }, 20000);
+});
+
+describe("SceneJob（可修订 DAG 调度）", () => {
+  test("参考图/模型与底板/world 按依赖节点完成", async () => {
+    const projectSlug = "scene-job-runner";
+    await createProject(storage, { name: "Scene Job Runner", slug: projectSlug });
+    const image = `${projectSourceDir(projectSlug)}/0-photo.png`;
+    await storage.writeBytes(image, PNG_BYTES);
+    const analyzed = await runAnalyzeReference(projectSlug, { image, analysis: GARAGE_ANALYSIS });
+    await runConfirmReferenceAssets(projectSlug, { runId: analyzed.runId });
+
+    const started = await createAndStartSceneJob(projectSlug, KEYS);
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const task = await getTask(projectSlug, started.task.id);
+      if (task?.status === "running") {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        continue;
+      }
+      expect(task?.status).toBe("succeeded");
+      const job = await readSceneJob(storage, projectSlug, started.job.id);
+      expect(job.status).toBe("succeeded");
+      expect(job.nodes["reference:toolbox"]?.status).toBe("succeeded");
+      expect(job.nodes["model:toolbox"]?.status).toBe("succeeded");
+      expect(job.nodes.plate?.status).toBe("succeeded");
+      expect(job.nodes.world?.status).toBe("succeeded");
+      expect(job.nodes["final-review"]?.outputs.length).toBeGreaterThan(0);
+      const repeated = await createAndStartSceneJob(projectSlug, KEYS);
+      expect(repeated.job.id).toBe(job.id);
+      expect(repeated.task.id).toBe(started.task.id);
+      return;
+    }
+    throw new Error("SceneJob 后台任务未完成");
   }, 20000);
 });
