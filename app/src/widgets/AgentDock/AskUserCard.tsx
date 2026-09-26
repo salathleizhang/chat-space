@@ -1,7 +1,41 @@
+import { CaretRightIcon } from "@phosphor-icons/react/CaretRight";
 import { CheckCircleIcon } from "@phosphor-icons/react/CheckCircle";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { AskUserAnswer, AskUserQuestion } from "../../shared/lib/chatClient";
 import { Badge, Button, Panel } from "../../shared/ui";
+
+/** 跟帧入视的上限：只防内容一直变时无限跟下去，正常展开 300ms 内就稳定了。 */
+const CARD_FOLLOW_MAX_MS = 1500;
+
+/**
+ * 展开后逐帧把卡片自己的底部带进视野，直到卡片高度连续两帧不变。
+ *
+ * 判据照搬 followScroll.ts（计划卡那套）：跟固定时长在帧率低或被降频时会提前
+ * 过期，动画还没长完就收手，露出来的明细留在容器外。
+ *
+ * 动作不一样，不能直接复用那个函数：计划卡永远在历史末尾，把容器贴到底就等于
+ * 露出卡片底部；提问卡在历史中间（答完下面还有用户消息和回复），贴容器底会把
+ * 刚点开的这张卡滚出视野。这里用 block:"nearest"，露够就停、不越界。
+ */
+function followCardIntoView(card: Element) {
+  const started = performance.now();
+  let lastHeight = -1;
+  let stableTicks = 0;
+  const step = () => {
+    if (!card.isConnected) return;
+    const height = (card as HTMLElement).offsetHeight;
+    if (height === lastHeight) stableTicks += 1;
+    else {
+      lastHeight = height;
+      stableTicks = 0;
+    }
+    card.scrollIntoView({ block: "nearest" });
+    if (stableTicks < 2 && performance.now() - started < CARD_FOLLOW_MAX_MS) {
+      requestAnimationFrame(step);
+    }
+  };
+  requestAnimationFrame(step);
+}
 
 /**
  * Agent 的提问卡片（ask-user 工具）：把「需要用户本人决定」的那一步渲染成
@@ -29,7 +63,23 @@ export function AskUserCard({
 }) {
   const [checked, setChecked] = useState<string[]>([]);
   const [other, setOther] = useState("");
-  const locked = Boolean(answer) || superseded;
+  const locked = Boolean(answer) || Boolean(superseded);
+  const details = question.details ?? [];
+
+  /*
+    折叠规则对齐 PlanCard：默认态由状态推导（答完/被跳过 = 收），用户手动开关按
+    questionId 记成偏好，换一个问题就回到默认。待回答时不可折叠——选项就是这一步
+    的全部意义，收起来等于把问题藏了；只有终态、且确实有明细可收时才给折叠入口。
+  */
+  const foldable = locked && details.length > 0;
+  const [preference, setPreference] = useState<{
+    questionId: string;
+    open: boolean;
+  } | null>(null);
+  const manualOpen =
+    preference?.questionId === question.questionId ? preference.open : null;
+  const collapsed = foldable && !(manualOpen ?? false);
+  const bodyId = useId();
 
   const submit = (optionIds: string[], labels: string[], text?: string) => {
     if (locked) return;
@@ -46,9 +96,33 @@ export function AskUserCard({
     ? [...answer.labels, ...(answer.text ? [answer.text] : [])].join("、")
     : "";
 
+  const headerContent = (
+    <>
+      <span className="min-w-0 text-sm font-semibold leading-5 text-ink-strong">
+        {question.question}
+      </span>
+      <span className="mt-px flex shrink-0 items-center gap-1.5">
+        {question.header && (
+          <Badge className="text-[10px]">{question.header}</Badge>
+        )}
+        {foldable && (
+          <CaretRightIcon
+            size={11}
+            weight="bold"
+            aria-hidden="true"
+            className={`text-ink-faint transition-transform duration-150 ease-spring ${
+              collapsed ? "" : "rotate-90"
+            }`}
+          />
+        )}
+      </span>
+    </>
+  );
+
   return (
     <Panel
       data-ask-user-card={answer ? "answered" : superseded ? "superseded" : "pending"}
+      data-ask-user-card-state={collapsed ? "collapsed" : "expanded"}
       /*
         mx-auto 而不是 self-center：这张卡在 assistant 消息气泡内部（消息容器不是
         flex），self-* 不会生效；PlanCard 是历史容器的直接 flex 子项才用 self-center。
@@ -56,24 +130,56 @@ export function AskUserCard({
       */
       className="mx-auto mt-2 w-full max-w-xl bg-fill! px-4 py-3.5"
     >
-      <div data-ask-user-header className="flex items-start justify-between gap-3">
-        <span className="min-w-0 text-sm font-semibold leading-5 text-ink-strong">
-          {question.question}
-        </span>
-        {question.header && (
-          <Badge className="mt-px shrink-0 text-[10px]">{question.header}</Badge>
-        )}
-      </div>
-
-      {question.details && question.details.length > 0 && (
-        <ul
-          data-ask-user-details
-          className="mt-2 flex list-disc flex-col gap-1 pl-4 text-xs leading-5 text-ink-subtle"
+      {foldable ? (
+        <button
+          type="button"
+          data-ask-user-header
+          aria-expanded={!collapsed}
+          aria-controls={bodyId}
+          onClick={(event) => {
+            setPreference({ questionId: question.questionId, open: collapsed });
+            // 只有"展开"需要跟：收起时内容在变短，不存在看不到底部的问题
+            if (!collapsed) return;
+            const card = event.currentTarget.closest("[data-ask-user-card]");
+            if (card) followCardIntoView(card);
+          }}
+          className="flex w-full items-start justify-between gap-3 text-left"
         >
-          {question.details.map((detail) => (
-            <li key={detail}>{detail}</li>
-          ))}
-        </ul>
+          {headerContent}
+        </button>
+      ) : (
+        <div
+          data-ask-user-header
+          className="flex items-start justify-between gap-3"
+        >
+          {headerContent}
+        </div>
+      )}
+
+      {details.length > 0 && (
+        /*
+          明细逐行收放：grid-template-rows 的 fr 可插值，不用量高度；行距放在被
+          裁剪的内层，收起后不残留间距（与 PlanCard 的 StepRow 同一套做法）。
+        */
+        <div
+          id={bodyId}
+          aria-hidden={collapsed || undefined}
+          data-ask-user-details-fold={collapsed ? "collapsed" : "expanded"}
+          className={`grid transition-[grid-template-rows,opacity] duration-300 ease-spring motion-reduce:duration-100 ${
+            collapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+          }`}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <ul
+              data-ask-user-details
+              className="flex list-disc flex-col gap-1 pl-4 pt-2 text-xs leading-5 text-ink-subtle"
+            >
+              {details.map((detail) => (
+                <li key={detail}>{detail}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
       )}
 
       {answer || superseded ? (

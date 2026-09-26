@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { flush } from "../../test-utils";
 import type { AskUserAnswer, AskUserQuestion } from "../../shared/lib/chatClient";
 import { AskUserCard } from "./AskUserCard";
 
@@ -150,5 +151,63 @@ describe("AskUserCard 终态", () => {
     expect(container.textContent).toContain("已忽略");
     expect(container.textContent).toContain("是否按上述计划生成？");
     expect(container.querySelectorAll("[data-ask-user-option]")).toHaveLength(0);
+  });
+});
+
+describe("AskUserCard 折叠", () => {
+  const ANSWER: AskUserAnswer = {
+    questionId: "q-1",
+    question: QUESTION.question,
+    optionIds: ["approve"],
+    labels: ["同意"],
+  };
+  const stateOf = (container: HTMLElement) =>
+    container
+      .querySelector("[data-ask-user-card]")
+      ?.getAttribute("data-ask-user-card-state");
+  const headerOf = (container: HTMLElement) =>
+    container.querySelector("[data-ask-user-header]") as HTMLButtonElement;
+
+  test("答完默认收起，点标题栏展开、再点收起", async () => {
+    const { container } = await render({ answer: ANSWER });
+    expect(stateOf(container)).toBe("collapsed");
+    expect(headerOf(container).getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => headerOf(container).click());
+    expect(stateOf(container)).toBe("expanded");
+    expect(headerOf(container).getAttribute("aria-expanded")).toBe("true");
+
+    await act(async () => headerOf(container).click());
+    expect(stateOf(container)).toBe("collapsed");
+  });
+
+  test("待回答时不给折叠入口：选项必须一直看得见", async () => {
+    const { container } = await render();
+    expect(stateOf(container)).toBe("expanded");
+    expect(headerOf(container).tagName).toBe("DIV");
+    expect(container.querySelector("[aria-expanded]")).toBeNull();
+  });
+
+  test("展开后把卡片自己带进视野，收起不跟", async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const { container } = await render({ answer: ANSWER });
+      const card = container.querySelector("[data-ask-user-card]")!;
+
+      await act(async () => headerOf(container).click());
+      await flush(60);
+      expect(scrolled).toContain(card);
+
+      scrolled.length = 0;
+      await act(async () => headerOf(container).click());
+      await flush(60);
+      expect(scrolled).toHaveLength(0);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 });
