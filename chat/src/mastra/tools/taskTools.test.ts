@@ -14,7 +14,11 @@ import {
 import { clearTasks, getTask } from "../../services/tasks";
 import { buildRequestContext } from "../../services/workflowRuns";
 import { createProject } from "./projectTools";
-import { start3dBatchTool } from "./taskTools";
+import {
+  resolveWorldSourceImage,
+  start3dBatchTool,
+  startWorldTaskTool,
+} from "./taskTools";
 
 /**
  * 界面下拉选的是具体模型，服务端必须把它当成硬约束：agent 传的 provider 不能
@@ -29,6 +33,7 @@ const realFetch = globalThis.fetch;
 
 const seed3dBodies: Record<string, unknown>[] = [];
 const arkBodies: Record<string, unknown>[] = [];
+const worldBodies: Record<string, unknown>[] = [];
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
@@ -49,6 +54,10 @@ function installFakeFetch() {
     }
     if (url.includes("/contents/generations/tasks/")) {
       return jsonResponse({ status: "succeeded", content: { file_url: "https://cdn.fake/model.glb" } });
+    }
+    if (url.endsWith("/worlds:generate") && init?.method === "POST") {
+      worldBodies.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
+      return jsonResponse({ operation_id: `world-${worldBodies.length}`, done: true, response: {} });
     }
     return jsonResponse({}, 404);
   }) as typeof fetch;
@@ -127,5 +136,47 @@ describe("start-3d-batch 的 3D 模型选择", () => {
     expect(task.status).toBe("succeeded");
     expect(arkBodies).toHaveLength(0);
     expect(seed3dBodies[0]).toMatchObject({ model: SEED3D_MODEL });
+  });
+});
+
+describe("start-world-task 的图片来源", () => {
+  test("兼容旧模型的 __OMIT__ 占位符，并按最新源图生成", async () => {
+    worldBodies.length = 0;
+    const result = await startWorldTaskTool.execute!(
+      { mode: "direct", sourceImage: "__OMIT__", prompt: "森林空地" } as never,
+      {
+        requestContext: buildRequestContext({
+          projectSlug: "tt",
+          worldLabsApiKey: "wlt-test",
+        }),
+      } as never,
+    );
+    const taskId = (result as { task: { id: string } }).task.id;
+    const task = await waitForSettle(taskId);
+
+    expect(task.status).toBe("succeeded");
+    expect(worldBodies[0]?.world_prompt).toMatchObject({
+      type: "image",
+      text_prompt: "森林空地",
+    });
+    const sidecar = await readJson(
+      storage,
+      "projects/tt/assets/world/.0-world-request.json",
+      RequestSidecarSchema,
+    );
+    expect(sidecar.params.image).toBe("projects/tt/source/0-ref.png");
+  });
+
+  test("三种来源模式会归一化成明确的服务层参数", () => {
+    expect(resolveWorldSourceImage({ sourceMode: "latest", sourceImage: "__OMIT__" })).toBeUndefined();
+    expect(resolveWorldSourceImage({ sourceMode: "text-only", sourceImage: "__OMIT__" })).toBeNull();
+    expect(resolveWorldSourceImage({
+      sourceMode: "explicit-path",
+      sourceImage: "projects/tt/source/0-ref.png",
+    })).toBe("projects/tt/source/0-ref.png");
+    expect(() => resolveWorldSourceImage({
+      sourceMode: "explicit-path",
+      sourceImage: "__OMIT__",
+    })).toThrow("必须提供真实的 sourceImage");
   });
 });

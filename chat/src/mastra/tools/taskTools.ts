@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import { ChatServiceError } from "../../common/errors";
 import { LogicalPathSchema, SlugSchema } from "../../dto/library";
 import { THREE_D_PROVIDER_IDS } from "../../models/threeD";
 import {
@@ -17,6 +18,38 @@ import { startTripo3dBatch } from "./tripoOps";
 import { startArk3dBatch } from "./ark3dOps";
 
 /** creator agent 的生成任务工具：启动即返回任务 id，不阻塞对话流 */
+
+export type WorldSourceMode = "latest" | "text-only" | "explicit-path";
+
+/**
+ * 工具调用里的可选字符串偶尔会被模型编码成 `__OMIT__`。它不是资产路径；旧调用
+ * 没有 sourceMode 时，把它按真正的“省略”处理。新调用以 sourceMode 为唯一语义，
+ * 因而 latest/text-only 即使夹带了占位值也不会误读文件。
+ */
+export function resolveWorldSourceImage(input: {
+  sourceMode?: WorldSourceMode;
+  sourceImage?: string | null;
+}): string | null | undefined {
+  const legacyOmitted = input.sourceImage === "__OMIT__";
+  const sourceMode = input.sourceMode ?? (
+    input.sourceImage === null
+      ? "text-only"
+      : input.sourceImage === undefined || legacyOmitted
+        ? "latest"
+        : "explicit-path"
+  );
+
+  if (sourceMode === "latest") return undefined;
+  if (sourceMode === "text-only") return null;
+  if (!input.sourceImage || legacyOmitted) {
+    throw new ChatServiceError(
+      "sourceMode=explicit-path 时必须提供真实的 sourceImage 逻辑路径",
+      400,
+      "world_source_image_missing",
+    );
+  }
+  return input.sourceImage;
+}
 
 /** 整批统一的生成选项（与 dto/tasks.ts 的 HTTP 契约对齐） */
 export const Batch3dOptionsSchema = z.object({
@@ -89,9 +122,10 @@ export const start3dBatchTool = createTool({
 export const startWorldTaskTool = createTool({
   id: "start-world-task",
   description:
-    "为当前项目启动 World Labs 场景生成任务（付费操作——启动前须经用户同意）。mode=direct 直接用源图和可选 prompt 生成世界，不需要图片分析；mode=empty-environment 根据已确认的场景分析去除物体，生成空环境。sourceImage 省略时使用最新源图，设为 null 时只用文字。",
+    "为当前项目启动 World Labs 场景生成任务（付费操作——启动前须经用户同意）。mode=direct 直接生成世界，不需要图片分析；mode=empty-environment 根据已确认的场景分析去除物体。用 sourceMode 明确选择图片来源：latest 使用最新源图，text-only 不使用图片，explicit-path 使用 sourceImage 指定的逻辑路径。sourceMode 仅为兼容旧调用而允许省略，新调用必须传。",
   inputSchema: z.object({
     mode: z.enum(["direct", "empty-environment"]),
+    sourceMode: z.enum(["latest", "text-only", "explicit-path"]).optional(),
     sourceImage: LogicalPathSchema.nullable().optional(),
     prompt: z.string().optional(),
     extraPrompt: z.string().optional(),
@@ -103,9 +137,10 @@ export const startWorldTaskTool = createTool({
       "worldLabsApiKey",
       "本机 chat/.env 未配置 WORLDLABS_KEY",
     );
+    const sourceImage = resolveWorldSourceImage(input);
     const task = startWorldTask(projectSlug, input.mode === "direct"
-      ? { worldLabsApiKey, mode: input.mode, sourceImage: input.sourceImage, prompt: input.prompt }
-      : { worldLabsApiKey, mode: input.mode, sourceImage: input.sourceImage, extraPrompt: input.extraPrompt });
+      ? { worldLabsApiKey, mode: input.mode, sourceImage, prompt: input.prompt }
+      : { worldLabsApiKey, mode: input.mode, sourceImage, extraPrompt: input.extraPrompt });
     return { task: { id: task.id, subject: task.subject, status: task.status } };
   },
 });

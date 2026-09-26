@@ -20,6 +20,11 @@ describe("creator 工具可用性", () => {
       "question",
     ]);
     expect(tools["update-plan"]).toBeDefined();
+    const worldSchema = z.toJSONSchema(
+      (tools["start-world-task"] as unknown as { inputSchema: z.ZodType }).inputSchema,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown> };
+    expect(worldSchema.properties).toHaveProperty("sourceMode");
     expect(tools["generate-reference-images"]).toBeDefined();
     expect(tools["generate-clean-plate"]).toBeDefined();
     expect(tools["start-scene-job"]).toBeDefined();
