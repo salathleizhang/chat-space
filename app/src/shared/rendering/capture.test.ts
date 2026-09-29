@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { Color, NoColorSpace, PerspectiveCamera, RenderTarget, Scene, Vector4 } from "three";
+import { BoxGeometry, Color, Group, Mesh, MeshBasicMaterial, NoColorSpace, PerspectiveCamera, RenderTarget, Scene, Vector4 } from "three";
 import { captureScene, unpackRGBA } from "./capture";
 import type { NativeWebGPURenderer } from "./webgpu";
-import { captureBudget } from "./ResourceBudget";
+import { captureBudget, captureBytes } from "./ResourceBudget";
+import { modelResources } from "./ModelResources";
 
 describe("WebGPU readback", () => {
   test("keeps packed RGBA including alpha and top-to-bottom row order", () => {
@@ -114,5 +115,135 @@ describe("capture state isolation", () => {
 
   test("refuses capture on a lost device before allocating a target", async () => {
     await expect(captureScene({ lost: true } as NativeWebGPURenderer, new Scene(), new PerspectiveCamera(), 256)).rejects.toThrow("GPU connection lost");
+  });
+});
+
+/** Renderer fake that completes a capture at whatever edge it is asked for. */
+function captureFixture(samples = 4) {
+  const original = new RenderTarget(8, 8);
+  let target: RenderTarget | null = original;
+  let output: RenderTarget | null = null;
+  const viewport = new Vector4(0, 0, 1, 1), scissor = new Vector4(0, 0, 1, 1);
+  const draws: number[] = [], reads: Array<[number, number]> = [];
+  const renderer = {
+    lost: false, autoClear: true, samples,
+    getOutputRenderTarget: () => output,
+    setOutputRenderTarget: (next: RenderTarget | null) => { output = next; },
+    getRenderTarget: () => target,
+    setRenderTarget: (next: RenderTarget | null) => { target = next; },
+    getViewport: (out: Vector4) => out.copy(viewport),
+    setViewport: (next: Vector4) => { viewport.copy(next); },
+    getScissor: (out: Vector4) => out.copy(scissor),
+    setScissor: (next: Vector4) => { scissor.copy(next); },
+    getScissorTest: () => false,
+    setScissorTest: () => {},
+    getClearColor: (out: Color) => out.set("black"),
+    getClearAlpha: () => 1,
+    setClearColor: () => {},
+    render: () => { draws.push(target!.width); },
+    readRenderTargetPixelsAsync: (_target: RenderTarget, _x: number, _y: number, width: number, height: number) => {
+      reads.push([width, height]);
+      return Promise.resolve(new Uint8Array(width * height * 4));
+    },
+  };
+  return { renderer: renderer as unknown as NativeWebGPURenderer, draws, reads };
+}
+
+/** happy-dom exposes no 2D context; record the encoded frame instead. */
+function stubCanvas2d() {
+  const encoded: ImageData[] = [];
+  const canvasPrototype = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
+  const original = canvasPrototype.getContext;
+  canvasPrototype.getContext = function (this: HTMLCanvasElement) {
+    return { putImageData: (data: ImageData) => encoded.push(data) };
+  };
+  return { encoded, restore: () => { canvasPrototype.getContext = original; } };
+}
+
+/** Leave exactly `remaining` bytes free, so only captures below `size` can fit. */
+function holdBudget(remaining: number) {
+  const available = captureBudget.limit - captureBudget.stats.used;
+  return captureBudget.reserve(available - remaining);
+}
+
+describe("capture budget degradation", () => {
+  test("keeps the requested size when the budget fits", async () => {
+    const canvas2d = stubCanvas2d();
+    const fixture = captureFixture();
+    const before = captureBudget.stats.used, downgrades = captureBudget.downgrades.count;
+    let canvas: HTMLCanvasElement;
+    try {
+      canvas = await captureScene(fixture.renderer, new Scene(), new PerspectiveCamera(), 512);
+    } finally {
+      canvas2d.restore();
+    }
+    expect(canvas.width).toBe(512); expect(canvas.height).toBe(512);
+    expect(fixture.draws).toEqual([512]);
+    expect(fixture.reads).toEqual([[512, 512]]);
+    expect(canvas2d.encoded.map((data) => [data.width, data.height, data.data.length])).toEqual([[512, 512, 512 * 512 * 4]]);
+    expect(captureBudget.stats.used).toBe(before);
+    expect(captureBudget.downgrades.count).toBe(downgrades);
+  });
+
+  test("halves the resolution when only the smaller step fits and returns that canvas", async () => {
+    const canvas2d = stubCanvas2d();
+    const fixture = captureFixture();
+    const hold = holdBudget(captureBytes(256, 4));
+    const before = captureBudget.stats.used, downgrades = captureBudget.downgrades.count;
+    let canvas: HTMLCanvasElement, usedAfter = -1;
+    try {
+      canvas = await captureScene(fixture.renderer, new Scene(), new PerspectiveCamera(), 512);
+      usedAfter = captureBudget.stats.used;
+    } finally {
+      canvas2d.restore(); hold();
+    }
+    expect(canvas.width).toBe(256); expect(canvas.height).toBe(256);
+    expect(fixture.draws).toEqual([256]);
+    expect(fixture.reads).toEqual([[256, 256]]);
+    expect(canvas2d.encoded.map((data) => [data.width, data.height, data.data.length])).toEqual([[256, 256, 256 * 256 * 4]]);
+    expect(captureBudget.downgrades).toEqual({ count: downgrades + 1, last: { requested: 512, actual: 256 } });
+    expect(usedAfter).toBe(before);
+  });
+
+  test("fails at the floor with an actionable error and releases the budget", async () => {
+    const fixture = captureFixture();
+    const hold = holdBudget(captureBytes(256, 4) - 1);
+    const used = captureBudget.stats.used, rejected = captureBudget.stats.rejected;
+    let usedAfter = -1;
+    try {
+      await expect(captureScene(fixture.renderer, new Scene(), new PerspectiveCamera(), 512))
+        .rejects.toThrow(/capture budget exceeded: limit .*need .*at 256px \(requested 512px, floor 256px\)/);
+      usedAfter = captureBudget.stats.used;
+    } finally {
+      hold();
+    }
+    expect(usedAfter).toBe(used);
+    expect(captureBudget.stats.rejected).toBe(rejected + 1);
+    expect(fixture.draws).toEqual([]); expect(fixture.reads).toEqual([]);
+  });
+
+  test("degrades without releasing model resources that are still in use", async () => {
+    const canvas2d = stubCanvas2d();
+    const geometry = new BoxGeometry();
+    const root = new Group(); root.add(new Mesh(geometry, new MeshBasicMaterial()));
+    let clears = 0, disposals = 0, idleClears = 0;
+    geometry.addEventListener("dispose", () => disposals++);
+    const release = modelResources.acquire(root, () => clears++);
+    for (let index = 0; index < modelResources.maxIdleEntries + 1; index++) {
+      const idle = new Group(); idle.add(new Mesh(new BoxGeometry(), new MeshBasicMaterial()));
+      modelResources.acquire(idle, () => idleClears++)();
+    }
+    const evicted = modelResources.stats.evicted;
+    const hold = holdBudget(captureBytes(256, 4));
+    let canvas: HTMLCanvasElement;
+    try {
+      canvas = await captureScene(captureFixture().renderer, new Scene(), new PerspectiveCamera(), 512);
+    } finally {
+      canvas2d.restore(); hold(); release();
+    }
+    expect(canvas.width).toBe(256);
+    expect(clears).toBe(0); expect(disposals).toBe(0);
+    expect(idleClears).toBeGreaterThan(0);
+    expect(modelResources.stats.evicted).toBeGreaterThan(evicted);
   });
 });

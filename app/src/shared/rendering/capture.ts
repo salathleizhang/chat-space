@@ -1,16 +1,44 @@
 import { Color, RenderTarget, UnsignedByteType, Vector4, type Camera, type Scene } from "three";
 import type { NativeWebGPURenderer } from "./webgpu";
-import { captureBudget, captureBytes } from "./ResourceBudget";
+import { MIN_CAPTURE_SIZE, captureBudget, type MemoryPressure } from "./ResourceBudget";
+import { modelResources } from "./ModelResources";
 
-/** Render into a private target. Never resize or read the displayed swapchain. */
+/**
+ * 截图准入要同时看模型缓存的驻留量：两本账抢的是同一块显存，只看截图自己那本会出现
+ * "额度还有、显存已被模型占满"，分配 render target 时直接设备丢失。
+ */
+const modelPressure: MemoryPressure = {
+  residentBytes: () => modelResources.memory.residentBytes,
+  residentLimit: () => modelResources.memory.residentLimit,
+};
+
+/**
+ * Render into a private target. Never resize or read the displayed swapchain.
+ *
+ * Under memory pressure the capture degrades instead of failing: idle model cache
+ * entries are reclaimed, then the resolution halves down to a floor. The returned
+ * canvas is sized to the resolution actually used, so a degraded capture is
+ * smaller than `size` and is recorded in `captureBudget.downgrades`.
+ */
 export async function captureScene(renderer: NativeWebGPURenderer, scene: Scene, camera: Camera, size: number): Promise<HTMLCanvasElement> {
   if (renderer.lost) throw new Error("GPU connection lost during capture.");
-  const release = captureBudget.reserve(captureBytes(size, renderer.samples));
+  /*
+    占用一直持到读回结束。reclaim 只为**这份差额**回收空闲模型条目——活动资源永远不动，
+    因为抽走正在渲染的资源比降一张截图的分辨率糟得多。
+  */
+  const reservation = captureBudget.reserveCapture(
+    size,
+    renderer.samples,
+    (needBytes) => { modelResources.trimToFit(needBytes); },
+    MIN_CAPTURE_SIZE,
+    modelPressure,
+  );
+  const edge = reservation.size;
   // The output pass already encodes sRGB. Keep an unorm (not sRGB) attachment
   // to avoid a second hardware sRGB conversion during readback.
   let target: RenderTarget | undefined;
   try {
-    target = new RenderTarget(size, size, { type: UnsignedByteType, samples: renderer.samples });
+    target = new RenderTarget(edge, edge, { type: UnsignedByteType, samples: renderer.samples });
     const previous = {
       output: renderer.getOutputRenderTarget(),
       target: renderer.getRenderTarget(), viewport: renderer.getViewport(new Vector4()),
@@ -36,19 +64,19 @@ export async function captureScene(renderer: NativeWebGPURenderer, scene: Scene,
       renderer.autoClear = previous.autoClear;
       renderer.setClearColor(previous.color, previous.alpha);
     }
-    const pixels = await renderer.readRenderTargetPixelsAsync(target, 0, 0, size, size);
+    const pixels = await renderer.readRenderTargetPixelsAsync(target, 0, 0, edge, edge);
     if (renderer.lost) throw new Error("GPU connection lost during capture.");
     const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = size;
+    canvas.width = canvas.height = edge;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Image encoding is unavailable.");
     // Native WebGPU readback uses top-left row order.
-    const rgba = unpackRGBA(new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength), size, size);
-    context.putImageData(new ImageData(rgba, size, size), 0, 0);
+    const rgba = unpackRGBA(new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength), edge, edge);
+    context.putImageData(new ImageData(rgba, edge, edge), 0, 0);
     return canvas;
   } finally {
     target?.dispose();
-    release();
+    reservation.release();
   }
 }
 
