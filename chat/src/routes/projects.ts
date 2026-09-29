@@ -3,7 +3,12 @@ import { z } from "zod";
 import { formatIndexedName, nextIndex } from "../common/indexedFiles";
 import { projectSourceDir } from "../common/libraryPaths";
 import { slugifyOrFallback } from "../common/slug";
-import { AssetMaterialSchema, AssetTransformSchema, SlugSchema } from "../dto/library";
+import {
+  AssetMaterialSchema,
+  AssetTransformSchema,
+  SceneKeySchema,
+  SlugSchema,
+} from "../dto/library";
 import { getAssetStorage } from "../services/assetStorage";
 import {
   activateEnvironmentAsset,
@@ -67,9 +72,12 @@ projectRoutes.get("/:slug/state", async (c) => {
  * 两条链路共用同一个端点，因此共用服务端同一把文件锁。
  */
 const SaveSceneSchema = z.object({
-  /** 只带这一轮动过的资产 */
-  transforms: z.record(SlugSchema, AssetTransformSchema).optional(),
-  materials: z.record(SlugSchema, AssetMaterialSchema).optional(),
+  /**
+   * 只带这一轮动过的资产，键是**资产稳定 id**（不是 slug）——这样删除资产后用同名
+   * slug 重建也不会命中旧记录（见 SCENE_SCHEMA_VERSION 的 v3 说明）。
+   */
+  transforms: z.record(SceneKeySchema, AssetTransformSchema).optional(),
+  materials: z.record(SceneKeySchema, AssetMaterialSchema).optional(),
 });
 
 const ActivateEnvironmentSchema = z.object({

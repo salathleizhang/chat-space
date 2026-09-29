@@ -32,21 +32,23 @@ export function useSceneTransforms(
   );
 
   /**
-   * 资产删除后摘掉它的本地覆盖（服务端那份由 `deleteAsset` 自己清）。不摘的话，
-   * 删掉 `chair` 再导入一个同名 `chair`（slug 复用）会继承上一个资产的摆位。
+   * 资产删除后摘掉它的本地覆盖（服务端那份由 `deleteAsset` 自己清）。
+   *
+   * 键是资产**稳定 id**，所以"删掉 `chair` 再导入同名 `chair`"在服务端已经不可能继承旧记录；
+   * 这里清的是本会话那份乐观缓存——留着它会一直盖住服务端返回的值（`{...remote, ...local}`）。
    */
   const dropTransform = useCallback(
-    (assetSlug: string) => {
+    (assetId: string) => {
       const pending = pendingRef.current;
-      if (pending && assetSlug in pending.transforms) {
-        const { [assetSlug]: _dropped, ...rest } = pending.transforms;
+      if (pending && assetId in pending.transforms) {
+        const { [assetId]: _dropped, ...rest } = pending.transforms;
         pendingRef.current = Object.keys(rest).length > 0
           ? { ...pending, transforms: rest }
           : null;
       }
       setLocal((prev) => {
-        if (!(assetSlug in prev)) return prev;
-        const { [assetSlug]: _dropped, ...rest } = prev;
+        if (!(assetId in prev)) return prev;
+        const { [assetId]: _dropped, ...rest } = prev;
         return rest;
       });
     },

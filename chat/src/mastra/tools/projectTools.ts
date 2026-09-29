@@ -25,8 +25,11 @@ import {
   ProjectPlanSchema,
   ProjectSchema,
   RequestSidecarSchema,
+  SCENE_SCHEMA_VERSION,
   SceneLayoutSchema,
   SlugSchema,
+  assetStableId,
+  migrateSceneLayout,
   type AssetIdentity,
   type AssetMaterial,
   type AssetTransform,
@@ -36,6 +39,7 @@ import {
 } from "../../dto/library";
 import {
   readJson,
+  readJsonRaw,
   writeJson,
   type AssetStorage,
 } from "../../services/assetStorage";
@@ -297,12 +301,19 @@ export async function getProjectState(
   const assetSlugs = await storage.list(projectAssetsDir(slug));
 
   const assets: AssetState[] = [];
+  /**
+   * slug → 稳定 id，供 scene.json 的迁移就地复用（避免再读一遍所有 asset.json）。
+   * **只要 asset.json 在就登记**，包括下面会被跳过的"空 model 身份"——那种资产可能
+   * 只是模型还没生成完，它的场景记录不该因此被当成孤儿丢掉。
+   */
+  const assetIds = new Map<string, string>();
   for (const assetSlug of assetSlugs) {
     const identityPath = assetIdentityFile(slug, assetSlug);
     // asset.json 是正式发布标记。生成工作目录即使已有侧写或半截下载，也不是资产。
     if (!(await storage.exists(identityPath))) continue;
     const files = await storage.list(assetDir(slug, assetSlug));
     const identity = await readJson(storage, identityPath, AssetIdentitySchema);
+    assetIds.set(assetSlug, assetStableId(identity, assetSlug));
     // 兼容旧版本曾经提前创建的空 model 身份：它们不满足正式资产契约。
     if (
       identity.kind === "model" &&
@@ -360,10 +371,60 @@ export async function getProjectState(
       ? { plan: await readJson(storage, planPath, ProjectPlanSchema) }
       : {}),
     ...((await storage.exists(scenePath))
-      ? { scene: await readJson(storage, scenePath, SceneLayoutSchema) }
+      ? { scene: await readSceneLayout(storage, scenePath, assetIds) }
       : {}),
     assets,
   };
+}
+
+/**
+ * slug → 资产稳定 id。场景表按稳定 id 索引，而旧文件是按 slug 索引的，
+ * 所以**每次读旧文档**和**迁移前的写入**都需要这张映射。
+ *
+ * 读不出来的 asset.json 按"没有 id"处理（退化成 `slug:<slug>`）：一个坏掉的身份文件
+ * 不该让用户连摆放都存不下去。
+ */
+async function assetIdsBySlug(
+  storage: AssetStorage,
+  projectSlug: string,
+): Promise<Map<string, string>> {
+  const ids = new Map<string, string>();
+  for (const assetSlug of await storage.list(projectAssetsDir(projectSlug))) {
+    const identityPath = assetIdentityFile(projectSlug, assetSlug);
+    if (!(await storage.exists(identityPath))) continue;
+    let identity: AssetIdentity | undefined;
+    try {
+      identity = await readJson(storage, identityPath, AssetIdentitySchema);
+    } catch {
+      identity = undefined;
+    }
+    ids.set(assetSlug, assetStableId(identity, assetSlug));
+  }
+  return ids;
+}
+
+/**
+ * 读 scene.json 并收敛到当前版本。
+ *
+ * **不能用 `readJson(..., SceneLayoutSchema)`**：磁盘上可能是旧版本，当前 schema 直接
+ * parse 会失败。所以先取原始 JSON，交给 `migrateSceneLayout` 迁移。迁移失败时补上
+ * 路径与错误码——dto 层刻意不依赖 ChatServiceError。
+ */
+async function readSceneLayout(
+  storage: AssetStorage,
+  path: string,
+  assetIds: ReadonlyMap<string, string>,
+): Promise<SceneLayout> {
+  const raw = await readJsonRaw(storage, path);
+  try {
+    return migrateSceneLayout(raw, assetIds);
+  } catch (err) {
+    throw new ChatServiceError(
+      `「${path}」无法迁移到当前场景版本：${err instanceof Error ? err.message : String(err)}`,
+      500,
+      "scene_migration_failed",
+    );
+  }
 }
 
 /** scene.json 的一次局部更新：两张表都可选，各自按键浅合并 */
@@ -389,11 +450,13 @@ export async function writeSceneLayout(
   const path = projectSceneFile(projectSlug);
   return withMetadataMutationLock(path, async () => {
     await requireProject(storage, projectSlug);
+    // 磁盘上可能是按 slug 索引的旧文档，所以读之前要先拿到稳定 id 映射
     const current = (await storage.exists(path))
-      ? await readJson(storage, path, SceneLayoutSchema)
+      ? await readSceneLayout(storage, path, await assetIdsBySlug(storage, projectSlug))
       : null;
     const next: SceneLayout = {
-      schemaVersion: 1,
+      schemaVersion: SCENE_SCHEMA_VERSION,
+      revision: nextSceneRevision(current),
       transforms: { ...current?.transforms, ...patch.transforms },
       materials: { ...current?.materials, ...patch.materials },
       updatedAt: new Date().toISOString(),
@@ -401,6 +464,14 @@ export async function writeSceneLayout(
     await writeJson(storage, path, SceneLayoutSchema, next);
     return next;
   });
+}
+
+/**
+ * 下一次写入的 revision：没有文档时是 1，否则自增。
+ * 迁移自 v1 的文档 revision 是 0，所以它被新版本程序第一次改写后是 1。
+ */
+function nextSceneRevision(current: SceneLayout | null): number {
+  return (current?.revision ?? 0) + 1;
 }
 
 /** 只提交摆放的调用方（gizmo 拖拽落盘、场景分析的测试夹具）走的窄入口 */
@@ -413,25 +484,28 @@ export async function writeSceneTransforms(
 }
 
 /**
- * 资产删除后摘掉它的摆放与材质记录。不清的话，删掉 `chair` 再导入一个同名 `chair`
- * （slug 复用）会继承上一个资产的位置与材质——跟列表缩略图 `seenRef` 那个坑同源。
+ * 资产删除后摘掉它的摆放与材质记录（按**稳定 id**，不是 slug）。
+ *
+ * 这一步现在是纯粹的**卫生清理**，不再是正确性的依赖：新资产拿到的是新 id，
+ * 即使这里没跑成，旧记录它也读不到（见 `migrateSceneLayout` 的 v3 说明）。
  */
 async function dropSceneEntries(
   storage: AssetStorage,
   projectSlug: string,
-  assetSlug: string,
+  assetId: string,
 ): Promise<void> {
   const path = projectSceneFile(projectSlug);
   await withMetadataMutationLock(path, async () => {
     if (!(await storage.exists(path))) return;
-    const scene = await readJson(storage, path, SceneLayoutSchema);
-    const hasTransform = assetSlug in scene.transforms;
-    const hasMaterial = assetSlug in scene.materials;
+    const scene = await readSceneLayout(storage, path, await assetIdsBySlug(storage, projectSlug));
+    const hasTransform = assetId in scene.transforms;
+    const hasMaterial = assetId in scene.materials;
     if (!hasTransform && !hasMaterial) return;
-    const { [assetSlug]: _droppedTransform, ...transforms } = scene.transforms;
-    const { [assetSlug]: _droppedMaterial, ...materials } = scene.materials;
+    const { [assetId]: _droppedTransform, ...transforms } = scene.transforms;
+    const { [assetId]: _droppedMaterial, ...materials } = scene.materials;
     await writeJson(storage, path, SceneLayoutSchema, {
       ...scene,
+      revision: nextSceneRevision(scene),
       transforms,
       materials,
       updatedAt: new Date().toISOString(),
@@ -642,8 +716,16 @@ export async function deleteAsset(
   if (!(await storage.exists(dir))) {
     throw new ChatServiceError(`资产「${assetSlug}」不存在`, 404, "asset_not_found");
   }
+  // 先认身份再删目录：asset.json 一删，稳定 id 就无从得知，场景记录会变成清不掉的垃圾
+  const identityPath = assetIdentityFile(projectSlug, assetSlug);
+  const assetId = assetStableId(
+    (await storage.exists(identityPath))
+      ? await readJson(storage, identityPath, AssetIdentitySchema)
+      : undefined,
+    assetSlug,
+  );
   await storage.remove(dir);
-  await dropSceneEntries(storage, projectSlug, assetSlug);
+  await dropSceneEntries(storage, projectSlug, assetId);
   await mutateProject(storage, projectSlug, (project) => {
     if (
       project.currentSkybox !== assetSlug &&

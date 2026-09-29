@@ -152,3 +152,28 @@ describe("deriveLibraryAssets world 语义", () => {
     expect(asset?.worldSemantics?.flipY).toBe(true);
   });
 });
+
+describe("deriveLibraryAssets 的资产稳定 id", () => {
+  const withIdentity = (identity: { id?: string }): ProjectState => ({
+    ...state(["0-chair.glb"]),
+    assets: [{ slug: "chair", files: ["0-chair.glb"], identity: { ...identity, kind: "model", name: "Chair", intent: "a chair", createdAt: "2026-01-01T00:00:00.000Z", sourceImages: [] } }],
+  });
+
+  test("有 id 的用 id，老工程（asset.json 没有 id）退化成 slug 派生值", () => {
+    const [withId] = deriveLibraryAssets("demo", withIdentity({ id: "uuid-chair" }));
+    expect(withId?.id).toBe("uuid-chair");
+
+    const [legacy] = deriveLibraryAssets("demo", withIdentity({}));
+    // 老工程没有 id：退化成 slug 派生值，与服务端 assetStableId 的规则一致
+    expect(legacy?.id).toBe("slug:chair");
+    // id 与 slug 是两件事，scene.json 的键用前者
+    expect(legacy?.assetSlug).toBe("chair");
+  });
+
+  test("同 slug、不同身份的两个资产拿到不同的 id", () => {
+    const [first] = deriveLibraryAssets("demo", withIdentity({ id: "uuid-old" }));
+    const [second] = deriveLibraryAssets("demo", withIdentity({ id: "uuid-new" }));
+    expect(first?.assetSlug).toBe(second?.assetSlug);
+    expect(first?.id).not.toBe(second?.id);
+  });
+});

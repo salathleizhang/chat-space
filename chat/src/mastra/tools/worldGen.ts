@@ -18,6 +18,7 @@ import {
   RequestSidecarSchema,
   SceneAnalysisSchema,
   SlugSchema,
+  createAssetIdentity,
   type RequestSidecar,
   type SceneAnalysis,
 } from "../../dto/library";
@@ -192,15 +193,18 @@ export async function runWorldGeneration(
     await saveSidecar();
     const identityPath = assetIdentityFile(params.projectSlug, params.worldSlug);
     if (!(await storage.exists(identityPath))) {
-      await writeJson(storage, identityPath, AssetIdentitySchema, {
-        schemaVersion: 1,
-        slug: params.worldSlug,
-        kind: "world",
-        name: params.worldSlug,
-        intent: params.prompt ?? "Explorable 3D environment generated from source image",
-        sourceImages: params.image ? [params.image] : [],
-        createdAt: new Date().toISOString(),
-      });
+      await writeJson(
+        storage,
+        identityPath,
+        AssetIdentitySchema,
+        createAssetIdentity({
+          slug: params.worldSlug,
+          kind: "world",
+          name: params.worldSlug,
+          intent: params.prompt ?? "Explorable 3D environment generated from source image",
+          sourceImages: params.image ? [params.image] : [],
+        }),
+      );
     }
     await setCurrentWorld(storage, params.projectSlug, params.worldSlug);
     await onPublished?.(params.worldSlug);

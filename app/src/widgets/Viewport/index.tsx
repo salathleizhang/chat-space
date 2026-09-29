@@ -1,3 +1,5 @@
+import { ArrowUUpLeftIcon } from "@phosphor-icons/react/ArrowUUpLeft";
+import { ArrowUUpRightIcon } from "@phosphor-icons/react/ArrowUUpRight";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react/ArrowsClockwise";
 import { ArrowsOutCardinalIcon } from "@phosphor-icons/react/ArrowsOutCardinal";
 import { ArrowsOutIcon } from "@phosphor-icons/react/ArrowsOut";
@@ -79,7 +81,20 @@ interface ViewportProps {
    */
   live: LiveTransforms;
   /** gizmo 松手时提交这一轮动过的资产摆放（乐观更新 + 防抖落盘在上层） */
-  onTransformCommit?: (updates: Record<string, AssetTransform>) => void;
+  onTransformCommit?: (updates: Record<string, AssetTransform>, mode: TransformMode) => void;
+  /**
+   * 撤销/重做。栈由上层持有（那里才同时看得见摆放与材质两张表），这里只负责按钮与禁用态。
+   * 不传就不显示这两个按钮。
+   */
+  history?: {
+    undo: () => void;
+    redo: () => void;
+    canUndo: boolean;
+    canRedo: boolean;
+    /** 上一步/下一步的动作名，用作按钮提示，例如"移动 黑猫" */
+    undoLabel?: string;
+    redoLabel?: string;
+  };
   /** 点击场景中的模型：additive（shift）时增减，否则替换为只含这一个 */
   onSelectAsset: (asset: LibraryAsset, additive: boolean) => void;
   /** 点击场景空白处：清空选中 */
@@ -325,7 +340,7 @@ function SceneContents({
             <PlacedAsset
               asset={asset}
               placement={placement}
-              material={materials[asset.assetSlug]}
+              material={materials[asset.id]}
               live={live}
               highlight={
                 selectedIds.has(asset.id)
@@ -361,6 +376,7 @@ export const Viewport = memo(function Viewport({
   materials = NO_MATERIALS,
   live,
   onTransformCommit,
+  history,
   onSelectAsset,
   onClearSelection,
   onFocusAsset,
@@ -664,8 +680,39 @@ export const Viewport = memo(function Viewport({
         )}
       </div>
 
-      {/* 右下角悬浮控件：变换工具与视图控制是两件事，各自一个面板并排（变换那组只在有选中时出现） */}
+      {/* 右下角悬浮控件：撤销/重做、变换工具与视图控制是三件事，各自一个面板并排（变换那组只在有选中时出现） */}
       <div className="absolute bottom-4 right-4 z-10 flex items-center gap-2">
+        {/*
+          撤销/重做：栈在上层（两张表都归它管），这里只出按钮。
+          空栈时保持禁用而不是隐藏——按钮忽隐忽现会让这一排控件整体位移。
+        */}
+        {history && (
+          <Panel className="flex items-center gap-1 rounded-full! p-1 animate-chrome-enter">
+            <Tooltip
+              content={history.undoLabel ? `Undo: ${history.undoLabel} (Cmd/Ctrl+Z)` : "Undo (Cmd/Ctrl+Z)"}
+              side="top"
+            >
+              <ToolbarButton
+                disabled={!history.canUndo}
+                icon={ArrowUUpLeftIcon}
+                aria-label="Undo"
+                onClick={history.undo}
+              />
+            </Tooltip>
+            <Tooltip
+              content={history.redoLabel ? `Redo: ${history.redoLabel} (Cmd/Ctrl+Shift+Z)` : "Redo (Cmd/Ctrl+Shift+Z)"}
+              side="top"
+            >
+              <ToolbarButton
+                disabled={!history.canRedo}
+                icon={ArrowUUpRightIcon}
+                aria-label="Redo"
+                onClick={history.redo}
+              />
+            </Tooltip>
+          </Panel>
+        )}
+
         {/* 变换工具只在选中了东西时出现——没有作用对象的移动/旋转/缩放按钮是空按钮 */}
         {!firstPerson && gizmoMembers.length > 0 && (
           <Panel className="flex items-center gap-1 rounded-full! p-1 animate-chrome-enter">

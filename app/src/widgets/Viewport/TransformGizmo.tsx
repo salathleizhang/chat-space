@@ -33,7 +33,8 @@ interface TransformGizmoProps {
   live: LiveTransforms;
   /** 正在操作 gizmo：让点选逻辑这一轮别把选中改掉（见 index.tsx 的 pickSuppressedRef） */
   pickSuppressedRef: RefObject<boolean>;
-  onCommit: (updates: Record<string, AssetTransform>) => void;
+  /** 松手时提交这一轮的绝对值；带上 mode 是为了让撤销栈能写出"旋转 xx"这类文案 */
+  onCommit: (updates: Record<string, AssetTransform>, mode: TransformMode) => void;
 }
 
 // 组合/分解矩阵用的临时对象：每帧拖拽都要用，复用同一批实例而不是每次 new
@@ -204,13 +205,14 @@ export function TransformGizmo({
     const updates: Record<string, AssetTransform> = {};
     for (const grabbed of grabbedRef.current) {
       const placement = live.get(grabbed.id);
-      if (placement) updates[grabbed.assetSlug] = placement;
+      // 提交的键是资产的稳定 id（scene.json 的键），不是 slug
+      if (placement) updates[grabbed.id] = placement;
     }
     grabbedRef.current = [];
     // 表清空后模型停在最后一帧的位置，接着 commit 触发的重渲染会把同样的值经 props 写回，
     // 两者一致所以看不到跳变；反过来若先等 props 再清表，中间那几帧会被旧值拽回去
     live.clear();
-    if (Object.keys(updates).length > 0) onCommit(updates);
+    if (Object.keys(updates).length > 0) onCommit(updates, mode);
     // click 紧跟在 pointerup 之后同步派发，这一帧不能松开抑制，
     // 否则松手会被判成"点了空白"而清空选中（gizmo 不在 R3F 的拾取集合里）
     if (releaseTimerRef.current) clearTimeout(releaseTimerRef.current);

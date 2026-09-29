@@ -140,20 +140,27 @@ export class LocalFileStorage implements AssetStorage {
   }
 }
 
+/**
+ * 读 JSON 但不校验。给"必须先按版本迁移、再收敛到当前契约"的文档用（scene.json）：
+ * 旧版本文件拿当前 schema 直接 parse 会失败，所以要先拿到原始值。
+ */
+export async function readJsonRaw(storage: AssetStorage, path: string): Promise<unknown> {
+  const text = await storage.readText(path);
+  try {
+    return JSON.parse(text);
+  } catch {
+    // 手工改坏 / 旧版遗留的半截 JSON 不应以原始 SyntaxError 冒泡，转成带路径的错误
+    throw new ChatServiceError(`「${path}」不是合法 JSON`, 500, "metadata_parse_failed");
+  }
+}
+
 /** 读 JSON 并用 schema 校验：解析失败/校验失败都抛带上下文的错误 */
 export async function readJson<T extends z.ZodType>(
   storage: AssetStorage,
   path: string,
   schema: T,
 ): Promise<z.infer<T>> {
-  const text = await storage.readText(path);
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    // 手工改坏 / 旧版遗留的半截 JSON 不应以原始 SyntaxError 冒泡，转成带路径的错误
-    throw new ChatServiceError(`「${path}」不是合法 JSON`, 500, "metadata_parse_failed");
-  }
+  const data = await readJsonRaw(storage, path);
   const parsed = schema.safeParse(data);
   if (!parsed.success) {
     throw new ChatServiceError(

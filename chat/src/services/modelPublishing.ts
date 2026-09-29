@@ -4,7 +4,7 @@ import {
   assetIdentityFile,
   projectTaskWorkDir,
 } from "../common/libraryPaths";
-import { AssetIdentitySchema, type ReferenceImageViews } from "../dto/library";
+import { AssetIdentitySchema, createAssetIdentity, type ReferenceImageViews } from "../dto/library";
 import { readJson, writeJson, type AssetStorage } from "./assetStorage";
 import { mutateCandidates } from "./candidateRegistry";
 
@@ -103,16 +103,19 @@ export async function publishGeneratedModel(
     await readJson(storage, identityPath, AssetIdentitySchema);
     return;
   }
-  await writeJson(storage, identityPath, AssetIdentitySchema, {
-    schemaVersion: 1,
-    slug: object.slug,
-    kind: "model",
-    name: object.name,
-    intent: object.intent,
-    sourceImages: object.sourceImages,
-    ...(object.referenceViews ? { referenceViews: object.referenceViews } : {}),
-    createdAt: new Date().toISOString(),
-  });
+  await writeJson(
+    storage,
+    identityPath,
+    AssetIdentitySchema,
+    createAssetIdentity({
+      slug: object.slug,
+      kind: "model",
+      name: object.name,
+      intent: object.intent,
+      sourceImages: object.sourceImages,
+      ...(object.referenceViews ? { referenceViews: object.referenceViews } : {}),
+    }),
+  );
 }
 
 /** 新资产在 tasks/<id>/work 完整生成，成功后整目录原子发布；已有资产直接追加新代。 */

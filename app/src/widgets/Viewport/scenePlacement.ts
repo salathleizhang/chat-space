@@ -56,7 +56,8 @@ export function computeSceneLayout(
 
   const layout = new Map<string, AssetPlacement>();
   placeable.forEach((asset, index) => {
-    const saved = transforms[asset.assetSlug];
+    // 场景表按**稳定 id** 索引，不是 slug：删除同名资产重建后不该继承旧摆放
+    const saved = transforms[asset.id];
     layout.set(
       asset.id,
       saved ?? {

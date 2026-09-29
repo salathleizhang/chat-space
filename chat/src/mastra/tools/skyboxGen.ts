@@ -12,6 +12,7 @@ import {
   AssetIdentitySchema,
   RequestSidecarSchema,
   SlugSchema,
+  createAssetIdentity,
   type RequestSidecar,
 } from "../../dto/library";
 import type { GenerationPhase } from "../../dto/tasks";
@@ -259,15 +260,18 @@ export async function runCurrentSkyboxEdit(
     sidecar.status = "succeeded";
     await saveSidecar();
     if (resolved.isNewAsset) {
-      await writeJson(storage, assetIdentityFile(params.projectSlug, skyboxSlug), AssetIdentitySchema, {
-        schemaVersion: 1,
-        slug: skyboxSlug,
-        kind: "skybox",
-        name: "Skybox",
-        intent: params.prompt,
-        sourceImages: [],
-        createdAt: new Date().toISOString(),
-      });
+      await writeJson(
+        storage,
+        assetIdentityFile(params.projectSlug, skyboxSlug),
+        AssetIdentitySchema,
+        createAssetIdentity({
+          slug: skyboxSlug,
+          kind: "skybox",
+          name: "Skybox",
+          intent: params.prompt,
+          sourceImages: [],
+        }),
+      );
     }
     await setCurrentSkybox(storage, params.projectSlug, skyboxSlug);
     return {
@@ -439,15 +443,18 @@ export async function runSkyboxGeneration(
 
   const identityPath = assetIdentityFile(params.projectSlug, params.skyboxSlug);
   if (!(await storage.exists(identityPath))) {
-    await writeJson(storage, identityPath, AssetIdentitySchema, {
-      schemaVersion: 1,
-      slug: params.skyboxSlug,
-      kind: "skybox",
-      name: params.skyboxSlug,
-      intent: params.prompt,
-      sourceImages: [],
-      createdAt: new Date().toISOString(),
-    });
+    await writeJson(
+      storage,
+      identityPath,
+      AssetIdentitySchema,
+      createAssetIdentity({
+        slug: params.skyboxSlug,
+        kind: "skybox",
+        name: params.skyboxSlug,
+        intent: params.prompt,
+        sourceImages: [],
+      }),
+    );
   }
   await setCurrentSkybox(storage, params.projectSlug, params.skyboxSlug);
   await onPublished?.(params.skyboxSlug);

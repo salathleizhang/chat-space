@@ -137,6 +137,12 @@ export type SceneAnalysis = z.infer<typeof SceneAnalysisSchema>;
 /** 资产身份（asset.json）：只存意图与溯源，生成状态在请求侧写（§4.2） */
 export const AssetIdentitySchema = z.object({
   schemaVersion: z.literal(1),
+  /**
+   * **稳定身份**：与 slug 解耦，删除资产后再用同一个 slug 新建也不会撞上旧记录。
+   * 老工程的 asset.json 没有这个字段（读取时用 `assetStableId` 退化到 slug 派生），
+   * 所以是可选的；新建一律经 `createAssetIdentity` 写入。
+   */
+  id: z.string().min(1).optional(),
   slug: SlugSchema,
   kind: AssetKindSchema,
   name: z.string().min(1),
@@ -148,6 +154,30 @@ export const AssetIdentitySchema = z.object({
   createdAt: z.iso.datetime(),
 });
 export type AssetIdentity = z.infer<typeof AssetIdentitySchema>;
+
+/**
+ * 新建资产身份：**唯一**负责发 id 的地方。所有写 asset.json 的路径都得走它，
+ * 否则那条路径造出来的资产会退化到 slug 派生的身份，slug 复用时的隔离就漏了。
+ */
+export function createAssetIdentity(
+  input: Omit<AssetIdentity, "schemaVersion" | "id" | "createdAt"> & { createdAt?: string },
+): AssetIdentity {
+  return {
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    ...input,
+  };
+}
+
+/**
+ * 资产的稳定 id。老工程的 asset.json 没有 `id`，退化成按 slug 派生——
+ * 只要那个 slug 不被复用就等价于稳定；一旦被复用，新建的资产拿到的是新 UUID，
+ * 旧派生 id 上的场景记录不会被新资产继承。
+ */
+export function assetStableId(identity: { id?: string } | undefined, slug: string): string {
+  return identity?.id ?? `slug:${slug}`;
+}
 
 /**
  * 项目计划（plan.json）：no-op 状态工具的落盘产物（Manus todo.md 模式）。
@@ -224,21 +254,109 @@ export const AssetMaterialSchema = z.object({
 export type AssetMaterial = z.infer<typeof AssetMaterialSchema>;
 
 /**
- * 场景摆放（scene.json）：用户在 3D 视口里用 gizmo 调过的资产变换，按 assetSlug 索引。
+ * 场景文档当前版本。
+ *
+ * - v1 → v2：新增 `revision`。形状没变，只是补一个字段；有了它，客户端才知道自己这次
+ *   合并基于哪一版（此前只有 `updatedAt`，判断不了在途的防抖保存是否已经过期）。
+ * - v2 → v3：两张表的键从 **assetSlug 换成资产稳定 id**。这是"删除资产后用同名 slug 重建
+ *   会继承旧摆放/旧材质"那个老问题的结构性解法——新资产拿的是新 id，旧记录它永远读不到，
+ *   不再依赖删除时顺手清理。
+ */
+export const SCENE_SCHEMA_VERSION = 3;
+
+/** 场景表里的键：资产稳定 id（不是 slug）。老工程里可能是 `slug:<slug>` 派生值 */
+export const SceneKeySchema = z.string().min(1);
+
+/**
+ * 磁盘上的形态：`schemaVersion` 只要求是正整数，因为工程目录里可能躺着任意旧版本。
+ * **读取一律经 `migrateSceneLayout` 收敛**，绝不用当前 schema 直接 parse 旧文件。
+ *
+ * v3 之前两张表按 slug 索引，slug 与稳定 id 的字符集不同（id 可能含 `:`、UUID 的连字符与
+ * 大小写），所以这里的键放宽成非空串——版本判定在前，键的语义由迁移负责。
+ */
+const StoredSceneLayoutSchema = z.object({
+  /** 缺失按 v1 处理：这个键是后加的，手写文件也可能没有 */
+  schemaVersion: z.number().int().positive().default(1),
+  transforms: z.record(SceneKeySchema, AssetTransformSchema),
+  materials: z.record(SceneKeySchema, AssetMaterialSchema).default({}),
+  revision: z.number().int().nonnegative().optional(),
+  updatedAt: z.iso.datetime(),
+});
+
+/**
+ * 场景摆放（scene.json）：用户在 3D 视口里用 gizmo 调过的资产变换，**按资产稳定 id 索引**。
  * **只记用户手动摆过的那些**——没有条目的资产由 app 侧按创建顺序算网格默认位（纯派生，
  * 不落盘）。所以这份文件天然稀疏，新资产不需要预先写入。
  *
  * `materials` 是同一份文件里的**兄弟表**而不是塞进 `AssetTransform`：写入是按键浅合并，
  * 嵌进变换值里的话，一次只带 transforms 的保存会把该资产的材质整份抹掉。旧文件没有这个键，
  * default 让读取照常通过。
+ *
+ * 这是**当前形态（v3）**：写入用它，迁移的产物也用它。`revision` 每次写入自增，迁移自
+ * v1 的文档是 **0**，表示"还没按新方案写过"，所以 `revision > 0` 可以直接当作
+ * "这份文档已被新版本程序改过"。
  */
 export const SceneLayoutSchema = z.object({
-  schemaVersion: z.literal(1),
-  transforms: z.record(SlugSchema, AssetTransformSchema),
-  materials: z.record(SlugSchema, AssetMaterialSchema).default({}),
+  schemaVersion: z.literal(SCENE_SCHEMA_VERSION),
+  transforms: z.record(SceneKeySchema, AssetTransformSchema),
+  materials: z.record(SceneKeySchema, AssetMaterialSchema).default({}),
+  revision: z.number().int().nonnegative().default(0),
   updatedAt: z.iso.datetime(),
 });
 export type SceneLayout = z.infer<typeof SceneLayoutSchema>;
+
+/**
+ * 把任意已落盘的 scene.json 收敛成当前版本。逐级升级，以后新增版本时在这里续一段并补测试。
+ *
+ * `assetIdsBySlug` 是 v3 迁移所需的 **slug → 稳定 id** 映射——只有服务层看得见资产目录，
+ * 所以由调用方传入。旧文件里指向已不存在资产的 slug 用 `slug:<slug>` 兜底，与老资产
+ * asset.json 缺 `id` 时的派生规则一致，于是它仍能被那个老资产认领。
+ *
+ * 版本**高于**当前时直接报错、不猜着解析：静默降级会把新字段丢掉，用户再保存一次
+ * 就等于毁了那份文档，而报错至少能让用户去升级程序。
+ *
+ * 抛 `Error`（不是 ChatServiceError）：dto 层刻意只依赖 zod，调用方负责补上路径与错误码。
+ */
+export function migrateSceneLayout(
+  raw: unknown,
+  assetIdsBySlug: ReadonlyMap<string, string>,
+): SceneLayout {
+  const parsed = StoredSceneLayoutSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `场景文档不符合契约：${parsed.error.issues
+        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .join("; ")}`,
+    );
+  }
+  const stored = parsed.data;
+  if (stored.schemaVersion > SCENE_SCHEMA_VERSION) {
+    throw new Error(
+      `场景文档的 schemaVersion=${stored.schemaVersion} 高于当前支持的 ${SCENE_SCHEMA_VERSION}，请升级应用后再打开该工程`,
+    );
+  }
+  // v1/v2 → v3：两张表从 slug 键改写为稳定 id 键。
+  // **只在版本真的低于 3 时改写**——v3 文档的键已经是 id，再查一遍映射表只会把它二次
+  // 改写成 `slug:<id>`（这些测试就是这么发现它的）。查不到的 slug 用 `slug:<slug>` 兜底，
+  // 与老资产 asset.json 缺 id 时的派生规则一致。
+  const needsRekey = stored.schemaVersion < SCENE_SCHEMA_VERSION;
+  const rekey = <T>(table: Record<string, T>): Record<string, T> => {
+    if (!needsRekey) return table;
+    const next: Record<string, T> = {};
+    for (const [slug, value] of Object.entries(table)) {
+      next[assetIdsBySlug.get(slug) ?? `slug:${slug}`] = value;
+    }
+    return next;
+  };
+  return SceneLayoutSchema.parse({
+    ...stored,
+    schemaVersion: SCENE_SCHEMA_VERSION,
+    transforms: rekey(stored.transforms),
+    materials: rekey(stored.materials),
+    // v1 → v2 补的字段：0 = 迁移自无版本号的旧文档
+    revision: stored.revision ?? 0,
+  });
+}
 
 export const RequestStatusSchema = z.enum([
   "queued",

@@ -2,7 +2,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { saveSceneMaterials, type AssetMaterial } from "../../shared/lib/libraryApi";
 
 /**
- * 右侧栏改过的材质覆盖：磁盘上 scene.json 的 materials 表叠加本会话改动。
+ * 右侧栏改过的材质覆盖：磁盘上 scene.json 的 materials 表（**按资产稳定 id 索引**）
+ * 叠加本会话改动。
  *
  * 与 `useSceneTransforms` 同一套两条纪律（乐观更新 + 本地覆盖优先于服务端），但**不做防抖**：
  * 摆放是每帧都在变的拖拽，材质是"换一张图"的离散动作，攒 500ms 只会让用户觉得点了没反应。
@@ -39,18 +40,18 @@ export function useAssetMaterials(
    * 完全等价（见 `isDefaultMaterial`），所以用值表达即可，保存路径只有一条。
    */
   const setMaterial = useCallback(
-    (assetSlug: string, material: AssetMaterial) => {
-      setLocal((prev) => ({ ...prev, [assetSlug]: material }));
-      enqueueSave({ [assetSlug]: material });
+    (assetId: string, material: AssetMaterial) => {
+      setLocal((prev) => ({ ...prev, [assetId]: material }));
+      enqueueSave({ [assetId]: material });
     },
     [enqueueSave],
   );
 
   /** 资产删除后摘掉本地覆盖；服务端那份由 `deleteAsset` 自己清 */
-  const dropMaterial = useCallback((assetSlug: string) => {
+  const dropMaterial = useCallback((assetId: string) => {
     setLocal((prev) => {
-      if (!(assetSlug in prev)) return prev;
-      const { [assetSlug]: _dropped, ...rest } = prev;
+      if (!(assetId in prev)) return prev;
+      const { [assetId]: _dropped, ...rest } = prev;
       return rest;
     });
   }, []);

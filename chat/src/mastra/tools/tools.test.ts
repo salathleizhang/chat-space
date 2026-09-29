@@ -3,7 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
-import { AssetIdentitySchema, RequestSidecarSchema } from "../../dto/library";
+import {
+  AssetIdentitySchema,
+  RequestSidecarSchema,
+  SCENE_SCHEMA_VERSION,
+  assetStableId,
+  createAssetIdentity,
+  type AssetTransform,
+} from "../../dto/library";
 import {
   LocalFileStorage,
   readJson,
@@ -32,6 +39,13 @@ const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 
 afterAll(() => rm(root, { recursive: true, force: true }));
+
+/**
+ * 场景表的键（资产稳定 id）。这些用例大多没有真实的 asset.json，资产的 id 就退化成
+ * slug 派生值（与 `assetStableId` 的规则一致）。所有场景表读写都走它，别在测试里写裸 slug——
+ * 那测的就不是生产里发生的事了。
+ */
+const sceneKey = (slug: string) => `slug:${slug}`;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
@@ -523,17 +537,60 @@ describe("deleteAsset", () => {
     );
   });
 
-  test("顺手摘掉被删资产的场景摆放，同名 slug 重新导入不会继承旧位置", async () => {
+  test("顺手摘掉被删资产的场景摆放，其余条目原样保留", async () => {
     await storage.writeBytes("projects/demo/assets/stool/0-stool.glb", PNG_BYTES);
     await writeSceneTransforms(storage, "demo", {
-      stool: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
-      keeper: { position: [9, 9, 9], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      [sceneKey("stool")]: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      [sceneKey("keeper")]: { position: [9, 9, 9], rotation: [0, 0, 0], scale: [1, 1, 1] },
     });
 
     await deleteAsset(storage, "demo", "stool");
     const scene = (await getProjectState(storage, "demo")).scene;
-    expect(scene?.transforms.stool).toBeUndefined();
-    expect(scene?.transforms.keeper?.position).toEqual([9, 9, 9]);
+    expect(scene?.transforms[sceneKey("stool")]).toBeUndefined();
+    expect(scene?.transforms[sceneKey("keeper")]?.position).toEqual([9, 9, 9]);
+  });
+
+  /**
+   * 这条锁的是"结构上不继承"，而不是"删除时清理得干净"：故意绕过 cleanup，只把目录换成
+   * 一个同 slug 的新资产。旧记录仍在文件里，但新资产的身份是新的，所以它读不到——
+   * 哪怕清理那一步整个没跑，也不会串。
+   */
+  test("同名 slug 重建不继承旧记录：隔离来自稳定 id，不是删除时的清理", async () => {
+    const identity = (name: string) =>
+      createAssetIdentity({
+        slug: "stool",
+        kind: "model",
+        name,
+        intent: "a stool",
+        sourceImages: [],
+      });
+
+    const publishStool = async (name: string) => {
+      await storage.writeBytes("projects/demo/assets/stool/0-stool.glb", PNG_BYTES);
+      await writeJson(storage, assetIdentityFile("demo", "stool"), AssetIdentitySchema, identity(name));
+      const state = await getProjectState(storage, "demo");
+      const asset = state.assets.find((entry) => entry.slug === "stool");
+      expect(asset).toBeDefined();
+      return assetStableId(asset!.identity, "stool");
+    };
+
+    const firstId = await publishStool("Stool");
+    const placement: AssetTransform = {
+      position: [1, 2, 3],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    };
+    await writeSceneTransforms(storage, "demo", { [firstId]: placement });
+
+    // 绕过 deleteAsset 的清理，直接换成同 slug 的新资产
+    await storage.remove(assetDir("demo", "stool"));
+    const secondId = await publishStool("Stool again");
+
+    expect(secondId).not.toBe(firstId);
+    const scene = (await getProjectState(storage, "demo")).scene;
+    // 新资产在自己的键下没有任何记录（旧记录还在，只是它认领不到）
+    expect(scene?.transforms[secondId]).toBeUndefined();
+    expect(scene?.transforms[firstId]?.position).toEqual([1, 2, 3]);
   });
 });
 
@@ -766,17 +823,26 @@ describe("writeSceneLayout 材质", () => {
     );
 
     const readBack = (await getProjectState(storage, "material-legacy")).scene;
-    expect(readBack?.transforms.chair?.position).toEqual([1, 2, 3]);
+    // 旧文件按 slug 索引，读出来已经被改写成稳定 id；这个工程里没有真实资产，
+    // 所以 id 退化成 slug 派生值（与 assetStableId 一致）
+    expect(readBack?.transforms[sceneKey("chair")]?.position).toEqual([1, 2, 3]);
     expect(readBack?.materials).toEqual({});
 
     await writeSceneLayout(storage, "material-legacy", {
-      materials: { chair: { textures: { map: "projects/material-legacy/source/1-ref.png" } } },
+      materials: {
+        [sceneKey("chair")]: {
+          textures: { map: "projects/material-legacy/source/1-ref.png" },
+        },
+      },
     });
     const rewritten = JSON.parse(
       await storage.readText("projects/material-legacy/scene.json"),
-    ) as { materials?: unknown };
+    ) as { materials?: unknown; schemaVersion?: number };
+    expect(rewritten.schemaVersion).toBe(SCENE_SCHEMA_VERSION);
     expect(rewritten.materials).toEqual({
-      chair: { textures: { map: "projects/material-legacy/source/1-ref.png" } },
+      [sceneKey("chair")]: {
+        textures: { map: "projects/material-legacy/source/1-ref.png" },
+      },
     });
   });
 
@@ -801,17 +867,17 @@ describe("writeSceneLayout 材质", () => {
     );
 
     const scene = (await getProjectState(storage, "material-shader-legacy")).scene;
-    expect(scene?.materials.chair?.textures.map).toBe(
+    expect(scene?.materials[sceneKey("chair")]?.textures.map).toBe(
       "projects/material-shader-legacy/source/1-ref.png",
     );
-    expect(scene?.materials.chair).not.toHaveProperty("shader");
+    expect(scene?.materials[sceneKey("chair")]).not.toHaveProperty("shader");
 
     // 再写一次之后，文件里也不再残留 shader
     await writeSceneLayout(storage, "material-shader-legacy", { transforms: {} });
     const rewritten = JSON.parse(
       await storage.readText("projects/material-shader-legacy/scene.json"),
     ) as { materials?: Record<string, unknown> };
-    expect(rewritten.materials?.chair).not.toHaveProperty("shader");
+    expect(rewritten.materials?.[sceneKey("chair")]).not.toHaveProperty("shader");
   });
 
   test("删除资产时材质与摆放一起摘掉", async () => {
@@ -819,15 +885,15 @@ describe("writeSceneLayout 材质", () => {
     await storage.writeBytes("projects/material-delete/assets/stool/0-stool.glb", PNG_BYTES);
     await writeSceneLayout(storage, "material-delete", {
       transforms: {
-        stool: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        [sceneKey("stool")]: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
       },
-      materials: { stool: { textures: {} } },
+      materials: { [sceneKey("stool")]: { textures: {} } },
     });
 
     await deleteAsset(storage, "material-delete", "stool");
     const scene = (await getProjectState(storage, "material-delete")).scene;
-    expect(scene?.transforms.stool).toBeUndefined();
-    expect(scene?.materials.stool).toBeUndefined();
+    expect(scene?.transforms[sceneKey("stool")]).toBeUndefined();
+    expect(scene?.materials[sceneKey("stool")]).toBeUndefined();
   });
 
   test("拒绝未知贴图通道与穿越路径", async () => {
@@ -846,5 +912,89 @@ describe("writeSceneLayout 材质", () => {
         },
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("scene.json 版本与 revision", () => {
+  test("旧 v1 文件读得出、写一次变 v2 且 revision 从 0 到 1", async () => {
+    await createProject(storage, { name: "旧版摆放", slug: "scene-v1" });
+    await storage.writeText(
+      "projects/scene-v1/scene.json",
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          transforms: {
+            chair: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          },
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        null,
+        2,
+      ),
+    );
+
+    // 读取：迁移到当前版本，旧内容改写到稳定 id 键下，revision 为 0（还没按新方案写过）
+    const readBack = (await getProjectState(storage, "scene-v1")).scene;
+    expect(readBack?.transforms[sceneKey("chair")]?.position).toEqual([1, 2, 3]);
+    expect(readBack?.revision).toBe(0);
+
+    const written = await writeSceneTransforms(storage, "scene-v1", {
+      [sceneKey("chair")]: { position: [4, 5, 6], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+    expect(written.schemaVersion).toBe(SCENE_SCHEMA_VERSION);
+    expect(written.revision).toBe(1);
+
+    const onDisk = JSON.parse(await storage.readText("projects/scene-v1/scene.json")) as {
+      schemaVersion: number;
+      revision: number;
+      materials: Record<string, unknown>;
+    };
+    expect(onDisk.schemaVersion).toBe(SCENE_SCHEMA_VERSION);
+    expect(onDisk.revision).toBe(1);
+    // 旧文件没有 materials，写回时补上
+    expect(onDisk.materials).toEqual({});
+  });
+
+  test("每次写入 revision 自增", async () => {
+    await createProject(storage, { name: "自增", slug: "scene-rev" });
+    // 没有文档时第一次写入是 1
+    expect((await writeSceneTransforms(storage, "scene-rev", {})).revision).toBe(1);
+    expect((await writeSceneTransforms(storage, "scene-rev", {})).revision).toBe(2);
+    // 材质与摆放共用一个文档，也共用同一个 revision 序列
+    expect(
+      (await writeSceneLayout(storage, "scene-rev", {
+        materials: { [sceneKey("chair")]: { textures: {} } },
+      })).revision,
+    ).toBe(3);
+    expect((await getProjectState(storage, "scene-rev")).scene?.revision).toBe(3);
+  });
+
+  test("删除资产摘掉条目时也递增 revision", async () => {
+    await createProject(storage, { name: "删条目", slug: "scene-drop" });
+    await storage.writeBytes("projects/scene-drop/assets/stool/0-stool.glb", PNG_BYTES);
+    const written = await writeSceneTransforms(storage, "scene-drop", {
+      [sceneKey("stool")]: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+    expect(written.revision).toBe(1);
+
+    await deleteAsset(storage, "scene-drop", "stool");
+    const scene = (await getProjectState(storage, "scene-drop")).scene;
+    expect(scene?.transforms[sceneKey("stool")]).toBeUndefined();
+    expect(scene?.revision).toBe(2);
+  });
+
+  test("版本高于当前时读取报带路径的错", async () => {
+    await createProject(storage, { name: "太新", slug: "scene-future" });
+    await storage.writeText(
+      "projects/scene-future/scene.json",
+      JSON.stringify({
+        schemaVersion: SCENE_SCHEMA_VERSION + 1,
+        transforms: {},
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await expect(getProjectState(storage, "scene-future")).rejects.toThrow(/scene-future/);
+    await expect(getProjectState(storage, "scene-future")).rejects.toThrow(/高于当前支持的/);
   });
 });

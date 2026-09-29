@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AgentDock } from "../../widgets/AgentDock";
 import type { LiveTransforms } from "../../widgets/Viewport/liveTransforms";
-import type { AssetMaterial, LibraryAsset, Vec3 } from "../../shared/lib/libraryApi";
+import type { AssetMaterial, AssetTransform, LibraryAsset, Vec3 } from "../../shared/lib/libraryApi";
 import {
   activateEnvironmentAsset,
   deleteAsset,
@@ -25,10 +25,12 @@ import { Sidebar, type SectionId } from "../../widgets/Sidebar";
 import { Viewport } from "../../widgets/Viewport";
 import { createLiveTransforms } from "../../widgets/Viewport/liveTransforms";
 import { computeSceneLayout } from "../../widgets/Viewport/scenePlacement";
+import type { TransformMode } from "../../widgets/Viewport/TransformGizmo";
 import { useAgentChat } from "./useAgentChat";
 import { useAssetMaterials } from "./useAssetMaterials";
 import { useChatMessages } from "./useChatMessages";
 import { useProjectState } from "./useProjectState";
+import { useSceneHistory } from "./useSceneHistory";
 import { useSceneTransforms } from "./useSceneTransforms";
 import { useSessionPersistence } from "./useSessionPersistence";
 import { useTaskPolling } from "./useTaskPolling";
@@ -181,6 +183,49 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
   );
 
   /**
+   * 生效摆放表：视口、右侧栏与撤销栈共用同一份。未摆过的资产取网格默认位（纯派生），
+   * 所以它才是"用户眼下看到的"位置——撤销要还原的正是这个。
+   */
+  const layout = useMemo(() => computeSceneLayout(assets, transforms), [assets, transforms]);
+  /**
+   * 场景两表的键是资产**稳定 id**（`assetStableId`），撤销栈与右侧栏都按它反查。
+   * 用 id 而不是 slug 建索引，正是为了让"删除后同名重建"拿到的是另一个键。
+   */
+  const assetsById = useMemo(() => {
+    const map = new Map<string, LibraryAsset>();
+    for (const asset of assets) map.set(asset.id, asset);
+    return map;
+  }, [assets]);
+
+  /** 撤销栈要按资产 id 反查"改之前的摆放"，这一步走上面那张生效表 */
+  const resolvePlacement = useCallback(
+    (assetId: string) => {
+      const asset = assetsById.get(assetId);
+      return asset ? layout.get(asset.id) : undefined;
+    },
+    [assetsById, layout],
+  );
+  const isKnownAsset = useCallback((assetId: string) => assetsById.has(assetId), [assetsById]);
+  const assetLabel = useCallback(
+    (assetId: string) => assetsById.get(assetId)?.name ?? assetId,
+    [assetsById],
+  );
+
+  /**
+   * 撤销/重做：只覆盖用户在视口里的操作（拖拽、数值输入、换贴图），Agent 的增删不进栈。
+   * 它发出的仍是普通的 `commitTransforms` / `setMaterial`，所以落盘顺序依旧由那两条队列保证。
+   */
+  const history = useSceneHistory({
+    resolvePlacement,
+    materials,
+    isKnownAsset,
+    assetLabel,
+    commitTransforms,
+    setMaterial,
+    live,
+  });
+
+  /**
    * 右侧栏只服务"一个模型的详情"：多选时语义变成"整组"，与用户要的"选中单个模型时出现"
    * 不符，所以多选直接不出栏。判定与 Viewport 的 placedAssets 同源——world 走高斯泼溅背景、
    * 天空盒没有模型产物，两者都没有 position/rotate/scale 可谈。
@@ -194,25 +239,33 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
   /**
    * 栏里显示的必须是**生效摆放**，不是 scene.json 里那一条——没被 gizmo 调过的资产在
    * scene.json 里根本没有记录，它的位置是 `computeSceneLayout` 按创建顺序派生的网格位。
-   * 直接读 `transforms[slug]` 会让未摆过的资产显示成全 0/单位值，而视口里它明明在网格上。
+   * 直接读 `transforms[id]` 会让未摆过的资产显示成全 0/单位值，而视口里它明明在网格上。
    */
   const inspectorTransform = useMemo(
-    () => (inspectorAsset ? computeSceneLayout(assets, transforms).get(inspectorAsset.id) : undefined),
-    [assets, inspectorAsset, transforms],
+    () => (inspectorAsset ? layout.get(inspectorAsset.id) : undefined),
+    [layout, inspectorAsset],
   );
   const handleInspectorTransform = useCallback(
     (next: { position: Vec3; rotation: Vec3; scale: Vec3 }) => {
       if (!inspectorAsset) return;
-      commitTransforms({ [inspectorAsset.assetSlug]: next });
+      // 输入格每敲一个能解析成数字的字符就会提交一次，由历史栈在 500ms 内合并成一步。
+      // 键是稳定 id（scene.json 的键），与 gizmo 提交的那条链路保持一致。
+      history.commitPlacements({ [inspectorAsset.id]: next }, "field");
     },
-    [commitTransforms, inspectorAsset],
+    [history, inspectorAsset],
+  );
+  const handleTransformCommit = useCallback(
+    (updates: Record<string, AssetTransform>, mode: TransformMode) => {
+      history.commitPlacements(updates, "drag", mode);
+    },
+    [history],
   );
   const handleInspectorMaterial = useCallback(
     (next: AssetMaterial) => {
       if (!inspectorAsset) return;
-      setMaterial(inspectorAsset.assetSlug, next);
+      history.commitMaterial(inspectorAsset.assetSlug, next);
     },
-    [inspectorAsset, setMaterial],
+    [history, inspectorAsset],
   );
   /** 换贴图能挑的工程图片：生成的参考图 + 这个资产自己的源图（去重，源图常与参考图重合） */
   const inspectorImages = useMemo(() => {
@@ -336,8 +389,9 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         return next;
       });
       closePreviewFor(asset.id);
-      dropTransform(asset.assetSlug);
-      dropMaterial(asset.assetSlug);
+      // 本地覆盖按稳定 id 摘；服务端那份由 deleteAsset 自己清
+      dropTransform(asset.id);
+      dropMaterial(asset.id);
       bumpRefresh();
     },
     [projectSlug, bumpRefresh, closePreviewFor, dropTransform, dropMaterial, flushPendingSave],
@@ -363,7 +417,8 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         transforms={transforms}
         materials={materials}
         live={live}
-        onTransformCommit={commitTransforms}
+        onTransformCommit={handleTransformCommit}
+        history={history}
         onSelectAsset={selectAsset}
         onClearSelection={clearSelection}
         onFocusAsset={focusAsset}
@@ -426,7 +481,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
             transform={inspectorTransform}
             onTransformChange={handleInspectorTransform}
             live={live}
-            material={materials[inspectorAsset.assetSlug]}
+            material={materials[inspectorAsset.id]}
             onMaterialChange={handleInspectorMaterial}
             images={inspectorImages}
           />
@@ -443,8 +498,8 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           <Suspense fallback={null}>
             <ModelPreviewWindow
               asset={preview.asset}
-              transform={transforms[preview.asset.assetSlug]}
-              material={materials[preview.asset.assetSlug]}
+              transform={transforms[preview.asset.id]}
+              material={materials[preview.asset.id]}
               inspection={preview.inspection}
               onClose={closePreview}
               onInspectionCaptured={handleInspectionCaptured}

@@ -42,6 +42,11 @@ export const DEFAULT_WORLD_SEMANTICS: WorldSemantics = {
 export interface AssetState {
   slug: string;
   identity?: {
+    /**
+     * 资产稳定 id（删除后用同名 slug 重建不会复用它）。老工程的 asset.json 没有这个字段，
+     * 此时按 `slug:<slug>` 派生——见 `assetStableId`。
+     */
+    id?: string;
     kind: "model" | "texture" | "animation" | "world" | "skybox" | "image" | "other";
     name: string;
     intent: string;
@@ -54,6 +59,14 @@ export interface AssetState {
   latestModelOperation?: string;
   /** world 资产的对齐参数；旧状态或读不到世界 JSON 时缺省。 */
   worldSemantics?: WorldSemantics;
+}
+
+/**
+ * 资产的稳定 id。必须与服务端 `chat/src/dto/library.ts` 的 `assetStableId` 保持一致：
+ * 它是 scene.json 两张表的键，两边算得不一样就会读不到自己的摆放。
+ */
+export function assetStableId(identity: { id?: string } | undefined, slug: string): string {
+  return identity?.id ?? `slug:${slug}`;
 }
 
 export type PlanStepStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -93,6 +106,11 @@ export interface SceneLayout {
   transforms: Record<string, AssetTransform>;
   /** 与 transforms 同为稀疏表：没有条目的资产保持供应商文件里的原材质 */
   materials?: Record<string, AssetMaterial>;
+  /**
+   * 服务端每次写入自增的文档版本（迁移自 v1 的旧文档是 0）。
+   * 客户端用它判断"我这次合并基于哪一版"，而不是只看 updatedAt。
+   */
+  revision?: number;
   updatedAt: string;
 }
 
@@ -186,6 +204,11 @@ export async function activateEnvironmentAsset(
 
 /** 视口/列表使用的扁平资产条目 */
 export interface LibraryAsset {
+  /**
+   * **资产稳定 id**：scene.json 的 transforms / materials 两张表就是按它索引的。
+   * 与 `assetSlug`（目录名，可被删除后复用）区分开——删除 `chair` 再建一个同名 `chair`，
+   * `assetSlug` 相同但 `id` 不同，所以不会继承旧摆放。
+   */
   id: string;
   projectSlug: string;
   assetSlug: string;
@@ -344,7 +367,9 @@ export function deriveLibraryAssets(
     const thumbSource = model?.name ?? hdr;
     const thumb = thumbSource ? thumbnailFileName(thumbSource) : null;
     assets.push({
-      id: `${projectSlug}/${asset.slug}`,
+      // 稳定 id：scene.json 的键。**不要退回 `${projectSlug}/${slug}`**——那个值会随 slug 复用
+      // 而指向同一个键，正是那类"删了重建还继承旧摆放"的根因。
+      id: assetStableId(asset.identity, asset.slug),
       projectSlug,
       assetSlug: asset.slug,
       name: asset.identity?.name ?? asset.slug,

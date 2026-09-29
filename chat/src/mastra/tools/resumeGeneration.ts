@@ -16,6 +16,7 @@ import {
   AssetIdentitySchema,
   LogicalPathSchema,
   RequestSidecarSchema,
+  createAssetIdentity,
   isResumableSidecar,
   type RequestSidecar,
 } from "../../dto/library";
@@ -106,15 +107,18 @@ async function registerResumedWorld(
   }
   const prompt = typeof sidecar.params.prompt === "string" ? sidecar.params.prompt : undefined;
   const image = typeof sidecar.params.image === "string" ? sidecar.params.image : undefined;
-  await writeJson(storage, identityPath, AssetIdentitySchema, {
-    schemaVersion: 1,
-    slug: sidecar.slug,
-    kind: "world",
-    name: sidecar.slug,
-    intent: prompt ?? "Explorable 3D environment generated from source image",
-    sourceImages: image ? [image] : [],
-    createdAt: new Date().toISOString(),
-  });
+  await writeJson(
+    storage,
+    identityPath,
+    AssetIdentitySchema,
+    createAssetIdentity({
+      slug: sidecar.slug,
+      kind: "world",
+      name: sidecar.slug,
+      intent: prompt ?? "Explorable 3D environment generated from source image",
+      sourceImages: image ? [image] : [],
+    }),
+  );
   await setCurrentWorld(storage, projectSlug, sidecar.slug);
 }
 
@@ -126,18 +130,21 @@ async function registerResumedSkybox(
 ): Promise<void> {
   const identityPath = assetIdentityFile(projectSlug, sidecar.slug);
   if (await storage.exists(identityPath)) return;
-  await writeJson(storage, identityPath, AssetIdentitySchema, {
-    schemaVersion: 1,
-    slug: sidecar.slug,
-    kind: "skybox",
-    name: sidecar.slug,
-    intent:
-      typeof sidecar.params.prompt === "string" && sidecar.params.prompt
-        ? sidecar.params.prompt
-        : sidecar.slug,
-    sourceImages: [],
-    createdAt: new Date().toISOString(),
-  });
+  await writeJson(
+    storage,
+    identityPath,
+    AssetIdentitySchema,
+    createAssetIdentity({
+      slug: sidecar.slug,
+      kind: "skybox",
+      name: sidecar.slug,
+      intent:
+        typeof sidecar.params.prompt === "string" && sidecar.params.prompt
+          ? sidecar.params.prompt
+          : sidecar.slug,
+      sourceImages: [],
+    }),
+  );
   await setCurrentSkybox(storage, projectSlug, sidecar.slug);
 }
 

@@ -456,6 +456,39 @@ export async function reviseSceneSpecAndJob(
   return { spec, job: nextJob };
 }
 
+/**
+ * 纯函数：算出"重做指定节点"要失效的节点集合，不触碰存储、不盖时间戳、不修改入参。
+ * - 直接指定的节点归入 pending，被牵连的下游归入 stale；
+ * - 沿 dependsOn 反向 BFS（遍历所有节点，看谁的 dependsOn 含当前 id）；
+ * - obsolete 节点既不失效也不向下传播；指定不存在/已废弃的节点抛
+ *   ChatServiceError(404, "scene_node_not_found")；
+ * - touched 保证菱形/多路径依赖只出现一次；同样的输入给同样的输出。
+ */
+export function planNodeInvalidation(
+  nodes: Record<string, SceneJobNode>,
+  nodeIds: string[],
+): { pending: string[]; stale: string[] } {
+  const requested = new Set(nodeIds);
+  const pending: string[] = [];
+  const stale: string[] = [];
+  const touched = new Set<string>();
+  const queue = [...requested];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const current = nodes[id];
+    if (!current || current.status === "obsolete") {
+      throw new ChatServiceError(`场景节点不存在或已废弃：${id}`, 404, "scene_node_not_found");
+    }
+    if (touched.has(id)) continue;
+    touched.add(id);
+    (requested.has(id) ? pending : stale).push(id);
+    for (const candidate of Object.values(nodes)) {
+      if (candidate.status !== "obsolete" && candidate.dependsOn.includes(id)) queue.push(candidate.id);
+    }
+  }
+  return { pending, stale };
+}
+
 /** 指定节点重做时同时失效它的下游，不动无关分支。 */
 export async function retrySceneJobNodes(
   storage: AssetStorage,
@@ -467,28 +500,20 @@ export async function retrySceneJobNodes(
     if (job.status === "running") {
       throw new ChatServiceError("场景任务正在执行", 409, "scene_job_running");
     }
+    const { pending, stale } = planNodeInvalidation(job.nodes, nodeIds);
     const nodes = { ...job.nodes };
-    const queue = [...new Set(nodeIds)];
-    const touched = new Set<string>();
-    while (queue.length > 0) {
-      const id = queue.shift()!;
-      const current = nodes[id];
-      if (!current || current.status === "obsolete") {
-        throw new ChatServiceError(`场景节点不存在或已废弃：${id}`, 404, "scene_node_not_found");
-      }
-      if (touched.has(id)) continue;
-      touched.add(id);
+    const invalidate = (id: string, status: "pending" | "stale"): void => {
+      const current = nodes[id]!;
       nodes[id] = {
         ...current,
-        status: nodeIds.includes(id) ? "pending" : "stale",
+        status,
         qa: undefined,
         error: undefined,
         updatedAt: new Date().toISOString(),
       };
-      for (const candidate of Object.values(nodes)) {
-        if (candidate.status !== "obsolete" && candidate.dependsOn.includes(id)) queue.push(candidate.id);
-      }
-    }
+    };
+    for (const id of pending) invalidate(id, "pending");
+    for (const id of stale) invalidate(id, "stale");
     return { ...job, status: "paused", nodes };
   });
 }
