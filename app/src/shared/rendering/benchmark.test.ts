@@ -19,7 +19,7 @@ function fixture() {
   camera.position.set(5, 4.5, 5);
   const control = { enabled: true, object: camera, target: new Vector3() };
   const gl = { render: () => {}, getPixelRatio: () => 1, domElement: document.createElement("canvas"),
-    info: { memory: {} }, lifetime: new AbortController() };
+    info: { memory: {}, render: { calls: 0, triangles: 0, points: 0 } }, lifetime: new AbortController() };
   gl.domElement.width = 1920; gl.domElement.height = 1080;
   const state = { gl, controls: control, internal: { interaction: [] as object[] }, frameloop: "demand",
     invalidate() {}, setFrameloop(mode: string) { state.frameloop = mode; } };
@@ -91,4 +91,43 @@ test("duplicate runs and invalid timing are rejected without wrapping twice", ()
   const next = f.start();
   f.step(30);
   expect(next.result.valid).toBe(true);
+});
+
+test("alternate motion separates the settled phase from the moving phase", () => {
+  const f = fixture();
+  const run = f.start({ motion: "alternate", settleRatio: 0.5, durationMs: 40, repetitions: 1 });
+  // Distinct per-frame counts so the reported value is unambiguously the peak,
+  // not a running total: max(1,7,3,9) = 9.
+  for (const [at, tags] of [[10, 1], [20, 7], [30, 3], [40, 9]] as const) {
+    f.gl.info.render.calls = tags;
+    f.gl.info.render.triangles = tags * 2;
+    f.gl.info.render.points = tags * 3;
+    f.step(at);
+  }
+  expect(run.result.valid).toBe(true);
+  const [entry] = run.result.runs;
+  // Frames at t=20 (elapsed 20) and t=30 (elapsed 30) land at/after the settle
+  // boundary; t=10 and before stay in the moving bucket.
+  expect(entry?.settle).not.toBeNull();
+  expect(entry!.motion.frames).toBeGreaterThan(0);
+  expect(entry!.settle!.frames).toBeGreaterThan(0);
+  expect(entry!.motion.frames + entry!.settle!.frames).toBe(entry!.frames);
+  expect(entry!.renderCalls).toBe(9);
+  expect(entry!.triangles).toBe(18);
+  expect(entry!.points).toBe(27);
+});
+
+test("continuous motion reports no settled phase and stays backward compatible", () => {
+  const f = fixture();
+  const run = f.start({ durationMs: 30, repetitions: 1 });
+  f.step(10); f.step(20); f.step(30);
+  expect(run.result.valid).toBe(true);
+  expect(run.result.runs[0]?.settle).toBeNull();
+  expect(run.result.runs[0]?.motion.frames).toBe(run.result.runs[0]?.frames);
+});
+
+test("invalid motion and settle ratio are rejected", () => {
+  const f = fixture();
+  expect(() => f.start({ motion: "wobble" })).toThrow("Invalid benchmark motion");
+  expect(() => f.start({ settleRatio: 2 })).toThrow("Invalid benchmark settle ratio");
 });

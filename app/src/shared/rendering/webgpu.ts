@@ -9,12 +9,39 @@ export class NativeWebGPURenderer extends Renderer {
   private disposal: Promise<void> | undefined;
   private observesDevice = false;
 
-  constructor(canvas: HTMLCanvasElement) {
-    // antialias stays at Three's default (false). Gaussian Splat Lite documents
-    // that MSAA does not improve splat rendering and significantly reduces
-    // performance, so the explicit `antialias: true` here was paying for a 4x
-    // sample target plus a per-frame resolve with no benefit.
-    super(new WebGPUBackend({ canvas, alpha: true }), { antialias: false, alpha: true });
+  /**
+   * Opt-in GPU timestamp tracking. Three reads this when the WebGPUBackend is
+   * constructed, so it cannot be enabled later without rebuilding the backend.
+   * Off by default: the query pool is diagnostic overhead we do not want to
+   * carry in the shipped renderer. `?gpuTimestamps=1` turns it on for a
+   * measurement session, and `startGpuFrameProbe` requires it.
+   */
+  static trackTimestamp = typeof location !== "undefined"
+    && new URLSearchParams(location.search).has("gpuTimestamps");
+
+  /**
+   * Opt-in MSAA, so the claim below can be **measured** instead of asserted.
+   *
+   * Off by default and off in the shipped renderer: MSAA buys nothing for splats
+   * and costs a 4x sample target plus a per-frame resolve. This flag exists only
+   * so `bun run probe:gpu -- --msaa 1` can produce the real-asset on/off
+   * comparison — which, as of 2026-09-30, had never been taken with the fixed
+   * probe. Mirrors `?gpuTimestamps=1`: a URL flag for a measurement session,
+   * never a user-facing setting.
+   */
+  static antialias = typeof location !== "undefined"
+    && new URLSearchParams(location.search).has("msaa");
+
+  constructor(canvas: HTMLCanvasElement, options?: { antialias?: boolean; trackTimestamp?: boolean }) {
+    // antialias defaults to Three's own default (false). Gaussian Splat Lite
+    // documents that MSAA does not improve splat rendering and significantly
+    // reduces performance. The option (and the `?msaa=1` flag above) exists so a
+    // probe can measure that claim instead of asserting it.
+    super(new WebGPUBackend({
+      canvas,
+      alpha: true,
+      trackTimestamp: options?.trackTimestamp ?? NativeWebGPURenderer.trackTimestamp,
+    }), { antialias: options?.antialias ?? NativeWebGPURenderer.antialias, alpha: true });
     this.library = new StandardNodeLibrary();
   }
 

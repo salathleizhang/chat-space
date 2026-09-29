@@ -4,6 +4,16 @@
  */
 const activeBenchmarks = new WeakSet();
 
+/**
+ * @typedef {object} FrameStats
+ * @property {number} frames
+ * @property {number} p50
+ * @property {number} p95
+ * @property {number} p99
+ * @property {number} over50ms
+ * @property {number} cpuSubmitP95
+ */
+
 export function startRenderBenchmark(store, options = {}) {
   const durationMs = options.durationMs ?? 30000;
   const warmupMs = options.warmupMs ?? 3000;
@@ -39,7 +49,7 @@ export function startRenderBenchmark(store, options = {}) {
     valid: false, ...initialDimensions, cameras: controls.map((control) => ({ type: control.object.type,
       position: control.object.position.toArray(), target: control.target.toArray(),
       projection: control.object.projectionMatrix.toArray() })),
-    runs: /** @type {Array<{frames: number, p50: number, p95: number, p99: number, over50ms: number, cpuSubmitP95: number, elapsedMs: number, dimensions: ReturnType<typeof dimensions>, memory: object, renderCalls: number, triangles: number, points: number, motion: object, settle: object | null}>} */ ([]),
+    runs: /** @type {Array<FrameStats & {elapsedMs: number, dimensions: ReturnType<typeof dimensions>, memory: object, renderCalls: number, triangles: number, points: number, motion: FrameStats, settle: FrameStats | null}>} */ ([]),
     started: Date.now(), invalidation: /** @type {{reason: string, at: number, dimensions: ReturnType<typeof dimensions>} | null} */ (null) };
   const measuredRender = function (...args) {
     const start = performance.now();
@@ -136,7 +146,11 @@ export function startRenderBenchmark(store, options = {}) {
     }
     cpuMs = 0; previous = now;
     if (elapsed >= warmupMs + durationMs) {
-      result.runs.push({ ...stats(intervals, submits), elapsedMs: elapsed, dimensions: dimensions(),
+      // In "alternate" mode the top level is the whole run: every sampled frame,
+      // moving and settled. The `motion` / `settle` split carries the comparison.
+      const allIntervals = motion === "alternate" ? [...intervals, ...settleIntervals] : intervals;
+      const allSubmits = motion === "alternate" ? [...submits, ...settleSubmits] : submits;
+      result.runs.push({ ...stats(allIntervals, allSubmits), elapsedMs: elapsed, dimensions: dimensions(),
         memory: { ...gl.info.memory }, renderCalls: peakCalls, triangles: peakTriangles, points: peakPoints,
         motion: stats(intervals, submits),
         settle: motion === "alternate" && settleIntervals.length ? stats(settleIntervals, settleSubmits) : null });

@@ -1,7 +1,10 @@
 {
   "name": "chatspace",
   "private": true,
-  "workspaces": ["app", "chat"],
+  "workspaces": [
+    "app",
+    "chat"
+  ],
   "overrides": {
     "three": "0.186.1",
     "@types/three": "0.186.0"
@@ -15,7 +18,8 @@
     "start:local": "bun run --filter chat start",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
-    "check": "bun run typecheck && bun run test && bun run build"
+    "check": "bun run typecheck && bun run test && bun run build",
+    "probe:gpu": "bun run --filter app probe:gpu"
   },
   "patchedDependencies": {
     "three@0.186.1": "patches/three@0.186.1.patch",

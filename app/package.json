@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "start": "vite preview",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "probe:gpu": "bun scripts/gpu-probe.mjs"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.6",
