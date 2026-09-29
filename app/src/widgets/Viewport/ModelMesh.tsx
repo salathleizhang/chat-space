@@ -22,6 +22,9 @@ import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundar
 import { useMaterialOverride } from "./materialOverride";
 import { mergeLoadedModel, type LoadedModel } from "./modelAssembly";
 import { MTLLoader, OBJLoader } from "./modelLoaders";
+import { useModelResource } from "../../shared/rendering/useModelResource";
+import { disposeSkeletons } from "../../shared/rendering/ModelResources";
+import { resourcePath } from "../../shared/rendering/resourcePath";
 
 /**
  * 按资产 modelExt 分派到对应 loader。分派只此一份：
@@ -33,6 +36,7 @@ type ModelChildren = (model: LoadedModel) => ReactNode;
 
 function GlbObject({ url, children }: { url: string; children: ModelChildren }) {
   const { scene, animations } = useGLTF(url);
+  useModelResource(scene, () => useGLTF.clear(url));
   const model = useMemo<LoadedModel>(
     () => ({ object: scene, animations }),
     [scene, animations],
@@ -55,6 +59,7 @@ function ObjWithMtlObject({
     materials.preload();
     loader.setMaterials(materials);
   });
+  useModelResource(obj, () => { useLoader.clear(OBJLoader, url); useLoader.clear(MTLLoader, mtlUrl); });
   const model = useMemo<LoadedModel>(
     () => ({ object: obj, animations: obj.animations }),
     [obj],
@@ -64,6 +69,7 @@ function ObjWithMtlObject({
 
 function ObjObject({ url, children }: { url: string; children: ModelChildren }) {
   const obj = useLoader(OBJLoader, url);
+  useModelResource(obj, () => useLoader.clear(OBJLoader, url));
   const model = useMemo<LoadedModel>(
     () => ({ object: obj, animations: obj.animations }),
     [obj],
@@ -73,6 +79,7 @@ function ObjObject({ url, children }: { url: string; children: ModelChildren }) 
 
 function FbxObject({ url, children }: { url: string; children: ModelChildren }) {
   const obj = useLoader(FBXLoader, url);
+  useModelResource(obj, () => useLoader.clear(FBXLoader, url));
   const model = useMemo<LoadedModel>(
     () => ({ object: obj, animations: obj.animations }),
     [obj],
@@ -188,8 +195,8 @@ export function LoadedAssetObject({
   return (
     <RecoverableModelLoader
       key={`${asset.modelPath}|${asset.mtlPath ?? ""}|${asset.resourceRevision ?? 0}`}
-      path={asset.modelPath}
-      mtlPath={asset.mtlPath}
+      path={resourcePath(asset.modelPath, asset.resourceRevision)}
+      mtlPath={asset.mtlPath ? resourcePath(asset.mtlPath, asset.resourceRevision) : null}
       fallback={fallback}
     >
       {(model) => children(model.object)}
@@ -248,12 +255,13 @@ function localBounds(root: Object3D) {
  * 边界，鼠标离开模型后仍落在壳里，`onPointerOut` 不触发，框粘着不消失；② 网格间距才 3 单位
  * （见 `scenePlacement.ts`），这层壳会把相邻模型的点击整个截走。
  */
-function HighlightBox({ root, dim }: { root: Object3D; dim: boolean }) {
+function HighlightBox({ root, dim, mask }: { root: Object3D; dim: boolean; mask: number }) {
   const box = useMemo(() => localBounds(root), [root]);
   if (box.isEmpty()) return null;
   return (
     <box3Helper
       args={[box, HIGHLIGHT_COLOR]}
+      layers-mask={mask}
       raycast={() => null}
       renderOrder={1}
       material-transparent
@@ -280,6 +288,7 @@ function HighlightBox({ root, dim }: { root: Object3D; dim: boolean }) {
  * 读材质抽贴图的 `LoadedAssetObject` 调用方不受影响：它们不挂进场景，仍拿原件。
  */
 function AnimatedObject({ object, animations }: LoadedModel) {
+  useEffect(() => () => disposeSkeletons(object), [object]);
   const { actions, names } = useAnimations(animations, object);
   const hasAnimation = names.length > 0;
 
@@ -302,10 +311,12 @@ function AnimatedObject({ object, animations }: LoadedModel) {
 function ClonedAssembly({
   models,
   highlight,
+  highlightMask,
   material,
 }: {
   models: LoadedModel[];
   highlight: Highlight;
+  highlightMask: number;
   /** 右侧栏的材质覆盖；语义默认值（保持原材质）时 hook 内部整段跳过 */
   material?: AssetMaterial;
 }) {
@@ -338,7 +349,7 @@ function ClonedAssembly({
           ),
         )}
         {root && highlight !== "none" && (
-          <HighlightBox root={root} dim={highlight === "hover"} />
+          <HighlightBox root={root} dim={highlight === "hover"} mask={highlightMask} />
         )}
       </group>
     </Center>
@@ -367,10 +378,12 @@ export function renderableModelPaths(asset: LibraryAsset): string[] {
 function ModelAssembly({
   asset,
   highlight,
+  highlightMask,
   material,
 }: {
   asset: LibraryAsset;
   highlight: Highlight;
+  highlightMask: number;
   material?: AssetMaterial;
 }) {
   const paths = renderableModelPaths(asset);
@@ -402,8 +415,8 @@ function ModelAssembly({
       {paths.map((path, index) => (
         <Suspense key={path} fallback={null}>
           <RecoverableModelLoader
-            path={path}
-            mtlPath={modelExt(path) === "obj" ? asset.mtlPath : null}
+            path={resourcePath(path, asset.resourceRevision)}
+            mtlPath={modelExt(path) === "obj" && asset.mtlPath ? resourcePath(asset.mtlPath, asset.resourceRevision) : null}
             onPermanentError={() => registerFailure(index)}
           >
             {(model) => (
@@ -413,7 +426,7 @@ function ModelAssembly({
         </Suspense>
       ))}
       {settled && loadedModels.length > 0 && (
-        <ClonedAssembly models={loadedModels} highlight={highlight} material={material} />
+        <ClonedAssembly models={loadedModels} highlight={highlight} highlightMask={highlightMask} material={material} />
       )}
     </>
   );
@@ -422,14 +435,16 @@ function ModelAssembly({
 export function ModelMesh({
   asset,
   highlight = "none",
+  highlightMask = 1,
   material,
 }: {
   asset: LibraryAsset;
   /** 视口里的选中/悬浮态；预览小窗与缩略图渲染不传，保持无高亮 */
   highlight?: Highlight;
+  highlightMask?: number;
   /** 右侧栏的材质覆盖（scene.json 的 materials 条目）；不传即渲染供应商原材质 */
   material?: AssetMaterial;
 }) {
   const assemblyKey = `${renderableModelPaths(asset).join("|")}|${asset.mtlPath ?? ""}|${asset.resourceRevision ?? 0}`;
-  return <ModelAssembly key={assemblyKey} asset={asset} highlight={highlight} material={material} />;
+  return <ModelAssembly key={assemblyKey} asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} />;
 }

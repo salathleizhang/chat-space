@@ -2,6 +2,7 @@ import { OrbitControls } from "@react-three/drei/core/OrbitControls";
 import { OrthographicCamera } from "@react-three/drei/core/OrthographicCamera";
 import { PerspectiveCamera } from "@react-three/drei/core/PerspectiveCamera";
 import { createPortal, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
+import { useViewPass } from "./ProjectRenderRuntime";
 import {
   useEffect,
   useMemo,
@@ -86,7 +87,7 @@ function subscribeTrackedRect(element: HTMLElement, rectRef: TrackedRectRef) {
  * 页面滚动（有监听）和切分屏布局，而 1/2/4 三种布局之间任意切换都必然改变每个
  * 存活窗格的尺寸（半屏 → 四分之一屏等），ResizeObserver 一定会跟着回调。
  */
-function useTrackedRect(target: RefObject<HTMLElement | null> | HTMLElement | null) {
+export function useTrackedRect(target: RefObject<HTMLElement | null> | HTMLElement | null) {
   const rectRef = useRef<DOMRect | null>(null);
 
   useEffect(() => {
@@ -376,6 +377,17 @@ function OrthoZoomSync({ paneRef }: { paneRef: RefObject<HTMLDivElement | null> 
 /** gizmo 距窗格右上角的像素边距，以及整簇轴球的显示比例（局部单位 × GIZMO_SCALE = 像素） */
 const GIZMO_MARGIN_PX = 64;
 const GIZMO_SCALE = 40;
+/** Shared axis geometry; does not depend on WebGL-only renderer capabilities. */
+export function CameraAxes({ onSnap }: { onSnap: (direction: THREE.Vector3) => void }) {
+  return <>{(["x", "y", "z"] as const).map((axis) => (
+    <group key={axis}>
+      <AxisBar axis={axis} sign={1} opacity={1} />
+      <AxisBar axis={axis} sign={-1} opacity={0.75} />
+      <AxisHead axis={axis} sign={1} onSnap={onSnap} />
+      <AxisHead axis={axis} sign={-1} onSnap={onSnap} />
+    </group>
+  ))}</>;
+}
 /** 视角吸附动画的角速度（弧度/秒），沿用 drei GizmoHelper 默认手感 */
 const SNAP_TURN_RATE = 2 * Math.PI;
 
@@ -440,14 +452,14 @@ function PaneGizmo({
     invalidate();
   };
 
-  useFrame((_, delta) => {
+  useViewPass("hud", (delta) => {
     const paneRect = paneRectRef.current;
     const canvasRect = canvasRectRef.current;
     if (!paneRect || !canvasRect || paneRect.width <= 0 || paneRect.height <= 0) return;
     const w = paneRect.width;
     const h = paneRect.height;
     const left = paneRect.left - canvasRect.left;
-    const bottom = canvasRect.height - (paneRect.bottom - canvasRect.top);
+    const top = paneRect.top - canvasRect.top;
 
     // 视角吸附动画：拖动的是这个窗格自己的相机，不涉及 gl 状态，放在同一帧里顺手推进
     const anim = snapAnim.current;
@@ -484,15 +496,16 @@ function PaneGizmo({
       groupRef.current.quaternion.setFromRotationMatrix(rotationMatrix.current);
     }
 
-    gl.setViewport(left, bottom, w, h);
-    gl.setScissor(left, bottom, w, h);
+    gl.setViewport(left, top, w, h);
+    gl.setScissor(left, top, w, h);
     gl.setScissorTest(true);
     const prevAutoClear = gl.autoClear;
     gl.autoClear = false;
-    gl.clearDepth();
-    gl.render(hudScene, hudCameraRef.current);
-    gl.autoClear = prevAutoClear;
-  }, 2);
+    try {
+      gl.clearDepth();
+      gl.render(hudScene, hudCameraRef.current);
+    } finally { gl.autoClear = prevAutoClear; gl.setScissorTest(false); }
+  });
 
   const compute = (event: { clientX: number; clientY: number }, state: { pointer: THREE.Vector2; raycaster: THREE.Raycaster; camera: THREE.Camera | null }) => {
     // 指针移动期间每个事件都会走一次，同样吃缓存；缓存还没建立时才退回实时测量
@@ -516,14 +529,7 @@ function PaneGizmo({
     <>
       <orthographicCamera ref={hudCameraRef} position={[0, 0, 200]} near={0.1} far={400} />
       <group ref={groupRef} scale={GIZMO_SCALE}>
-        {(["x", "y", "z"] as const).map((axis) => (
-          <group key={axis}>
-            <AxisBar axis={axis} sign={1} opacity={1} />
-            <AxisBar axis={axis} sign={-1} opacity={0.75} />
-            <AxisHead axis={axis} sign={1} onSnap={snapTo} />
-            <AxisHead axis={axis} sign={-1} onSnap={snapTo} />
-          </group>
-        ))}
+        <CameraAxes onSnap={snapTo} />
         <GizmoTrackballHandle controlsRef={controlsRef} paneRef={paneRef} />
       </group>
     </>,

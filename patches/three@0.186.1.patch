@@ -1,0 +1,90 @@
+diff --git a/build/three.webgpu.js b/build/three.webgpu.js
+--- a/build/three.webgpu.js
++++ b/build/three.webgpu.js
+@@ -31824,6 +31824,12 @@
+ 
+ 		if ( attributeData !== null ) {
+ 
++			if ( typeof attribute.removeEventListener === 'function' && attributeData.onDispose !== undefined ) {
++
++				attribute.removeEventListener( 'dispose', attributeData.onDispose );
++
++			}
++
+ 			this.backend.destroyAttribute( attribute );
+ 
+ 			this.info.destroyAttribute( attribute );
+@@ -31870,6 +31876,13 @@
+ 			}
+ 
+ 			data.version = this._getBufferAttribute( attribute ).version;
++
++			if ( typeof attribute.addEventListener === 'function' ) {
++
++				data.onDispose = () => this.delete( attribute );
++				attribute.addEventListener( 'dispose', data.onDispose );
++
++			}
+ 
+ 		} else {
+ 
+diff --git a/build/three.webgpu.nodes.js b/build/three.webgpu.nodes.js
+--- a/build/three.webgpu.nodes.js
++++ b/build/three.webgpu.nodes.js
+@@ -31824,6 +31824,12 @@
+ 
+ 		if ( attributeData !== null ) {
+ 
++			if ( typeof attribute.removeEventListener === 'function' && attributeData.onDispose !== undefined ) {
++
++				attribute.removeEventListener( 'dispose', attributeData.onDispose );
++
++			}
++
+ 			this.backend.destroyAttribute( attribute );
+ 
+ 			this.info.destroyAttribute( attribute );
+@@ -31870,6 +31876,13 @@
+ 			}
+ 
+ 			data.version = this._getBufferAttribute( attribute ).version;
++
++			if ( typeof attribute.addEventListener === 'function' ) {
++
++				data.onDispose = () => this.delete( attribute );
++				attribute.addEventListener( 'dispose', data.onDispose );
++
++			}
+ 
+ 		} else {
+ 
+diff --git a/src/renderers/common/Attributes.js b/src/renderers/common/Attributes.js
+--- a/src/renderers/common/Attributes.js
++++ b/src/renderers/common/Attributes.js
+@@ -49,6 +49,12 @@
+ 
+ 		if ( attributeData !== null ) {
+ 
++			if ( typeof attribute.removeEventListener === 'function' && attributeData.onDispose !== undefined ) {
++
++				attribute.removeEventListener( 'dispose', attributeData.onDispose );
++
++			}
++
+ 			this.backend.destroyAttribute( attribute );
+ 
+ 			this.info.destroyAttribute( attribute );
+@@ -96,6 +102,13 @@
+ 
+ 			data.version = this._getBufferAttribute( attribute ).version;
+ 
++			if ( typeof attribute.addEventListener === 'function' ) {
++
++				data.onDispose = () => this.delete( attribute );
++				attribute.addEventListener( 'dispose', data.onDispose );
++
++			}
++
+ 		} else {
+ 
+ 			const bufferAttribute = this._getBufferAttribute( attribute );

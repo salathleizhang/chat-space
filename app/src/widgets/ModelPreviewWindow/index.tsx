@@ -1,14 +1,19 @@
 import { XIcon } from "@phosphor-icons/react/X";
 import { Bounds } from "@react-three/drei/core/Bounds";
-import { GizmoHelper } from "@react-three/drei/core/GizmoHelper";
-import { GizmoViewport } from "@react-three/drei/core/GizmoViewport";
+import { GizmoHelper, useGizmoContext } from "@react-three/drei/core/GizmoHelper";
 import { OrbitControls } from "@react-three/drei/core/OrbitControls";
-import { Canvas, useThree } from "@react-three/fiber";
+import { useThree } from "@react-three/fiber";
+import { WebGPUCanvas } from "../../shared/rendering/WebGPUCanvas";
+import { webgpuRenderer } from "../../shared/rendering/webgpu";
+import { captureScene } from "../../shared/rendering/capture";
+import { captureQueue } from "../../shared/rendering/CaptureQueue";
+import { useCaptureResult } from "../../shared/rendering/useCaptureResult";
 import { memo, Suspense, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import * as THREE from "three";
 import type { AssetMaterial, AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
 import { Badge, Button, Panel } from "../../shared/ui";
 import { ModelMesh } from "../Viewport/ModelMesh";
+import { CameraAxes } from "../Viewport/PaneCamera";
 import { createInspectionCamera, INSPECTION_VIEWS } from "./inspectionViews";
 
 /**
@@ -38,6 +43,11 @@ const SHEET_TILE = 512;
 const INSPECTION_POLL_MS = 120;
 const INSPECTION_TIMEOUT_MS = 10_000;
 
+function PreviewAxes() {
+  const { tweenCamera } = useGizmoContext();
+  return <group scale={40}><CameraAxes onSnap={tweenCamera} /></group>;
+}
+
 /** 在 Canvas 内执行四视角截图：等模型进场后，用独立相机拍摄。 */
 function InspectionCapturer({
   request,
@@ -54,10 +64,12 @@ function InspectionCapturer({
   useEffect(() => {
     if (!request) return;
     let cancelled = false;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, webgpuRenderer(gl).lifetime.signal]);
     let waited = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const capture = () => {
+    const capture = async () => {
       if (cancelled) return;
       // 后台标签页的 ResizeObserver/rAF/绘制都会冻结。隐藏期间泊住且不计超时，回到
       // 前台后继续；setTimeout 只会被节流，不会像 rAF 一样完全失去唤醒机会。
@@ -65,7 +77,7 @@ function InspectionCapturer({
         timer = setTimeout(capture, INSPECTION_POLL_MS);
         return;
       }
-      if (gl.getContext().isContextLost()) {
+      if (webgpuRenderer(gl).lost) {
         onCaptured(request.id, null);
         return;
       }
@@ -90,22 +102,31 @@ function InspectionCapturer({
         return;
       }
 
-      INSPECTION_VIEWS.forEach((view, i) => {
-        const inspectionCamera = createInspectionCamera(
-          camera as THREE.PerspectiveCamera,
-          view,
-          sphere.center,
-          sphere.radius,
-        );
-        gl.render(scene, inspectionCamera);
-
-        const x = (i % 2) * SHEET_TILE;
-        const y = Math.floor(i / 2) * SHEET_TILE;
-        ctx.drawImage(gl.domElement, x, y, SHEET_TILE, SHEET_TILE);
-        ctx.fillStyle = "rgba(255,255,255,0.9)";
-        ctx.font = "bold 22px system-ui, sans-serif";
-        ctx.fillText(view.label, x + 14, y + 32);
-      });
+      try {
+        // Submit all four views in this JS task, before yielding to animation or
+        // user edits. Readbacks remain asynchronous, but the pose is identical.
+        const images = await captureQueue.enqueue("inspection", signal, () => Promise.all(INSPECTION_VIEWS.map((view) => {
+          const inspectionCamera = createInspectionCamera(
+            camera as THREE.PerspectiveCamera,
+            view,
+            sphere.center,
+            sphere.radius,
+          );
+          return captureScene(webgpuRenderer(gl), scene, inspectionCamera, SHEET_TILE);
+        })));
+        if (cancelled) return;
+        for (const [i, view] of INSPECTION_VIEWS.entries()) {
+          const x = (i % 2) * SHEET_TILE;
+          const y = Math.floor(i / 2) * SHEET_TILE;
+          ctx.drawImage(images[i]!, x, y, SHEET_TILE, SHEET_TILE);
+          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.font = "bold 22px system-ui, sans-serif";
+          ctx.fillText(view.label, x + 14, y + 32);
+        }
+      } catch {
+        if (!cancelled) onCaptured(request.id, null);
+        return;
+      }
       ctx.strokeStyle = "rgba(255,255,255,0.25)";
       ctx.lineWidth = 2;
       ctx.strokeRect(0, 0, sheet.width, sheet.height);
@@ -126,6 +147,7 @@ function InspectionCapturer({
     timer = setTimeout(capture, 0);
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [request, gl, scene, camera, invalidate, onCaptured]);
@@ -142,6 +164,7 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
   onInspectionCaptured,
 }: ModelPreviewWindowProps) {
   const hasModel = asset.modelPath != null;
+  const captured = useCaptureResult(`${asset.id}|${asset.resourceRevision ?? 0}|${inspection?.id ?? "none"}`, onInspectionCaptured);
 
   /** 拖动窗口只改外壳的 DOM transform，不把 pointermove 写进 React state：否则每次
       移动都会连带协调下方整棵 R3F Canvas 子树。偏移留在 ref，松手后下一次拖动仍能
@@ -215,12 +238,12 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
       </div>
       <div className="aspect-square w-full">
         {hasModel ? (
-          <Canvas
+          <WebGPUCanvas
             key={asset.modelPath}
             frameloop="demand"
             dpr={[1, 1.5]}
             camera={{ position: [1.6, 1.2, 1.6], fov: 45 }}
-            gl={{ preserveDrawingBuffer: true, alpha: true }}
+            onFailure={() => { if (inspection) captured(inspection.id, null); }}
           >
             <ambientLight intensity={0.7} />
             <directionalLight position={[4, 6, 4]} intensity={1.4} />
@@ -234,16 +257,13 @@ export const ModelPreviewWindow = memo(function ModelPreviewWindow({
             </Suspense>
             <OrbitControls makeDefault enableDamping />
             <GizmoHelper alignment="top-right" margin={[52, 52]}>
-              <GizmoViewport
-                axisColors={["#e56b6b", "#6bcb77", "#4d8fe5"]}
-                labelColor="white"
-              />
+              <PreviewAxes />
             </GizmoHelper>
             <InspectionCapturer
               request={inspection}
-              onCaptured={onInspectionCaptured}
+              onCaptured={captured}
             />
-          </Canvas>
+          </WebGPUCanvas>
         ) : (
           <div className="flex h-full items-center justify-center text-xs text-ink-subtle">
             This asset has no renderable model output

@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
   },
-  // Three.js 与 Spark 已按路由/功能懒加载；默认 500 kB 阈值对 3D 编辑器没有信号价值。
+  // Three.js 与 Splat 已按路由/功能懒加载；默认 500 kB 阈值对 3D 编辑器没有信号价值。
   build: {
     chunkSizeWarningLimit: 5000,
     rollupOptions: {

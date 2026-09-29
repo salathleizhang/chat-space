@@ -8,7 +8,7 @@
 
 ## 本地开发
 
-需要 Bun 1.3+、支持 WebGL 2 的浏览器。
+需要 Bun 1.3+、能成功初始化 WebGPU adapter/device 的浏览器，并通过 HTTPS 或 localhost 访问。所有 3D 画面统一走原生 WebGPU（包含 Gaussian Splat、collider GLB、预览和截图），不回退到 WebGL；不支持时显示重试提示，项目与聊天界面仍可用。
 
 ```bash
 bun install

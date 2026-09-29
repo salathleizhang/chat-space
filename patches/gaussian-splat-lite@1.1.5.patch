@@ -1,0 +1,92 @@
+diff --git a/dist/gaussian-splat-lite.cjs b/dist/gaussian-splat-lite.cjs
+index a2377a3a87f52013f23cf73e0bffae0e9a5ccf88..971a5872fa68a6bdc9e1737041da4682c1bdf3d1 100644
+--- a/dist/gaussian-splat-lite.cjs
++++ b/dist/gaussian-splat-lite.cjs
+@@ -23663,6 +23663,11 @@ const SPLAT_TEX_LAYER_BITS = SPLAT_TEX_WIDTH_BITS + SPLAT_TEX_HEIGHT_BITS;
+ const SPLAT_TEX_WIDTH_MASK = (1 << SPLAT_TEX_WIDTH_BITS) - 1;
+ const SPLAT_TEX_HEIGHT_MASK = (1 << SPLAT_TEX_HEIGHT_BITS) - 1;
+ const E = Math.E;
++const bindingPlaceholders = new WeakMap();
++function disposeBindingPlaceholders(uniforms) {
++  for (const texture of bindingPlaceholders.get(uniforms) ?? []) texture.dispose();
++  bindingPlaceholders.delete(uniforms);
++}
+ function uniformBinding(uniforms, name, type) {
+   const uniform$12 = uniform;
+   return uniform$12(uniforms[name].value, type).onObjectUpdate(
+@@ -23678,6 +23683,9 @@ function textureBinding(uniforms, name, array2 = false) {
+   placeholder.minFilter = THREE__namespace.NearestFilter;
+   placeholder.generateMipmaps = false;
+   placeholder.needsUpdate = true;
++  let owned = bindingPlaceholders.get(uniforms);
++  if (!owned) bindingPlaceholders.set(uniforms, owned = new Set());
++  owned.add(placeholder);
+   const getTexture = () => uniforms[name].value;
+   return uintTexture(placeholder).onObjectUpdate(getTexture);
+ }
+@@ -25852,6 +25860,7 @@ class NodeSplatBackend {
+   dispose() {
+     this.sortedMaterial.dispose();
+     this.uniformMaterial.dispose();
++    disposeBindingPlaceholders(this.sortedMaterial.uniforms);
+   }
+   createDepthMaterial(uniforms) {
+     return createSplatNodeMaterial({
+@@ -27087,7 +27096,10 @@ class ProjectedSplats {
+     void this.compilation.then(() => this.disposeResources());
+   }
+   disposeResources() {
+-    for (const slot of this.slots) slot.node.dispose();
++    for (const slot of this.slots) {
++      slot.node.dispose();
++      disposeBindingPlaceholders(slot.uniforms);
++    }
+     for (const node of [this.resetCount, this.finish]) node.dispose();
+     this.sorter.dispose();
+     this.cache.dispose();
+diff --git a/dist/gaussian-splat-lite.module.js b/dist/gaussian-splat-lite.module.js
+index 4afd2777140ad003f5b62e31ca814d107483a161..0e13dcb5d6519db671ef67ff74da941a08cdec58 100644
+--- a/dist/gaussian-splat-lite.module.js
++++ b/dist/gaussian-splat-lite.module.js
+@@ -2197,6 +2197,11 @@ const SPLAT_TEX_LAYER_BITS = SPLAT_TEX_WIDTH_BITS + SPLAT_TEX_HEIGHT_BITS;
+ const SPLAT_TEX_WIDTH_MASK = (1 << SPLAT_TEX_WIDTH_BITS) - 1;
+ const SPLAT_TEX_HEIGHT_MASK = (1 << SPLAT_TEX_HEIGHT_BITS) - 1;
+ const E = Math.E;
++const bindingPlaceholders = new WeakMap();
++function disposeBindingPlaceholders(uniforms) {
++  for (const texture of bindingPlaceholders.get(uniforms) ?? []) texture.dispose();
++  bindingPlaceholders.delete(uniforms);
++}
+ function uniformBinding(uniforms, name, type) {
+   const uniform = TSL.uniform;
+   return uniform(uniforms[name].value, type).onObjectUpdate(
+@@ -2212,6 +2217,9 @@ function textureBinding(uniforms, name, array = false) {
+   placeholder.minFilter = THREE.NearestFilter;
+   placeholder.generateMipmaps = false;
+   placeholder.needsUpdate = true;
++  let owned = bindingPlaceholders.get(uniforms);
++  if (!owned) bindingPlaceholders.set(uniforms, owned = new Set());
++  owned.add(placeholder);
+   const getTexture = () => uniforms[name].value;
+   return uintTexture(placeholder).onObjectUpdate(getTexture);
+ }
+@@ -4341,6 +4349,7 @@ class NodeSplatBackend {
+   dispose() {
+     this.sortedMaterial.dispose();
+     this.uniformMaterial.dispose();
++    disposeBindingPlaceholders(this.sortedMaterial.uniforms);
+   }
+   createDepthMaterial(uniforms) {
+     return createSplatNodeMaterial({
+@@ -5576,7 +5585,10 @@ class ProjectedSplats {
+     void this.compilation.then(() => this.disposeResources());
+   }
+   disposeResources() {
+-    for (const slot of this.slots) slot.node.dispose();
++    for (const slot of this.slots) {
++      slot.node.dispose();
++      disposeBindingPlaceholders(slot.uniforms);
++    }
+     for (const node of [this.resetCount, this.finish]) node.dispose();
+     this.sorter.dispose();
+     this.cache.dispose();

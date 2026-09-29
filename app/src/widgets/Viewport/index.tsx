@@ -13,9 +13,15 @@ import { SquareSplitHorizontalIcon } from "@phosphor-icons/react/SquareSplitHori
 import { SquaresFourIcon } from "@phosphor-icons/react/SquaresFour";
 import { VideoCameraIcon } from "@phosphor-icons/react/VideoCamera";
 import { Environment } from "@react-three/drei/core/Environment";
-import { Grid } from "@react-three/drei/core/Grid";
-import { View } from "@react-three/drei/web/View";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { WebGPUView } from "./WebGPUView";
+import { ProjectRenderRuntime, FirstPersonView } from "./ProjectRenderRuntime";
+import { PanePickTarget } from "./PanePicking";
+import { VIEW_LAYERS } from "./sharedPicking";
+import { useFrame } from "@react-three/fiber";
+import { WebGPUCanvas } from "../../shared/rendering/WebGPUCanvas";
+import { captureQueue } from "../../shared/rendering/CaptureQueue";
+import { resourcePath } from "../../shared/rendering/resourcePath";
+import { WebGPUGrid } from "./WebGPUGrid";
 import {
   lazy,
   memo,
@@ -137,11 +143,13 @@ const FIRST_PERSON_LOCK_SELECTOR = "[data-viewport-first-person-lock]";
  */
 function SkyBackdrop({ texture }: { texture: THREE.Texture }) {
   const ref = useRef<THREE.Mesh>(null);
-  useFrame((state) => {
-    ref.current?.position.copy(state.camera.position);
-  });
+
   return (
-    <mesh ref={ref} renderOrder={-1}>
+    <mesh ref={ref} renderOrder={-1} frustumCulled={false} onBeforeRender={(_renderer, _scene, camera) => {
+      if (!ref.current) return;
+      camera.getWorldPosition(ref.current.position);
+      ref.current.updateMatrixWorld();
+    }}>
       <sphereGeometry args={[SKY_BACKDROP_RADIUS, 32, 32]} />
       <meshBasicMaterial map={texture} side={THREE.BackSide} depthWrite={false} toneMapped={false} />
     </mesh>
@@ -180,46 +188,20 @@ interface SceneContentsProps {
   materials: Record<string, AssetMaterial>;
   /** 跨窗格共享的实时摆放表（gizmo 拖拽期间用，见 PlacedAsset 与 TransformGizmo 说明） */
   live: LiveTransforms;
-  /** 当前选中且可变换的资产；空数组即不渲染 gizmo */
-  gizmoMembers: GizmoMember[];
-  transformMode: TransformMode;
-  transformSpace: TransformSpace;
-  /** 本窗格的占位 div，gizmo 要用它换算鼠标 NDC；不传即不渲染 gizmo（第一人称模式） */
-  paneRef?: RefObject<HTMLDivElement | null>;
-  pickSuppressedRef: RefObject<boolean>;
-  onTransformCommit?: (updates: Record<string, AssetTransform>) => void;
-  /** 不传（第一人称模式）即整个场景不可拾取：那时点击是用来锁定指针的 */
-  onSelectAsset?: (asset: LibraryAsset, additive: boolean) => void;
-  onFocusAsset?: (asset: LibraryAsset) => void;
+  objects: Map<string, THREE.Object3D>;
+  hoveredByLayer: Record<number, string>;
+  viewLayers: number[];
 }
 
-/**
- * R3F 的 onClick 在轨道拖拽结束时照样会触发（浏览器只要 down/up 落在同一元素就派发
- * click），所以要按事件自带的 delta（按下到抬起的像素位移）把"转视角"和"点选"分开。
- * 阈值取 2px，与 R3F 内部判定 onPointerMissed 用的那个常量一致。
- */
-const CLICK_DRAG_TOLERANCE_PX = 2;
-
-/**
- * 共享场景里的一个资产：外层 `<group>` 承担拾取（`ModelMesh` 内部不挂事件——它还被
- * 预览小窗与缩略图离屏渲染复用，那些地方不该可拾取）。
- *
- * 必须是 `memo`：悬浮态 `hoveredId` 住在 `SceneContents`，鼠标扫过任意一个模型都会让
- * 整个 `SceneContents` 重渲染。不隔离的话，N 个资产的 5 个事件闭包全部重建、N 棵
- * `ModelMesh` 子树逐一重新协调（R3F 的协调走的是 three 对象树），分屏时每个窗格再乘一遍。
- * 隔离之后，一次悬浮只重渲染"移出的那个"和"移入的那个"，其余靠 memo 原地不动。
- * 因此几个 prop 的引用都必须稳定：`position` 取自 `useMemo` 出来的 layout Map，
- * 三个回调都是 `useCallback`/上层 `useCallback` 的稳定引用，`highlight` 是字符串。
- */
+/** One project-owned model instance; per-view proxies handle picking. */
 const PlacedAsset = memo(function PlacedAsset({
   asset,
   placement,
   material,
   live,
   highlight,
-  onSelect,
-  onFocus,
-  onHover,
+  highlightMask,
+  objects,
 }: {
   asset: LibraryAsset;
   /** 网格默认位，或用户 gizmo 调过后落在 scene.json 里的摆放（见 scenePlacement.ts） */
@@ -229,18 +211,20 @@ const PlacedAsset = memo(function PlacedAsset({
   /** 跨窗格共享的实时摆放表：gizmo 拖拽期间由本组件每帧读取（见下方说明） */
   live: LiveTransforms;
   highlight: "none" | "hover" | "selected";
-  /** 不传即整个对象不可拾取（第一人称模式），那时点击是用来锁定指针的 */
-  onSelect?: (asset: LibraryAsset, additive: boolean) => void;
-  onFocus?: (asset: LibraryAsset) => void;
-  onHover?: (id: string, entered: boolean) => void;
+  highlightMask: number;
+  objects: Map<string, THREE.Object3D>;
 }) {
-  const interactive = onSelect != null;
   const groupRef = useRef<THREE.Group>(null);
+  const register = useCallback((group: THREE.Group | null) => {
+    groupRef.current = group;
+    if (group) objects.set(asset.id, group);
+    else objects.delete(asset.id);
+  }, [objects, asset.id]);
 
   /*
     gizmo 拖拽期间的实时跟随：变换值只写进共享的 live 表，由这里每帧应用到自己的 group
     上——绕开 React 是刻意的，拖拽时每帧 setState 会把整棵场景树重协调一遍，必卡；而
-    分屏时同一个资产在每个窗格各有一份 group 实例，读同一张表才能四个窗格同步跟随。
+    所有窗格绘制同一个 group，每帧只应用一次实时变换。
     松手后表被清空，这里就不再插手，最终值经 props 正常回到 React 手里（两者相等，无跳变）。
   */
   useFrame(() => {
@@ -255,49 +239,19 @@ const PlacedAsset = memo(function PlacedAsset({
 
   return (
     <group
-      ref={groupRef}
+      ref={register}
+      name={`asset:${asset.id}`}
       position={placement.position}
       rotation={placement.rotation}
       scale={placement.scale}
-      onPointerOver={
-        interactive
-          ? (event) => {
-              event.stopPropagation();
-              onHover?.(asset.id, true);
-            }
-          : undefined
-      }
-      onPointerOut={interactive ? () => onHover?.(asset.id, false) : undefined}
-      onClick={
-        interactive
-          ? (event) => {
-              if (event.delta > CLICK_DRAG_TOLERANCE_PX) return;
-              event.stopPropagation();
-              onSelect(asset, event.nativeEvent.shiftKey);
-            }
-          : undefined
-      }
-      onDoubleClick={
-        interactive
-          ? (event) => {
-              if (event.delta > CLICK_DRAG_TOLERANCE_PX) return;
-              event.stopPropagation();
-              onFocus?.(asset);
-            }
-          : undefined
-      }
+
     >
-      <ModelMesh asset={asset} highlight={highlight} material={material} />
+      <ModelMesh asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} />
     </group>
   );
 });
 
-/**
- * 场景内容（环境贴图、灯光、模型、网格）：drei 的 View 每个窗格有 children 时
- * 只渲染窗格自己的 portal 场景，从不渲染写在 View 外面的共享场景——所以这份内容
- * 不能挂在 Canvas 直接子级，必须在每个 View 内部各渲染一份（第一人称模式没有
- * View，直接挂在 Canvas 下）。
- */
+/** Shared project content stays mounted when layouts or camera modes change. */
 function SceneContents({
   worldAsset,
   placedAssets,
@@ -309,35 +263,10 @@ function SceneContents({
   selectedIds,
   materials,
   live,
-  gizmoMembers,
-  transformMode,
-  transformSpace,
-  paneRef,
-  pickSuppressedRef,
-  onTransformCommit,
-  onSelectAsset,
-  onFocusAsset,
+  objects,
+  hoveredByLayer,
+  viewLayers,
 }: SceneContentsProps) {
-  /** 悬浮态按窗格各记各的：分屏时只有鼠标所在那个窗格该亮 */
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-
-  // 光标是全局的，组件卸载（切第一人称/换布局）时若正停在模型上，
-  // 不还原就会一直卡在 pointer 手型
-  useEffect(() => () => {
-    document.body.style.cursor = "";
-  }, []);
-
-  // 引用必须稳定，否则每个 PlacedAsset 的 memo 都会被这个回调戳穿（见 PlacedAsset 说明）
-  const handleHover = useCallback((id: string, entered: boolean) => {
-    if (entered) {
-      setHoveredId(id);
-      document.body.style.cursor = "pointer";
-    } else {
-      setHoveredId((current) => (current === id ? null : current));
-      document.body.style.cursor = "";
-    }
-  }, []);
-
   return (
     <>
       <ResettableErrorBoundary resetKey={`${skyboxUrl}|${skyboxRevision}`} fallback={null}>
@@ -362,9 +291,9 @@ function SceneContents({
         >
           <Suspense fallback={null}>
             <SplatModel
-              key={`${worldAsset.spzPath}|${worldAsset.resourceRevision ?? 0}`}
-              url={libraryUrl(worldAsset.spzPath)}
+              url={`${libraryUrl(worldAsset.spzPath)}?revision=${worldAsset.resourceRevision ?? 0}`}
               semantics={worldAsset.worldSemantics}
+              viewLayers={viewLayers}
             />
           </Suspense>
         </ResettableErrorBoundary>
@@ -381,7 +310,7 @@ function SceneContents({
           <Suspense fallback={null}>
             <WorldColliderMesh
               key={`${worldAsset.modelPath}|${worldAsset.resourceRevision ?? 0}`}
-              url={libraryUrl(worldAsset.modelPath)}
+              url={`${libraryUrl(worldAsset.modelPath)}?revision=${worldAsset.resourceRevision ?? 0}`}
               semantics={worldAsset.worldSemantics}
             />
           </Suspense>
@@ -390,6 +319,7 @@ function SceneContents({
       {placedAssets.map((asset) => {
         const placement = layout.get(asset.id);
         if (!placement) return null;
+        const hoverMask = Object.entries(hoveredByLayer).reduce((mask, [layer, id]) => id === asset.id ? mask | (1 << Number(layer)) : mask, 0);
         return (
           <Suspense key={asset.id} fallback={null}>
             <PlacedAsset
@@ -400,41 +330,18 @@ function SceneContents({
               highlight={
                 selectedIds.has(asset.id)
                   ? "selected"
-                  : hoveredId === asset.id
+                  : hoverMask !== 0
                     ? "hover"
                     : "none"
               }
-              onSelect={onSelectAsset}
-              onFocus={onFocusAsset}
-              onHover={handleHover}
+              highlightMask={selectedIds.has(asset.id) ? 1 : hoverMask}
+              objects={objects}
             />
           </Suspense>
         );
       })}
-      {paneRef && onTransformCommit && (
-        <TransformGizmo
-          members={gizmoMembers}
-          mode={transformMode}
-          space={transformSpace}
-          paneRef={paneRef}
-          live={live}
-          pickSuppressedRef={pickSuppressedRef}
-          onCommit={onTransformCommit}
-        />
-      )}
       {showGrid && (
-        <Grid
-          position={[0, 0, 0]}
-          infiniteGrid
-          cellSize={0.5}
-          cellThickness={0.5}
-          cellColor="#1a1a1a"
-          sectionSize={5}
-          sectionThickness={1}
-          sectionColor="#333333"
-          fadeDistance={40}
-          fadeStrength={1.5}
-        />
+        <WebGPUGrid />
       )}
     </>
   );
@@ -526,7 +433,9 @@ export const Viewport = memo(function Viewport({
   );
   const layout = useMemo(() => computeSceneLayout(assets, transforms), [assets, transforms]);
   const skyboxAsset = selectProjectSkybox(assets, currentSkybox);
-  const skyboxUrl = skyboxAsset?.hdrPath ? libraryUrl(skyboxAsset.hdrPath) : DEFAULT_SKYBOX_URL;
+  const skyboxUrl = skyboxAsset?.hdrPath
+    ? resourcePath(libraryUrl(skyboxAsset.hdrPath), skyboxAsset.resourceRevision)
+    : DEFAULT_SKYBOX_URL;
 
   const isFocusable = focusedId != null && focusedId !== worldAsset?.id;
   // 相机只关心摆放里的位置分量（rotation/scale 是对象自己的姿态，不影响飞向哪里）
@@ -559,6 +468,20 @@ export const Viewport = memo(function Viewport({
   const firstPerson = mode === "firstPerson";
   const hasContent = worldAsset != null || placedAssets.length > 0;
   const panes = LAYOUTS[paneLayout];
+  const [objects] = useState(() => new Map<string, THREE.Object3D>());
+  const [hoveredByLayer, setHoveredByLayer] = useState<Record<number, string>>({});
+  const viewLayers = useMemo(() => firstPerson ? [VIEW_LAYERS.persp!] : panes.map((pane) => VIEW_LAYERS[pane.id]!), [firstPerson, panes]);
+  const handleHover = useCallback((layer: number, id: string, entered: boolean) => {
+    setHoveredByLayer((current) => {
+      if (entered) return current[layer] === id ? current : { ...current, [layer]: id };
+      if (current[layer] !== id) return current;
+      const next = { ...current }; delete next[layer]; return next;
+    });
+  }, []);
+  useEffect(() => {
+    document.body.style.cursor = Object.keys(hoveredByLayer).length ? "pointer" : "";
+    return () => { document.body.style.cursor = ""; };
+  }, [hoveredByLayer]);
 
   /*
     gizmo 拖拽的共享状态：
@@ -656,13 +579,16 @@ export const Viewport = memo(function Viewport({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onPointerMove={() => captureQueue.interaction()}
+      onPointerDown={() => captureQueue.interaction()}
+      onWheel={() => captureQueue.interaction()}
     >
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] bg-fill-active text-sm text-ink">
           Drop to import model
         </div>
       )}
-      <Canvas
+      <WebGPUCanvas
         className="!absolute inset-0"
         camera={ORBIT_CAMERA}
         dpr={[1, 1.5]}
@@ -676,47 +602,28 @@ export const Viewport = memo(function Viewport({
         */
         onPointerMissed={firstPerson ? undefined : handlePointerMissed}
       >
-        {firstPerson && (
+        <ProjectRenderRuntime>
           <SceneContents
             worldAsset={worldAsset}
             placedAssets={placedAssets}
             layout={layout}
-            showGrid={false}
-            showWorldCollider={false}
+            showGrid={!firstPerson && showGrid}
+            showWorldCollider={!firstPerson && showWorldCollider}
             skyboxUrl={skyboxUrl}
             skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
             selectedIds={selectedIds}
             materials={materials}
             live={live}
-            gizmoMembers={gizmoMembers}
-            transformMode={transformMode}
-            transformSpace={transformSpace}
-            pickSuppressedRef={pickSuppressedRef}
+            objects={objects}
+            hoveredByLayer={hoveredByLayer}
+            viewLayers={viewLayers}
           />
-        )}
-        {!firstPerson &&
-          panes.map((pane) => (
-            <View key={pane.id} track={paneRefs[pane.id] as RefObject<HTMLElement>}>
-              <SceneContents
-                worldAsset={worldAsset}
-                placedAssets={placedAssets}
-                layout={layout}
-                showGrid={showGrid}
-                showWorldCollider={showWorldCollider}
-                skyboxUrl={skyboxUrl}
-                skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
-                selectedIds={selectedIds}
-                materials={materials}
-                live={live}
-                gizmoMembers={gizmoMembers}
-                transformMode={transformMode}
-                transformSpace={transformSpace}
-                paneRef={paneRefs[pane.id]}
-                pickSuppressedRef={pickSuppressedRef}
-                onTransformCommit={onTransformCommit}
-                onSelectAsset={handleSelectAsset}
-                onFocusAsset={handleFocusAsset}
-              />
+          {!firstPerson && panes.map((pane) => (
+            <WebGPUView key={pane.id} id={pane.id} layer={VIEW_LAYERS[pane.id]!} track={paneRefs[pane.id] as RefObject<HTMLElement>}>
+              {placedAssets.map((asset) => <PanePickTarget key={asset.id} asset={asset} objects={objects}
+                layer={VIEW_LAYERS[pane.id]!} onSelect={handleSelectAsset} onFocus={handleFocusAsset} onHover={handleHover} />)}
+              {onTransformCommit && <TransformGizmo members={gizmoMembers} mode={transformMode} space={transformSpace}
+                paneRef={paneRefs[pane.id]!} live={live} pickSuppressedRef={pickSuppressedRef} onCommit={onTransformCommit} />}
               <PaneCamera
                 kind={pane.camera}
                 projection={projectionFor(pane)}
@@ -725,14 +632,14 @@ export const Viewport = memo(function Viewport({
                 cameraTargetRef={cameraTargetRef}
                 paneRef={paneRefs[pane.id] as RefObject<HTMLDivElement | null>}
               />
-            </View>
+            </WebGPUView>
           ))}
-        {!firstPerson && <View.Port />}
-        {firstPerson && <FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} />}
-      </Canvas>
+          {firstPerson && <><FirstPersonView /><FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} /></>}
+        </ProjectRenderRuntime>
+      </WebGPUCanvas>
 
       {/*
-        窗格占位层必须叠在 Canvas 之上：drei View 的 track 要求原生指针事件的
+        窗格占位层必须叠在 Canvas 之上：WebGPUView 的 track 要求原生指针事件的
         event.target 严格等于被 track 的 DOM 节点，Canvas 盖在上面时点击永远落在
         canvas 上，各窗格的 OrbitControls/坐标轴球会整体失灵。放在 Canvas 后面
         （DOM 序更靠后 = 层叠更靠上）之后，点击才能落到具体窗格的 div 上，

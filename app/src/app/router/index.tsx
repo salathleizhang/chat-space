@@ -11,7 +11,7 @@ const hydrateFallbackElement = (
     真正点击导航时命中 import() 的模块缓存，无需二次请求。 */
 export const preloadAppDashboard = () => import("../../pages/AppDashboard");
 
-/** 路由级代码分割：Three.js/Spark 只随单项目工作台加载，入口页保持轻量 */
+/** 路由级代码分割：Three.js/GSL WebGPU 渲染层只随单项目工作台加载，入口页保持轻量 */
 export const router = createBrowserRouter([
   {
     path: "/",

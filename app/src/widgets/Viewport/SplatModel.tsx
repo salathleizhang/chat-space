@@ -1,150 +1,128 @@
-import { extend, useThree } from "@react-three/fiber";
-import { PackedSplats, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useThree } from "@react-three/fiber";
+import { GaussianSplatRenderer, Splats, SplatMesh } from "gaussian-splat-lite";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
 import type { WorldSemantics } from "../../shared/lib/libraryApi";
+import { webgpuRenderer } from "../../shared/rendering/webgpu";
+import { DeferredResource } from "../../shared/rendering/DeferredResource";
+import { VIEW_LAYERS } from "./sharedPicking";
 import { worldTransform } from "./worldTransform";
 
-/**
- * 已知边界：`@sparkjsdev/spark` 把自己的 three.js 内嵌进了 `dist/spark.module.js`
- * （约 5.1MB），所以本懒加载 chunk 里自带一份 three，与 vite `manualChunks` 抽出的
- * app 共享 three chunk 是两份实例——查看泼溅时 `window.__THREE__` 会触发
- * “Multiple instances of Three.js” 的 console.warn。这是上游打包行为，Vite 层无法去重；
- * spark 的 three 自包含（不参与 R3F 场景对象互操作），实际风险低，留作已知项。
- */
-const SparkRendererEl = extend(SparkRenderer);
-const SplatMeshEl = extend(SplatMesh);
+interface Resource { splats: Splats; refs: number; release?: ReturnType<typeof setTimeout> }
+const resources = new Map<string, Resource>();
+// Native WebGPU sorter compilation for a 1.9M-point world can exceed a minute
+// after repeated create/dispose cycles. These four instances belong to the
+// Splat surface, not a source URL or layout. Source replacement reuses the
+// pipelines; removing the world/surface disposes each exactly once.
+const WORLD_VIEW_LAYERS = Object.values(VIEW_LAYERS);
 
-interface SharedSplatResource {
-  splats: PackedSplats;
-  initialized: Promise<void>;
-  ready: boolean;
-  error?: Error;
-  refs: number;
-  releaseTimer?: ReturnType<typeof setTimeout>;
-}
-
-/**
- * Drei View 的每个 portal 都需要自己的 SplatMesh/SparkRenderer（相机和排序不同），但解码后的
- * PackedSplats 与它在同一个 WebGLRenderer 上的纹理可以共享。按 URL 缓存后，四视图只 fetch/
- * decode/upload 一次；引用计数负责在最后一个窗格卸载时释放。
- */
-const sharedSplats = new Map<string, SharedSplatResource>();
-
-function splatError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
-function createSharedSplats(url: string): SharedSplatResource {
-  const splats = new PackedSplats({ url });
-  const resource: SharedSplatResource = {
-    splats,
-    ready: false,
-    refs: 0,
-    initialized: Promise.resolve(),
-  };
-  resource.initialized = splats.initialized
-    .then(() => {
-      resource.ready = true;
-    })
-    .catch((error: unknown) => {
-      resource.error = splatError(error);
-      throw resource.error;
-    });
-  sharedSplats.set(url, resource);
+function acquire(url: string) {
+  let resource = resources.get(url);
+  if (!resource) {
+    resource = { splats: new Splats({ url }), refs: 0 };
+    resources.set(url, resource);
+  }
+  clearTimeout(resource.release);
+  resource.refs++;
   return resource;
 }
 
-function readSharedSplats(url: string): SharedSplatResource {
-  const resource = sharedSplats.get(url) ?? createSharedSplats(url);
-  if (resource.error) throw resource.error;
-  if (!resource.ready) throw resource.initialized;
-  return resource;
+function release(url: string, resource: Resource) {
+  if (--resource.refs > 0) return;
+  resource.release = setTimeout(() => {
+    if (resource.refs !== 0 || resources.get(url) !== resource) return;
+    resource.splats.dispose();
+    resources.delete(url);
+  }, 0);
 }
 
-function clearSharedSplats(url: string) {
-  const resource = sharedSplats.get(url);
-  if (!resource || resource.refs > 0) return;
-  if (resource.releaseTimer) clearTimeout(resource.releaseTimer);
-  resource.splats.dispose();
-  sharedSplats.delete(url);
-}
-
-function useSharedSplats(url: string): PackedSplats {
-  const resource = readSharedSplats(url);
+function SplatViewRenderer({ layer, active, generation }: { layer: number; active: boolean; generation: string }) {
+  const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
+  const [renderer, setRenderer] = useState<GaussianSplatRenderer | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const resource = useMemo(() => new DeferredResource(() => {
+    const owned = new GaussianSplatRenderer({ renderer: webgpuRenderer(gl), onDirty: invalidate,
+      renderDepth: false, autoStochastic: false, stochastic: false });
+    owned.layers.set(layer);
+    owned.name = `splat-view:${layer}`;
+    return owned;
+  }), [gl, invalidate, layer]);
   useEffect(() => {
-    if (resource.releaseTimer) {
-      clearTimeout(resource.releaseTimer);
-      resource.releaseTimer = undefined;
-    }
-    resource.refs += 1;
+    try {
+      const lease = resource.acquire();
+      setRenderer(lease.value);
+      invalidate();
+      return lease.release;
+    } catch (cause) { setError(cause instanceof Error ? cause : new Error(String(cause))); }
+  }, [resource, invalidate]);
+  useLayoutEffect(() => {
+    // Hidden views must also drop references to the previous source. Keep only
+    // reusable capacity/pipelines, never a display mapping to disposed Splats.
+    renderer?.clearSplats();
+    invalidate();
+  }, [renderer, generation, invalidate]);
+  if (error) throw error;
+  return renderer ? <primitive object={renderer} visible={active} dispose={null} /> : null;
+}
+
+function SplatScene({ url, semantics }: { url: string; semantics: WorldSemantics }) {
+  const invalidate = useThree((state) => state.invalidate);
+  const [loaded, setLoaded] = useState<SplatMesh | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let owned: SplatMesh | undefined;
+    const resource = acquire(url);
+    void resource.splats.initialized.then(() => {
+      if (cancelled) return;
+      const mesh = new SplatMesh({ splats: resource.splats, editable: false, raycastable: false });
+      mesh.name = "project-splats";
+      owned = mesh;
+      setLoaded(owned);
+      invalidate();
+    }).catch((cause: unknown) => {
+      if (!cancelled) setError(cause instanceof Error ? cause : new Error(String(cause)));
+    });
     return () => {
-      resource.refs -= 1;
-      if (resource.refs > 0) return;
-      // 给 StrictMode 的模拟卸载/重挂一个宏任务认领窗口。
-      resource.releaseTimer = setTimeout(() => {
-        if (resource.refs > 0 || sharedSplats.get(url) !== resource) return;
-        resource.splats.dispose();
-        sharedSplats.delete(url);
-      }, 0);
+      cancelled = true;
+      if (owned) {
+        owned.splats = undefined;
+        owned.dispose();
+      }
+      release(url, resource);
     };
-  }, [resource, url]);
-  return resource.splats;
+  }, [url, invalidate]);
+
+  if (error) throw error;
+  if (!loaded) return null;
+  const transform = worldTransform(semantics);
+  return <>
+    <group position={transform.position} rotation={transform.rotation} scale={transform.scale}>
+      <primitive object={loaded} dispose={null} />
+    </group>
+  </>;
 }
 
-function SharedSplatScene({ url, semantics }: { url: string; semantics: WorldSemantics }) {
-  const renderer = useThree((state) => state.gl);
-  const packedSplats = useSharedSplats(url);
-  const sparkArgs = useMemo(() => ({ renderer }), [renderer]);
-  const splatArgs = useMemo(() => ({ packedSplats }), [packedSplats]);
-  const transform = useMemo(() => worldTransform(semantics), [semantics]);
-  return (
-    <SparkRendererEl args={[sparkArgs]}>
-      {/*
-        World Labs 的 +Y 朝下，不套这层变换整个世界就是倒的。参数来自世界响应的
-        semantics_metadata；collider 那边用的是同一份（见 worldTransform）。
-      */}
-      <group position={transform.position} rotation={transform.rotation} scale={transform.scale}>
-        {/* PackedSplats 归模块级租约所有；窗格卸载不能让单个 SplatMesh dispose 它。 */}
-        <SplatMeshEl args={[splatArgs]} dispose={null} />
-      </group>
-    </SparkRendererEl>
-  );
-}
-
-/**
- * 高斯泼溅（spz）渲染。资源 promise 显式抛给 Suspense，网络/解码异常显式抛给错误边界；
- * 首次失败清理共享拒绝缓存并重试一次，永久错误保持局部隔离而不会形成未处理 Promise。
- */
-export default function SplatModel({
-  url,
-  semantics,
-}: {
-  url: string;
-  semantics: WorldSemantics;
-}) {
+/** Native WebGPU projection/sorting, with separate camera state for each view. */
+function SplatSource(props: { url: string; semantics: WorldSemantics }) {
   const [attempt, setAttempt] = useState(0);
-  const retriedRef = useRef(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const handleError = useCallback(() => {
-    if (retriedRef.current) {
-      // 永久失败的 promise 从未 commit，不会进入引用计数 cleanup；这里主动释放拒绝条目。
-      clearSharedSplats(url);
-      return;
-    }
-    retriedRef.current = true;
-    clearSharedSplats(url);
-    setAttempt(1);
-  }, [url]);
+    if (attempt > 0) return;
+    // Let all failed view leases release before retrying the shared source.
+    retryTimer.current = setTimeout(() => setAttempt(1), 100);
+  }, [attempt]);
+  useEffect(() => () => clearTimeout(retryTimer.current), []);
+  return <ResettableErrorBoundary resetKey={`${props.url}|${attempt}`} fallback={null} onError={handleError}>
+    <SplatScene key={`${props.url}|${attempt}`} {...props} />
+  </ResettableErrorBoundary>;
+}
 
-  return (
-    <ResettableErrorBoundary
-      resetKey={`${url}|${attempt}`}
-      fallback={null}
-      onError={handleError}
-    >
-      <Suspense fallback={null}>
-        <SharedSplatScene url={url} semantics={semantics} />
-      </Suspense>
-    </ResettableErrorBoundary>
-  );
+export default function SplatModel(props: { url: string; semantics: WorldSemantics; viewLayers: number[] }) {
+  return <>
+    {WORLD_VIEW_LAYERS.map((layer) => <SplatViewRenderer key={layer} layer={layer} active={props.viewLayers.includes(layer)} generation={props.url} />)}
+    <SplatSource key={props.url} url={props.url} semantics={props.semantics} />
+  </>;
 }

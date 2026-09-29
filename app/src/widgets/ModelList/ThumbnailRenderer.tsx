@@ -1,4 +1,10 @@
-import { Canvas, useThree } from "@react-three/fiber";
+import { useThree } from "@react-three/fiber";
+import { WebGPUCanvas } from "../../shared/rendering/WebGPUCanvas";
+import { webgpuRenderer } from "../../shared/rendering/webgpu";
+import { captureScene } from "../../shared/rendering/capture";
+import { captureQueue } from "../../shared/rendering/CaptureQueue";
+import { resourcePath } from "../../shared/rendering/resourcePath";
+import { useCaptureResult } from "../../shared/rendering/useCaptureResult";
 import { Suspense, useEffect } from "react";
 import * as THREE from "three";
 import { useEnvironmentTexture } from "../../shared/lib/envTexture";
@@ -9,8 +15,8 @@ import { ModelMesh } from "../Viewport/ModelMesh";
  * 资产列表缩略图的离屏渲染器：服务端没有渲染能力，缩略图跟自检截图一样由
  * app 端画（见 ModelPreviewWindow 的 InspectionCapturer，取景与截图手法同源）。
  *
- * 全应用只有这一个隐藏 Canvas，队列一次喂一个资产进来（WebGL 上下文数量有上限，
- * 不能每个资产挂一个）。渲染参数全部写死——列表里几十张图必须是一套取景，
+ * 全应用只有这一个隐藏 WebGPU Canvas，队列一次喂一个资产进来，避免每个资产
+ * 都分配独立设备和渲染资源。渲染参数全部写死——列表里几十张图必须是一套取景，
  * 任何"按资产自适应"的花样都会让那一列看上去参差不齐。
  *
  * 两类资产各有一种"化身"：模型直接渲模型，天空盒渲一个贴了环境贴图的球
@@ -24,7 +30,7 @@ const MODEL_VIEW_DIR = new THREE.Vector3(1, 0.8, 1).normalize();
 const SKY_VIEW_DIR = new THREE.Vector3(0, 0, 1);
 /** 包围球外扩，留出不贴边的余量 */
 const FIT_MARGIN = 1.25;
-/** 出图边长（正方形）。截图前显式 setSize，不依赖容器测量——见下方轮询注释 */
+/** 私有 RenderTarget 的出图边长，不改变显示画布的尺寸。 */
 const THUMB_SIZE = 256;
 /** 等模型进场景的轮询间隔 */
 const POLL_MS = 120;
@@ -56,18 +62,20 @@ function ThumbnailCapturer({
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, webgpuRenderer(gl).lifetime.signal]);
     let timer: ReturnType<typeof setTimeout> | undefined;
     /** 只累计"可见时"等了多久：隐藏期间画不出图，不该算进超时预算 */
     let waited = 0;
 
-    const capture = () => {
+    const capture = async () => {
       if (cancelled) return;
       if (document.hidden) {
         timer = setTimeout(capture, POLL_MS);
         return;
       }
       // 上下文被浏览器回收（后台标签页省显存的常见手段）时怎么画都是空白，直接放弃
-      if (gl.getContext().isContextLost()) {
+      if (webgpuRenderer(gl).lost) {
         onCaptured(asset, null);
         return;
       }
@@ -81,7 +89,6 @@ function ThumbnailCapturer({
 
       // 显式定尺寸，不吃容器测量：离屏容器的 ResizeObserver 在隐藏标签页里不回调，
       // 靠测量的话画布会停在 300×150 的默认尺寸上，出图既不是正方形也不是 256
-      gl.setSize(THUMB_SIZE, THUMB_SIZE, false);
       const sphere = box.getBoundingSphere(new THREE.Sphere());
       const persp = camera as THREE.PerspectiveCamera;
       // 退化包围球（单点几何）兜一个下限，否则 fitDistance 为 0、相机落在模型内部
@@ -92,15 +99,20 @@ function ThumbnailCapturer({
       camera.lookAt(sphere.center);
       persp.aspect = 1;
       persp.updateProjectionMatrix();
-      gl.render(scene, camera);
-
-      const dataUrl = gl.domElement.toDataURL("image/png");
-      onCaptured(asset, dataUrl.slice(dataUrl.indexOf(",") + 1));
+      try {
+        const image = await captureQueue.enqueue("thumbnail", signal, () => captureScene(webgpuRenderer(gl), scene, camera, THUMB_SIZE));
+        if (cancelled) return;
+        const dataUrl = image.toDataURL("image/png");
+        onCaptured(asset, dataUrl.slice(dataUrl.indexOf(",") + 1));
+      } catch {
+        if (!cancelled) onCaptured(asset, null);
+      }
     };
 
     timer = setTimeout(capture, 0);
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [asset, gl, scene, camera, onCaptured]);
@@ -141,13 +153,14 @@ export function ThumbnailRenderer({
   // 同一资产换代时 id 不变，必须让旧 Suspense 子树立即卸载；否则新模型加载期间
   // React 可能保留已显示的旧模型，Capturer 会把旧版本误当成新版本截图落盘。
   const sourceKey = asset.modelPath ?? asset.hdrPath ?? asset.id;
+  const captured = useCaptureResult(`${asset.id}|${sourceKey}|${asset.resourceRevision ?? 0}`, onCaptured);
   return (
     <div aria-hidden className="pointer-events-none fixed top-0 -left-[9999px] h-64 w-64">
-      <Canvas
+      <WebGPUCanvas
         dpr={1}
         frameloop="demand"
         camera={{ fov: 45, position: [1.6, 1.2, 1.6] }}
-        gl={{ preserveDrawingBuffer: true, alpha: true }}
+        onFailure={() => captured(asset, null)}
       >
         {/* 灯光与预览小窗一致，保证缩略图和双击放大后看到的是同一个模型气质 */}
         <ambientLight intensity={0.7} />
@@ -155,15 +168,15 @@ export function ThumbnailRenderer({
         <directionalLight position={[-4, 2, -3]} intensity={0.5} />
         {/* key 到资产：换资产时旧模型立刻卸载，Box3 重新变空，轮询等新模型进场。
             天空盒同理——贴图加载期间 Suspense 挂起，球不在场景里，等待机制原样成立 */}
-        <Suspense key={sourceKey} fallback={null}>
+        <Suspense key={`${sourceKey}|${asset.resourceRevision ?? 0}`} fallback={null}>
           {asset.kind === "skybox" && asset.hdrPath ? (
-            <SkyboxSphere url={libraryUrl(asset.hdrPath)} />
+            <SkyboxSphere url={resourcePath(libraryUrl(asset.hdrPath), asset.resourceRevision)} />
           ) : (
             <ModelMesh asset={asset} />
           )}
         </Suspense>
-        <ThumbnailCapturer asset={asset} onCaptured={onCaptured} />
-      </Canvas>
+        <ThumbnailCapturer asset={asset} onCaptured={captured} />
+      </WebGPUCanvas>
     </div>
   );
 }
