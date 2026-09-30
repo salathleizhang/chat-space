@@ -93,6 +93,13 @@ const BACKGROUND_ACTIVITY_TOOLS = new Set([
   "repair-assets",
 ]);
 
+/**
+ * 计划续跑的止损：连续这么多次自动续跑都没有推进计划，就不再自己往下做，
+ * 把界面交回给用户。判定"推进"的依据是这一轮里有 update-plan 的结果——
+ * 计划在动就清零，所以 10 步的计划可以一路跑完，而模型原地打转时最多多跑两轮。
+ */
+const PLAN_AUTO_TURN_MAX_STALLS = 2;
+
 const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "ask-user": "Asking for your decision",
   "update-plan": "Updating plan",
@@ -237,12 +244,51 @@ export function useAgentChat({
    * "等你决定"——提问后服务端会主动中止本轮，光看流结束分不出这两者。
    */
   const pendingQuestionRef = useRef(false);
+  /**
+   * 计划续跑的状态：本轮是不是计划续跑、期间计划有没有被推进过、连续无进展几轮。
+   * 只有计划续跑自己置 active，任务/自检/参考图那几条链路不参与计数。
+   */
+  const planAutoTurnRef = useRef({ active: false, progressed: false, stalled: 0 });
+  /**
+   * 刚结束的这一轮里有没有工具（或上游）失败。
+   *
+   * 计划续跑据此让行：失败往往意味着要用户拍板（重试、换方案、付不付这笔钱），
+   * 无人值守地自动重跑同一段付费步骤比停下来更糟。onToolError / onError 同步置位，
+   * 每条新流开始时清零——和 planAutoTurnRef 一样属于"本轮"的状态。
+   */
+  const turnFailedRef = useRef(false);
   const registeredTasksRef = useRef(new Set<string>());
   const registeredInspectionsRef = useRef(new Set<string>());
   const generationEpochRef = useRef(0);
   const [waiting, setWaiting] = useState(false);
   const hasPendingWork = () => backgroundTasksRef.current.size > 0 ||
     inspectionWaitRef.current !== null || identifyingRef.current;
+  /**
+   * 还有一条没被回答、也没被跳过的提问。
+   *
+   * 这是所有自动续跑的硬闸门。ask-user 之后服务端会主动中止本轮，于是本轮结束时
+   * "流正常结束"与"干完了"长得一模一样；此时若后台任务恰好收尾、或自检图刚好上传完，
+   * 续跑就会在用户还没点卡片时把 Agent 拉起来继续做——用户看到的是"我没回答它自己
+   * 往下做了"。因此排队的工作在提问未决期间必须原地等，答案回来（或用户直接打字跳过）
+   * 之后再发；排队内容不清空，只是不发。
+   *
+   * 同时查 messagesRef：刷新/恢复会话后 ref 是新的，只有消息上的提问卡片还在。
+   */
+  const hasUnansweredQuestion = () =>
+    pendingQuestionRef.current ||
+    messagesRef.current.some(
+      (message) =>
+        message.role === "assistant" &&
+        Boolean(message.pendingQuestion) &&
+        !message.questionAnswer &&
+        !message.supersededQuestion,
+    );
+  /** 计划里还有没做完的步骤（cancelled 视为不用再做）。 */
+  const hasUnfinishedPlan = () =>
+    sessionPlanRef.current?.steps.some(
+      (step) => step.status !== "completed" && step.status !== "cancelled",
+    ) ?? false;
+
   const syncWaiting = () => setWaiting(hasPendingWork());
   const sessionRef = useRef(sessionId);
   useLayoutEffect(() => {
@@ -258,6 +304,7 @@ export function useAgentChat({
     pendingInspectionRef.current = null;
     pendingIdentifyRef.current = null;
     pendingQuestionRef.current = false;
+    planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
     setWaiting(false);
   }, [sessionId]);
   /**
@@ -313,6 +360,7 @@ export function useAgentChat({
     pendingInspectionRef.current = null;
     pendingIdentifyRef.current = null;
     pendingQuestionRef.current = false;
+    planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
     setPreview((current) => current ? { ...current, inspection: null } : current);
     syncWaiting();
     abortRef.current?.abort();
@@ -359,6 +407,7 @@ export function useAgentChat({
       inspectionWaitRef.current = null;
       identifyingRef.current = false;
       pendingQuestionRef.current = false;
+      planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
     };
   }, []);
 
@@ -533,6 +582,8 @@ export function useAgentChat({
   const flushPendingInspection = (): boolean => {
     // 守卫与 startStream 同款：已有流在跑时不清队、不 push，否则排队内容丢失、消息成孤儿气泡
     if (streamingRef.current) return false;
+    // 提问未决：自检图先留在队里，等用户回答（或直接打字跳过）之后再交回模型
+    if (hasUnansweredQuestion()) return false;
     const pending = pendingInspectionRef.current;
     if (!pending) return false;
     pendingInspectionRef.current = null;
@@ -600,6 +651,8 @@ export function useAgentChat({
   /** 把候选资产的参考图依次交回 Agent，触发身份确认轮（同样不是用户消息） */
   const flushPendingIdentify = (): boolean => {
     if (streamingRef.current) return false;
+    // 提问未决：参考图先留在队里（同上）
+    if (hasUnansweredQuestion()) return false;
     const pending = pendingIdentifyRef.current;
     if (!pending || pending.length === 0) return false;
     pendingIdentifyRef.current = null;
@@ -624,6 +677,9 @@ export function useAgentChat({
   /** 把已结束的后台任务交回同一会话的 Agent，让它继续原任务（不是用户消息）。 */
   const flushPendingTaskSettlements = (): boolean => {
     if (streamingRef.current) return false;
+    // 提问未决：任务完成通知先留在队里（任务 id 也先留着，界面继续显示"还在生成"），
+    // 等用户回答；否则 Agent 会拿着任务结果继续做，把还没回答的问题绕过去
+    if (hasUnansweredQuestion()) return false;
     const settlements = pendingTaskSettlementsRef.current;
     if (settlements.length === 0) return false;
     pendingTaskSettlementsRef.current = [];
@@ -660,6 +716,65 @@ export function useAgentChat({
       },
     });
     return true;
+  };
+
+  /**
+   * 计划还没做完就自己接着做（Agent 自发续跑的一种，没有产物，只有一个指令块）。
+   *
+   * 一条计划常常跨多轮：模型做完第 3 步、回一句"第 3 步完成"就结束本轮，而没有任何
+   * 排队工作会把它拉起来——界面落回"发送"，用户必须自己再点一次才继续，看起来就是
+   * "每做完一步就停"。只要计划里还有没做完的步骤，就在这里自动开下一轮。
+   *
+   * 三道刹车，缺一不可：
+   * - 提问未决不续跑（见 hasUnansweredQuestion）：用户还没决定，不能替他往下走；
+   * - 有后台工作在跑不续跑：那条链路收尾时自己会开下一轮，现在开只会空跑一轮；
+   * - 连续无进展不续跑（PLAN_AUTO_TURN_MAX_STALLS）：计划没动就是在原地打转。
+   */
+  const flushPlanContinuation = (): boolean => {
+    if (streamingRef.current) return false;
+    if (hasUnansweredQuestion()) return false;
+    // 上一轮有失败：把方向盘交回用户，不自动重跑计划里的下一步
+    if (turnFailedRef.current) return false;
+    if (hasPendingWork()) return false;
+    const plan = sessionPlanRef.current;
+    if (!plan) return false;
+    const remaining = plan.steps.filter(
+      (step) => step.status !== "completed" && step.status !== "cancelled",
+    );
+    if (remaining.length === 0) return false;
+    if (planAutoTurnRef.current.stalled >= PLAN_AUTO_TURN_MAX_STALLS) return false;
+    const total = plan.steps.length;
+    const next = remaining.find((step) => step.status === "in_progress") ?? remaining[0]!;
+    planAutoTurnRef.current = {
+      active: true,
+      progressed: false,
+      stalled: planAutoTurnRef.current.stalled,
+    };
+    startStream(toOutgoingHistory(messagesRef.current), {
+      resume: {
+        kind: "plan",
+        text: [
+          `[Plan continues] ${plan.title ? `"${plan.title}"` : "The current plan"} still has ${remaining.length} of ${total} steps unfinished.`,
+          `Next up: ${next.id} — ${next.content}.`,
+          "Keep executing the plan automatically, step by step, without asking the user to confirm routine progress; record each finished step with update-plan before you end this turn.",
+          "If a decision only the user can make is needed (a paid action, choosing between options, confirming an object), call ask-user and stop.",
+        ].join(" "),
+      },
+      autoTurn: {
+        kind: "plan",
+        label: `Continuing plan · ${total - remaining.length}/${total} steps done`,
+      },
+    });
+    return true;
+  };
+
+  /** 上一轮如果是计划续跑，按"计划有没有被推进"结算停滞计数。 */
+  const finishPlanAutoTurn = () => {
+    const state = planAutoTurnRef.current;
+    if (!state.active) return;
+    state.active = false;
+    state.stalled = state.progressed ? 0 : state.stalled + 1;
+    state.progressed = false;
   };
 
   const queueTaskSettlement = (settlement: TaskSettlement & { ownerId: string }) => {
@@ -733,6 +848,7 @@ export function useAgentChat({
     let toolSequence = 0;
     let replying = false;
     let streamedContent = "";
+    turnFailedRef.current = false;
     pushMessage({
       id: assistantId,
       role: "assistant",
@@ -843,6 +959,8 @@ export function useAgentChat({
           if (name === "update-plan" && updatedPlan) {
             sessionPlanRef.current = updatedPlan;
             onPlanUpdated?.(updatedPlan);
+            // 计划续跑期间改了计划 = 有进展，止损计数清零
+            if (planAutoTurnRef.current.active) planAutoTurnRef.current.progressed = true;
           }
           if (IMAGE_OUTPUT_TOOLS.has(name)) bumpRefresh();
           if (TASK_STARTING_TOOLS.has(name) && taskIds && taskIds.length > 0) {
@@ -852,6 +970,7 @@ export function useAgentChat({
         onToolError: (name, toolCallId, errorMessage) => {
           if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
+          turnFailedRef.current = true;
           const failureLabel = failedToolActivityMessage(name);
           const label = errorMessage
             ? `${failureLabel}: ${errorMessage}`
@@ -890,6 +1009,9 @@ export function useAgentChat({
           abortRef.current = null;
           activeAssistantIdRef.current = null;
           markStreaming(false);
+          // 计划续跑这轮失败了：按"没有推进"结账，别让计数卡在 active 上
+          turnFailedRef.current = true;
+          finishPlanAutoTurn();
           setActivity({ state: "attention", message });
           updateMessage(assistantId, (assistant) => ({
             ...assistant,
@@ -921,6 +1043,27 @@ export function useAgentChat({
             这里据此把状态行与结束提示分开。
           */
           const waitingForAnswer = pendingQuestionRef.current;
+          // 先结账上一轮是不是"计划续跑且没有推进"，再判断这一轮还该不该接着跑
+          finishPlanAutoTurn();
+          const working = hasPendingWork();
+          const failedTurn = turnFailedRef.current;
+          /*
+            计划还有没做完的步骤时，这一轮不该显示"Completed"：要么马上自动开下一轮
+            （planContinues），要么已经连跑几轮没进展、停下来等用户说一句（planPaused）。
+            两者都不是"干完了"。
+          */
+          const planContinues =
+            !waitingForAnswer &&
+            !working &&
+            !failedTurn &&
+            hasUnfinishedPlan() &&
+            planAutoTurnRef.current.stalled < PLAN_AUTO_TURN_MAX_STALLS;
+          const planPaused =
+            !waitingForAnswer &&
+            !working &&
+            !failedTurn &&
+            hasUnfinishedPlan() &&
+            !planContinues;
           updateMessage(assistantId, (message) => {
             const activities = message.activities?.map((item) =>
               item.status === "running"
@@ -942,20 +1085,28 @@ export function useAgentChat({
                 ? { label: "Waiting for your decision", status: "waiting" }
                 : hasFailedStep
                   ? { label: "Some steps failed", status: "failed" }
-                  : hasPendingWork()
+                  : working
                     ? { label: inspectionWaitRef.current ? "Inspecting generated model" : "Generating; will continue automatically", status: "running" }
-                    : { label: "Completed", status: "completed" },
+                    : planContinues
+                      ? { label: "Continuing plan", status: "running" }
+                      : planPaused
+                        ? { label: "Plan paused; unfinished steps remain", status: "completed" }
+                        : { label: "Completed", status: "completed" },
               activities,
             };
           });
           setActivity(
             waitingForAnswer
               ? { state: "waiting", message: "Waiting for your decision" }
-              : hasPendingWork()
+              : working
                 ? { state: "working", message: inspectionWaitRef.current
                     ? "Inspecting generated model"
                     : "Generating; will continue automatically" }
-                : { state: "idle", message: "Agent finished responding" },
+                : planContinues
+                  ? { state: "working", message: "Continuing plan" }
+                  : planPaused
+                    ? { state: "attention", message: "Plan paused; unfinished steps remain" }
+                    : { state: "idle", message: "Agent finished responding" },
           );
           // agent 可能更新了计划或产出了资产：刷新派生状态
           bumpRefresh();
@@ -965,6 +1116,7 @@ export function useAgentChat({
             而且第二条的 history 取自 messagesRef，此时还没包含第一条刚 push 的消息，
             两条流会带着分叉的历史打给 agent、回复交错写进两个气泡。
             这里只发第一条——它的 onDone 会再走到这里，把剩下那条接着发出去。
+            三条都没有时，才轮到"计划还没做完就接着做"。
 
             推迟一个宏任务再发：最后几个 delta 和 done 常落在同一个网络 chunk 里、
             被同步连续处理，此刻 appendTo 的 setState 还没提交，messagesRef 里的
@@ -974,8 +1126,12 @@ export function useAgentChat({
           */
           setTimeout(() => {
             if (!activeRef.current || controller.signal.aborted) return;
-            if (!flushPendingInspection() && !flushPendingIdentify()) {
-              flushPendingTaskSettlements();
+            if (
+              !flushPendingInspection() &&
+              !flushPendingIdentify() &&
+              !flushPendingTaskSettlements()
+            ) {
+              flushPlanContinuation();
             }
           }, 0);
         },
@@ -1019,6 +1175,8 @@ export function useAgentChat({
     // （startStream 里那道是真正的不变量，两者不重复，职责不同）
     if (streamingRef.current || uploadingRef.current || hasPendingWork()) return;
     supersedePendingQuestions();
+    // 用户重新开口 = 新的意图，计划续跑的止损计数从头开始
+    planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
     if (imageFiles && imageFiles.length > 0) {
       const controller = new AbortController();
       uploadAbortRef.current = controller;
@@ -1046,8 +1204,14 @@ export function useAgentChat({
    * 把状态转成"已选择：X"，服务端把答案接在本轮上下文末尾交给模型。
    */
   const answerQuestion = (ownerMessageId: string, answer: AskUserAnswer) => {
-    if (streamingRef.current || uploadingRef.current || hasPendingWork()) return;
+    /*
+      这里**不看** hasPendingWork()：提问未决期间自动续跑全被闸住了，如果连回答也要等
+      后台任务跑完，用户就会卡在一个既不能回答、Agent 又不动的死局里（任务完成通知
+      同样在队里等着，只有回答才能解锁）。回答之后的 onDone 会把排队的工作接着发出去。
+    */
+    if (streamingRef.current || uploadingRef.current) return;
     pendingQuestionRef.current = false;
+    planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
     updateMessage(ownerMessageId, (message) => ({
       ...message,
       questionAnswer: answer,

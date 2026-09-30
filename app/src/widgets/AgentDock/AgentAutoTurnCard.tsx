@@ -1,5 +1,6 @@
 import { CheckCircleIcon } from "@phosphor-icons/react/CheckCircle";
 import { ImageIcon } from "@phosphor-icons/react/Image";
+import { ListChecksIcon } from "@phosphor-icons/react/ListChecks";
 import { MagnifyingGlassIcon } from "@phosphor-icons/react/MagnifyingGlass";
 import type { AgentAutoTurn } from ".";
 import { GeneratedMessageImages } from "./GeneratedMessageImages";
@@ -8,10 +9,12 @@ const ICONS: Record<AgentAutoTurn["kind"], typeof MagnifyingGlassIcon> = {
   inspection: MagnifyingGlassIcon,
   identify: ImageIcon,
   tasks: CheckCircleIcon,
+  plan: ListChecksIcon,
 };
 
 /**
- * Agent 自发续跑时本轮看的东西：四视角自检图、候选参考图、后台任务结果。
+ * Agent 自发续跑时本轮看的东西：四视角自检图、候选参考图、后台任务结果，
+ * 以及"计划还有没做完的步骤"这种没有产物的续跑。
  *
  * 发起者是 Agent 自己——它请求工作台截图、等后台任务收尾，然后继续同一条思路，
  * 所以这里渲染成 Agent 侧的产物卡片而不是用户气泡：图上没有"用户发了张图"的痕迹，

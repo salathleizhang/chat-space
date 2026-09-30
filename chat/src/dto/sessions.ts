@@ -23,7 +23,7 @@ export const SessionMessageSchema = z.object({
    */
   autoTurn: z
     .object({
-      kind: z.enum(["inspection", "identify", "tasks"]),
+      kind: z.enum(["inspection", "identify", "tasks", "plan"]),
       label: z.string().min(1),
       images: z.array(LogicalPathSchema).optional(),
     })

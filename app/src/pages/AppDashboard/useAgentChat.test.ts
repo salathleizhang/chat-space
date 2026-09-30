@@ -1224,3 +1224,247 @@ describe("ask-user 提问卡片", () => {
     await h.unmount();
   });
 });
+
+/**
+ * 提问未决期间，所有自动续跑都必须原地等——这是"我没回答它自己往下做"的唯一硬闸门。
+ * 服务端在 ask-user 之后会主动中止本轮，所以本轮结束时流是正常结束的；如果只看
+ * "流结束了"，后台任务收尾、自检图上传都会把 Agent 立刻拉起来。
+ */
+describe("ask-user 未回答时闸住自动续跑", () => {
+  test("后台任务完成也先留在队里，用户回答后才交回模型", async () => {
+    const { mount, pushMessage, pollTasks } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成椅子并继续完成计划"));
+    await act(async () =>
+      handlersOf(0).onToolResult("start-3d-batch", "tool-task", undefined, ["task-1"]),
+    );
+    await act(async () =>
+      handlersOf(0).onToolResult("ask-user", "tool-q", undefined, undefined, undefined, QUESTION),
+    );
+    await act(async () => handlersOf(0).onDone());
+
+    const onSettled = pollTasks.mock.calls[0]![1] as (value: unknown) => void;
+    await act(async () =>
+      onSettled({
+        tasks: [{
+          id: "task-1",
+          workflowId: "3d",
+          projectSlug: "proj-a",
+          subject: "3D 生成：椅子",
+          status: "succeeded",
+        }],
+      }),
+    );
+    await flush(20);
+
+    // 问题还挂着：任务完成通知不许把 Agent 拉起来
+    expect(streamChat).toHaveBeenCalledTimes(1);
+
+    // 而且此时用户仍然能点卡片作答——不能因为后台任务在跑就锁死在死局里
+    const assistant = assistantOf(pushMessage);
+    await act(async () => h.result.current.answerQuestion(assistant.id, ANSWER));
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    expect(streamChat.mock.calls[1]![4]).toMatchObject({ answer: ANSWER });
+
+    // 回答这一轮结束后，排队等着的任务结果才交回去
+    await act(async () => handlersOf(1).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(3);
+    expect(streamChat.mock.calls[2]![4]).toMatchObject({
+      resume: { kind: "tasks", text: expect.stringContaining("[Background tasks finished]") },
+    });
+
+    await h.unmount();
+  });
+
+  test("自检截图上传完也不会续跑：问题没答完，Agent 不拿图继续", async () => {
+    const originalFetch = globalThis.fetch;
+    const pendingAsset = deferred<Response>();
+    globalThis.fetch = mock(async (_input: unknown, init?: RequestInit) =>
+      init?.method === "POST"
+        ? Response.json({ path: "projects/proj-a/assets/dog/check.png" })
+        : pendingAsset.promise,
+    ) as unknown as typeof fetch;
+    const { h } = await liveHarness();
+    try {
+      await act(async () => h.result.current.send("检查模型"));
+      await act(async () => handlersOf(0).onTool("inspect-asset", "inspection-1", { assetSlug: "dog" }));
+      await act(async () =>
+        handlersOf(0).onToolResult("ask-user", "tool-q", undefined, undefined, undefined, QUESTION),
+      );
+      await act(async () => handlersOf(0).onDone());
+      pendingAsset.resolve(Response.json({
+        project: { slug: "proj-a", name: "Test" },
+        assets: [{ slug: "dog", files: ["0-dog.glb"] }],
+        sources: [],
+      }));
+      await flush(20);
+      expect(h.result.current.preview?.inspection?.id).toBe("inspection-1");
+
+      await act(async () => h.result.current.handleInspectionCaptured("inspection-1", "aGVsbG8="));
+      await flush(20);
+
+      // 截图在队里等，没有开第二条流；卡片仍然可点
+      expect(streamChat).toHaveBeenCalledTimes(1);
+      expect(
+        h.result.current.messages.some(
+          (message) => message.pendingQuestion && !message.questionAnswer,
+        ),
+      ).toBe(true);
+    } finally {
+      await h.unmount();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * 计划跨多轮执行：模型做完一步、回一句就结束本轮，此时没有任何排队工作，
+ * 界面会落回"发送"。这些用例守住"还有没做完的步骤就自己接着做"，
+ * 以及不能让它在原地打转时无休止地烧 token。
+ */
+describe("计划续跑", () => {
+  const STEP_PLAN: ProjectPlan = {
+    schemaVersion: 1,
+    revision: 1,
+    title: "生成完整场景",
+    steps: [
+      { id: "ref", content: "生成参考图", status: "completed" },
+      { id: "model", content: "生成模型", status: "in_progress" },
+      { id: "world", content: "生成世界", status: "pending" },
+    ],
+    updatedAt: "2026-08-09T00:00:00.000Z",
+  };
+  const ADVANCED_PLAN: ProjectPlan = {
+    ...STEP_PLAN,
+    steps: [
+      { id: "ref", content: "生成参考图", status: "completed" },
+      { id: "model", content: "生成模型", status: "completed" },
+      { id: "world", content: "生成世界", status: "in_progress" },
+    ],
+    updatedAt: "2026-08-09T00:10:00.000Z",
+  };
+
+  test("还有未完成步骤：流结束后自动续跑，并把下一步交给模型", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成完整场景"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () =>
+      handlersOf(0).onToolResult("update-plan", "tool-plan", undefined, undefined, STEP_PLAN),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    /*
+      先把这一轮的 options 取出来再断言：`toMatchObject` 遇到
+      `expect.stringContaining` 会把匹配到的字段**写回**接收对象（bun 的
+      asymmetric matcher 行为），之后再读到的就不是原字符串了。
+    */
+    const turn = streamChat.mock.calls[1]![4] as {
+      resume: { kind: string; text: string };
+    };
+    expect(turn.resume.kind).toBe("plan");
+    expect(turn.resume.text).toContain("[Plan continues]");
+    // 续跑指令里点名下一步，模型不用自己猜从哪继续
+    expect(turn.resume.text).toContain("Next up: model");
+    // 界面上仍然是 Agent 侧卡片，不是用户消息
+    expect(pushMessage.mock.calls.at(-1)![0]).toMatchObject({
+      role: "assistant",
+      autoTurn: { kind: "plan", label: "Continuing plan · 1/3 steps done" },
+    });
+    expect(replay(updateMessage, assistant).agentStatus).toMatchObject({
+      label: "Continuing plan",
+      status: "running",
+    });
+
+    await h.unmount();
+  });
+
+  test("计划全部完成：不再续跑，收尾状态就是完成", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成完整场景"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () =>
+      handlersOf(0).onToolResult("update-plan", "tool-plan", undefined, undefined, {
+        ...STEP_PLAN,
+        steps: STEP_PLAN.steps.map((step) => ({ ...step, status: "completed" as const })),
+      }),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(replay(updateMessage, assistant).agentStatus).toEqual({
+      label: "Completed",
+      status: "completed",
+    });
+
+    await h.unmount();
+  });
+
+  test("某一步失败时不再自动续跑：方向交回用户，不默默重跑", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成完整场景"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-gen"));
+    await act(async () => handlersOf(0).onToolError("generate-reference-images", "tool-gen"));
+    await act(async () =>
+      handlersOf(0).onToolResult("update-plan", "tool-plan", undefined, undefined, STEP_PLAN),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+
+    // 计划还没做完，但这一步失败了：不自动开下一轮，状态停在失败上
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(replay(updateMessage, assistant).agentStatus).toMatchObject({
+      label: "Some steps failed",
+      status: "failed",
+    });
+
+    await h.unmount();
+  });
+
+  test("计划在推进就一直跑，连续两轮没推进才停下来等用户", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成完整场景"));
+    await act(async () =>
+      handlersOf(0).onToolResult("update-plan", "tool-plan", undefined, undefined, STEP_PLAN),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+
+    // 第 1 轮计划续跑：这一步真的推进了计划 → 计数清零，继续
+    await act(async () =>
+      handlersOf(1).onToolResult("update-plan", "tool-plan-2", undefined, undefined, ADVANCED_PLAN),
+    );
+    await act(async () => handlersOf(1).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(3);
+
+    // 第 2 轮原地不动 → 停滞 1
+    await act(async () => handlersOf(2).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(4);
+
+    // 第 3 轮还是不动 → 停滞 2，到达上限：停下来等用户，不再自己开流
+    const lastAssistant = pushMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.role === "assistant")
+      .at(-1)!;
+    await act(async () => handlersOf(3).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(4);
+    expect(replay(updateMessage, lastAssistant).agentStatus).toEqual({
+      label: "Plan paused; unfinished steps remain",
+      status: "completed",
+    });
+
+    await h.unmount();
+  });
+});
