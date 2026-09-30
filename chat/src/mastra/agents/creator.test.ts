@@ -62,6 +62,21 @@ describe("creator 工具可用性", () => {
     expect(Object.keys(tools)).not.toContain("edit-reference-image");
     expect(tools["analyze-scene"]).toBeDefined();
     expect(tools["analyze-reference"]).toBeUndefined();
+    /*
+      检查工具只有 inspect 一个（target 区分模型/场景）；旧的 inspect-asset 已并入它。
+      schema 形状由下面那条"顶层 object"不变量守着——判别联合会序列化成 anyOf 并让请求 400。
+    */
+    expect(tools["inspect"]).toBeDefined();
+    expect(Object.keys(tools)).not.toContain("inspect-asset");
+    const inspectSchema = z.toJSONSchema(
+      (tools["inspect"] as unknown as { inputSchema: z.ZodType }).inputSchema,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown> };
+    expect(Object.keys(inspectSchema.properties ?? {}).sort()).toEqual([
+      "assetSlug",
+      "target",
+      "views",
+    ]);
     expect(Object.keys(tools)).not.toContain("confirm-reference-assets");
     expect(Object.keys(tools)).not.toContain("updatePlanTool");
     expect(Object.keys(tools)).not.toContain("generateReferenceImagesTool");

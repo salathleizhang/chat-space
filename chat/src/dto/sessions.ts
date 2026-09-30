@@ -14,6 +14,8 @@ export const SessionMessageSchema = z.object({
   content: z.string(),
   pendingTaskIds: z.array(z.string().min(1)).optional(),
   pendingInspectionAssetSlug: SlugSchema.optional(),
+  /** 等待主视口截图的整场景检查机位（视角 id，见 app 的 INSPECTION_VIEW_IDS） */
+  pendingSceneInspectionView: z.string().min(1).optional(),
   /** 消息携带的库内图片（用户附件或工具生成图），逻辑路径引用 */
   images: z.array(LogicalPathSchema).optional(),
   /**

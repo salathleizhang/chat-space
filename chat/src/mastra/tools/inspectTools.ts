@@ -1,20 +1,38 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError } from "../../common/errors";
-import { assetDir } from "../../common/libraryPaths";
+import { assetDir, projectInspectionsDir } from "../../common/libraryPaths";
 import { SlugSchema } from "../../dto/library";
 import { getAssetStorage, type AssetStorage } from "../../services/assetStorage";
-import { latestAssetModel, requireProject } from "./projectTools";
+import { getProjectState, latestAssetModel, requireProject } from "./projectTools";
 import { requireCurrentProject } from "./requestContext";
 
 /**
- * 视觉自检能力（免费，CADAM 自检循环的 ChatSpace 变体）：agent 服务端没有渲染能力，
- * 截图由 app/ 视口完成——inspect-asset 只发信号（经 SSE tool 事件带 args 驱动
- * app 开小窗四视角截图），检查图经 POST inspection 端点落盘后，由 app 以请求的
- * `resume` 字段交回，服务端把它接在下一轮上下文末尾（OpenAI 兼容协议的 tool
- * 消息装不了图，这是唯一通道）。它不属于会话历史，也不在界面上冒充用户发言。
- * 工具不等待交回：本轮结束，自检发生在续跑触发的下一轮。
+ * 视觉检查能力（免费）：agent 服务端没有渲染能力，截图由 app/ 完成——
+ * `inspect` 只发信号（经 SSE tool 事件带 args 驱动 app 侧动作），检查图经
+ * POST inspection 端点落盘后，由 app 以请求的 `resume` 字段交回，服务端把它接在
+ * 下一轮上下文末尾（OpenAI 兼容协议的 tool 消息装不了图，这是唯一通道）。
+ * 它不属于会话历史，也不在界面上冒充用户发言。
+ *
+ * 两种目标：
+ *  - `asset`：一个资产自己的模型，默认拍 ISO/前/右/顶四视角（app 侧开预览小窗）；
+ *  - `scene`：当前项目的整个场景，按**一个机位**拍一张（app 侧用主视口）。
+ *
+ * **什么时候调用**（这条是产品口径，提示词里同步写着）：只在用户明确要求检查、
+ * 或用户对已经产出的东西提出疑问时调用；单模型生成完成不检查。唯一自动的一次是
+ * 完整场景（SceneJob）全部节点成功后的整场景检查。
  */
+
+/** 可拍的视角 id；与 app 的 `INSPECTION_VIEW_IDS` 同一份名单（两处都要改）。 */
+export const INSPECTION_VIEW_IDS = [
+  "iso",
+  "front",
+  "right",
+  "top",
+  "left",
+  "back",
+  "bottom",
+] as const;
 
 const INSPECTION_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -43,22 +61,103 @@ export async function saveInspectionSheet(
   return { path };
 }
 
+export const SaveSceneInspectionParamsSchema = z.object({
+  projectSlug: SlugSchema,
+  inspectionId: z.string().regex(INSPECTION_ID_RE, "检查图 id 只能是字母数字、-、_"),
+  /** PNG 字节（单个机位的整场景图） */
+  bytes: z.instanceof(Uint8Array),
+});
+export type SaveSceneInspectionParams = z.infer<typeof SaveSceneInspectionParamsSchema>;
+
+/** 整场景检查图落盘：<project>/inspections/<id>.png（项目级 QC 证据，不挂到某个资产下） */
+export async function saveSceneInspectionSheet(
+  storage: AssetStorage,
+  rawParams: SaveSceneInspectionParams,
+): Promise<{ path: string }> {
+  const params = SaveSceneInspectionParamsSchema.parse(rawParams);
+  await requireProject(storage, params.projectSlug);
+  if (params.bytes.length === 0) {
+    throw new ChatServiceError("检查图内容为空", 400, "empty_inspection");
+  }
+  const path = `${projectInspectionsDir(params.projectSlug)}/${params.inspectionId}.png`;
+  await storage.writeBytes(path, params.bytes);
+  return { path };
+}
+
 // ---------- Mastra tool 包装 ----------
 
-export const inspectAssetTool = createTool({
-  id: "inspect-asset",
+/**
+ * 入参刻意是一个**平铺对象**而不是判别联合：火山方舟的接入点要求
+ * `tools.N.function.parameters` 顶层是 `type: object`，顶层 union 会序列化成
+ * `anyOf` 并让整轮请求 400（creator.test.ts 里那条不变量守着这一点）。
+ * 组合约束因此在 execute 里手工校验。
+ */
+export const InspectParamsSchema = z.object({
+  target: z
+    .enum(["asset", "scene"])
+    .describe("asset = 检查一个资产自己的模型；scene = 检查当前项目的整个场景"),
+  /** target=asset 时必填 */
+  assetSlug: SlugSchema.optional(),
+  /**
+   * 要拍的视角 id。asset 省略 = ISO/前/右/顶四视角，也可以只要一个面（例如只看底面）；
+   * scene 只取第一个作为机位，省略 = iso（斜 45° 俯瞰）。
+   */
+  views: z.array(z.enum(INSPECTION_VIEW_IDS)).min(1).optional(),
+});
+export type InspectParams = z.infer<typeof InspectParamsSchema>;
+
+/** 服务端能给出的机位清单：agent 据此换机位，不用猜相机坐标。 */
+const SCENE_VIEW_HINT =
+  "Camera views you can ask for: iso (3/4 overview, default), front, right, top, left, back, bottom. If the image you get back is unusable (scene out of frame, blocked, too small to judge), call inspect again with another view — at most 3 camera changes — then report what you can and cannot see.";
+
+export const inspectTool = createTool({
+  id: "inspect",
   description:
-    "请求工作台对资产的最新模型做四视角截图（免费）：小窗会自动打开并从 ISO/前/右/顶四个视角截图合成一张检查图，随后直接交回给你。生成/修改模型或贴图完成后应调用此工具自检。注意：本轮不会返回图片——收到 [Self-check] 检查图后，逐视角对照生成意图检查（缺件、比例失调、部件断开、贴图错位都算不合格），不合格就修正后重新生成并再次自检",
-  inputSchema: z.object({ assetSlug: SlugSchema }),
+    "让工作台渲染一张检查图并交回给你（免费）。“检查这只狗/这个模型”用 target=\"asset\" + assetSlug（默认四视角 ISO/前/右/顶，可用 views 只要某几个面，例如只剩底面）；“检查整个场景/场景摆得对不对”用 target=\"scene\"（按 views[0] 指定的机位拍整张场景图）。本轮不会返回图片：收到 [Self-check]/[Scene check] 后逐视角或按机位对照用户的要求检查（缺件、比例失调、部件断开、贴图错位、摆放不合理都算不合格）。只在用户明确要求检查、或用户对已产出的模型/场景提出疑问时调用；单模型生成完成不要自检。",
+  inputSchema: InspectParamsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
     const storage = getAssetStorage();
-    // 没有可渲染模型时立刻失败，避免 app 侧空转
-    const modelPath = await latestAssetModel(storage, projectSlug, input.assetSlug);
+    if (input.target === "asset") {
+      if (!input.assetSlug) {
+        throw new ChatServiceError("target=asset 时必须给 assetSlug", 400, "missing_asset_slug");
+      }
+      // 没有可渲染模型时立刻失败，避免 app 侧空转
+      const modelPath = await latestAssetModel(storage, projectSlug, input.assetSlug);
+      return {
+        requested: true,
+        target: "asset" as const,
+        assetSlug: input.assetSlug,
+        modelPath,
+        views: input.views ?? ["iso", "front", "right", "top"],
+        note: "已请求工作台截图。2×2 检查图会随后直接交回，请收到后逐视角对照生成意图检查。",
+      };
+    }
+    // 整场景：项目里一个可渲染的东西都没有时立刻失败，同样不让 app 空转
+    const state = await getProjectState(storage, projectSlug);
+    const candidates = await Promise.all(
+      state.assets.map(async (asset) => {
+        try {
+          return Boolean(await latestAssetModel(storage, projectSlug, asset.slug));
+        } catch {
+          return false;
+        }
+      }),
+    );
+    if (!candidates.some(Boolean)) {
+      throw new ChatServiceError(
+        "项目里还没有可渲染的模型或场景内容",
+        400,
+        "empty_scene",
+      );
+    }
+    const view = input.views?.[0] ?? "iso";
     return {
       requested: true,
-      modelPath,
-      note: "已请求工作台截图。四视角 2×2 检查图（ISO/前/右/顶）会随后直接交回，请收到后逐视角自检。",
+      target: "scene" as const,
+      view,
+      views: INSPECTION_VIEW_IDS,
+      note: `已请求工作台按机位 "${view}" 拍整张场景图（不是某个模型的四方向图）。${SCENE_VIEW_HINT}`,
     };
   },
 });

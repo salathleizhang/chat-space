@@ -1017,7 +1017,7 @@ describe("生成流程持续执行", () => {
         role: "assistant",
         autoTurn: {
           kind: "inspection",
-          label: expect.stringContaining("4 views"),
+          label: expect.stringContaining("ISO / FRONT / RIGHT / TOP"),
           images: ["projects/proj-a/assets/dog/check.png"],
         },
       });
@@ -1028,6 +1028,72 @@ describe("生成流程持续执行", () => {
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * 整场景检查走的是与单模型并列的第二条通道：不开预览小窗，由主视口按机位拍一张，
+ * 落盘在**项目级**目录，回到模型眼前的上下文是 [Scene check] 而不是 [Self-check]。
+ */
+test("整场景检查：主视口按机位截图，落盘项目级目录后走 [Scene check] 续跑", async () => {
+  const originalFetch = globalThis.fetch;
+  const posted: string[] = [];
+  globalThis.fetch = mock(async (input: unknown, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      posted.push(String(input));
+      return Response.json({ path: "projects/proj-a/inspections/scene-1.png" });
+    }
+    return Response.json({
+      project: { slug: "proj-a", name: "Test" },
+      assets: [{ slug: "dog", files: ["0-dog.glb"] }],
+      sources: [],
+    });
+  }) as unknown as typeof fetch;
+  const { h } = await liveHarness();
+  try {
+    await act(async () => h.result.current.send("检查一下整个场景"));
+    await act(async () =>
+      handlersOf(0).onTool("inspect", "scene-1", { target: "scene", views: ["top"] }),
+    );
+    await act(async () => handlersOf(0).onDone());
+    // 场景检查不开小窗：等的是主视口那张图
+    expect(h.result.current.preview).toBe(null);
+    expect(h.result.current.sceneInspection).toMatchObject({
+      id: "scene-1",
+      target: "scene",
+      views: ["top"],
+    });
+    expect(h.result.current.streaming).toBe(true);
+    expect(h.result.current.messages.at(-1)?.pendingSceneInspectionView).toBe("top");
+
+    await act(async () =>
+      h.result.current.handleSceneInspectionCaptured("scene-1", "aGVsbG8="),
+    );
+    await flush(20);
+    // 落盘在项目级端点，而不是某个资产的 inspections 目录
+    expect(posted).toEqual(["http://127.0.0.1:3901/api/projects/proj-a/inspection"]);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    expect(streamChat.mock.calls[1]![4]).toMatchObject({
+      resume: {
+        kind: "inspection",
+        text: expect.stringContaining("[Scene check]"),
+        images: ["projects/proj-a/inspections/scene-1.png"],
+      },
+    });
+    expect(h.result.current.messages.some((m) => m.pendingSceneInspectionView)).toBe(false);
+    expect(h.result.current.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      autoTurn: {
+        kind: "inspection",
+        label: expect.stringContaining("Scene check"),
+        images: ["projects/proj-a/inspections/scene-1.png"],
+      },
+    });
+    await act(async () => handlersOf(1).onDone());
+    expect(h.result.current.streaming).toBe(false);
+  } finally {
+    await h.unmount();
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("恢复保存的自检，截图失败时解除等待并明确报错", async () => {

@@ -26,5 +26,6 @@ const gridMaterial = (() => {
 
 /** Derivative-antialiased editor grid, expressed in TSL for native WebGPU. */
 export function WebGPUGrid() {
-  return <mesh rotation-x={-Math.PI / 2} material={gridMaterial} raycast={() => {}}><planeGeometry args={[400, 400]} /></mesh>;
+  // 名字给整场景检查用：400×400 的平面进包围盒会把场景拍成一个点（见 SceneInspectionCapturer）。
+  return <mesh name="editor:grid" rotation-x={-Math.PI / 2} material={gridMaterial} raycast={() => {}}><planeGeometry args={[400, 400]} /></mesh>;
 }

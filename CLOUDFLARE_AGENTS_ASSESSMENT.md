@@ -116,7 +116,7 @@ Cloudflare 现在是纯静态托管方：按 [README.md](README.md:96) 的约定
 | 迁移类 | 工具（`id`） | 涉及模块 | 说明 |
 | --- | --- | --- | --- |
 | A. 无本地 IO | `ask-user` | askUser.ts (68 行) | 纯返回问题对象，可原样搬到边缘 |
-| B. 只经逻辑路径 + 供应商 HTTP | `update-plan`、`generate-reference-images`、`generate-clean-plate`、`generate-skybox`(†)、`generate-texture`、`analyze-scene`、`analyze-reference`、`start-3d-batch`、`start-world-task`、`start-scene-job`、`revise-scene-job`、`retry-scene-job-nodes`、`get-scene-job`、`segment-parts`、`retopologize`、`rig-model`、`generate-character`、`identify-asset`、`inspect-asset`、`list-generation-tasks`、`resume-generation`、`repair-assets` | 第 1.2 节所列的工具文件 + `services/assetStorage.ts` + `models/*` | 换 `AssetStorage` 实现即可，但需要 R2 与"大文件不走内存"的重设计 |
+| B. 只经逻辑路径 + 供应商 HTTP | `update-plan`、`generate-reference-images`、`generate-clean-plate`、`generate-skybox`(†)、`generate-texture`、`analyze-scene`、`analyze-reference`、`start-3d-batch`、`start-world-task`、`start-scene-job`、`revise-scene-job`、`retry-scene-job-nodes`、`get-scene-job`、`segment-parts`、`retopologize`、`rig-model`、`generate-character`、`identify-asset`、`inspect`、`list-generation-tasks`、`resume-generation`、`repair-assets` | 第 1.2 节所列的工具文件 + `services/assetStorage.ts` + `models/*` | 换 `AssetStorage` 实现即可，但需要 R2 与"大文件不走内存"的重设计 |
 | C. 依赖本机进程/原生能力 | `build-cad-model`、`get-cad-source` | cadOps.ts (435 行) + cadWorker.ts | `new Worker` + openscad wasm；workerd 无同款嵌套 worker |
 | D. 长任务与持久 DAG | （被 B 类工具调用，不是工具本身） | tasks.ts (397)、sceneJobRunner.ts (447)、sceneJobs.ts、workflowRuns.ts | 需要 fibers / Workflows / Queues / alarms 重写 |
 | E. 支撑模块 | — | ark3dOps、seed3dOps、seed3dOutput、imageEdit、modelPublicUrl、projectTools、worldGen、requestContext | 与工具一起迁移，`projectTools.ts`(681) 的存储调用最密集 |

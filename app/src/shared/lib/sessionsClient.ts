@@ -12,6 +12,8 @@ export interface SessionMessage {
   pendingTaskIds?: string[];
   /** 等待工作台截图的资产；恢复后继续自检。 */
   pendingInspectionAssetSlug?: string;
+  /** 等待主视口截图的整场景检查机位（视角 id）；恢复后继续那次场景检查。 */
+  pendingSceneInspectionView?: string;
   /** 消息携带的库内图片（用户附件、自检截图或工具生成图），逻辑路径 */
   images?: string[];
   /** 发送本条消息时选中的资产快照（slug 给 agent，其余字段恢复附件 UI） */

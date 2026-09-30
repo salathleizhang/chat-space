@@ -11,6 +11,7 @@ import {
 import {
   fetchLibraryAssets,
   uploadInspection,
+  uploadSceneInspection,
   type LibraryAsset,
   type ProjectPlan,
 } from "../../shared/lib/libraryApi";
@@ -27,9 +28,29 @@ import type {
   ChatAssetAttachment,
   ChatMessage,
 } from "../../widgets/AgentDock";
-import type { InspectionRequest } from "../../shared/lib/inspection";
+import type { InspectionRequest, InspectionTarget } from "../../shared/lib/inspection";
+import {
+  DEFAULT_SCENE_VIEW,
+  INSPECTION_VIEW_LIBRARY,
+  isInspectionViewId,
+  resolveInspectionViews,
+  type InspectionViewId,
+} from "../../shared/lib/inspectionSheet";
 import { nextId } from "./useChatMessages";
 import type { TaskSettlement } from "./useTaskPolling";
+
+/** 检查批次 id：agent 的 toolCallId 优先（可溯源到那一次工具调用），否则现造一个。 */
+function inspectionBatchId(toolCallId?: string) {
+  return (
+    (toolCallId ?? "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) ||
+    `i-${Date.now().toString(36)}`
+  );
+}
+
+/** 状态行文案：单模型与整场景是两件事，别都说成"检查模型"。 */
+function inspectionStatusLabel(target: InspectionTarget) {
+  return target === "scene" ? "Inspecting the scene" : "Inspecting generated model";
+}
 
 /** Agent 凭证与模型端点均由本机服务决定；网页只发送显示偏好。 */
 function llmConfig(): LlmRequestConfig {
@@ -88,7 +109,7 @@ const SILENT_ACTIVITY_TOOLS = new Set(["list-generation-tasks", "get-scene-job",
 const BACKGROUND_ACTIVITY_TOOLS = new Set([
   ...TASK_STARTING_TOOLS,
   "build-cad-model",
-  "inspect-asset",
+  "inspect",
   "resume-generation",
   "repair-assets",
 ]);
@@ -127,7 +148,7 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
   "unwrap-uv": "Unwrapping UVs",
   "build-cad-model": "Building CAD model",
   "get-cad-source": "Reading CAD source",
-  "inspect-asset": "Inspecting asset",
+  "inspect": "Inspecting asset",
   "identify-asset": "Identifying asset",
   "list-generation-tasks": "Checking generation progress",
   "resume-generation": "Resuming generation",
@@ -140,6 +161,9 @@ const TOOL_ACTIVITY_MESSAGES: Readonly<Record<string, string>> = {
  * createTool 的 kebab-case id。这里继续兼容旧服务与尚未结束的旧 SSE 流。
  */
 function canonicalToolName(name: string) {
+  // 旧服务与尚未结束的旧 SSE 流发的是 inspect-asset（只有单模型一种目标）；
+  // 新工具是 inspect + target，两者在这里归一到同一个名字。
+  if (name === "inspect-asset") return "inspect";
   if (!name.endsWith("Tool")) return name;
   return name
     .slice(0, -4)
@@ -186,7 +210,7 @@ interface UseAgentChatOptions {
 
 /**
  * agent 对话的核心编排：SSE 流驱动、视觉自检回路、参考图身份识别回路——
- * 这几条线彼此通过"流结束后自动让 Agent 继续下一轮"串联（inspect-asset/
+ * 这几条线彼此通过"流结束后自动让 Agent 继续下一轮"串联（inspect 的两种目标与
  * identify-asset 都是本轮不等待、流结束后再续跑），因此放在同一个 hook 里
  * 维护共享的 streaming/pending 状态，而不拆成互不相关的几个 hook。
  *
@@ -225,10 +249,20 @@ export function useAgentChat({
     asset: LibraryAsset;
     inspection: InspectionRequest | null;
   } | null>(null);
-  /** 已上传待交回 Agent 的自检截图：等当前 SSE 流结束后自动续跑下一轮 */
+  /**
+   * 整场景检查请求（inspect 工具，target=scene）：不开小窗，由主视口按机位截图。
+   * 与 preview.inspection 是两条并列的通道——检查对象不同、执行者不同。
+   */
+  const [sceneInspection, setSceneInspection] = useState<InspectionRequest | null>(null);
+  /** 已上传待交回 Agent 的检查截图：等当前 SSE 流结束后自动续跑下一轮 */
   const pendingInspectionRef = useRef<{
-    assetSlug: string;
-    assetName: string;
+    target: InspectionTarget;
+    assetSlug?: string;
+    assetName?: string;
+    /** 场景检查拍的是哪个机位（画面上有标注，续跑文案要跟它对齐） */
+    view?: InspectionViewId;
+    /** 资产检查拍了哪几个面 */
+    views?: InspectionViewId[];
     path: string;
   } | null>(null);
   /** 待交回的候选资产参考图（identify-asset 工具事件）：同样等当前流结束后续跑 */
@@ -237,7 +271,12 @@ export function useAgentChat({
   const pendingTaskSettlementsRef = useRef<(TaskSettlement & { ownerId: string })[]>([]);
   // 一次 HTTP 回复结束不等于创作完成；任务、截图和续跑之间共享等待状态。
   const backgroundTasksRef = useRef(new Map<string, string>());
-  const inspectionWaitRef = useRef<{ ownerId: string; assetSlug: string } | null>(null);
+  const inspectionWaitRef = useRef<{
+    ownerId: string;
+    target: InspectionTarget;
+    assetSlug?: string;
+    view?: InspectionViewId;
+  } | null>(null);
   const identifyingRef = useRef(false);
   /**
    * 本轮是否停在 ask-user 提问上。onDone 需要它来决定这一轮是"完成"还是
@@ -299,6 +338,7 @@ export function useAgentChat({
     registeredTasksRef.current.clear();
     registeredInspectionsRef.current.clear();
     inspectionWaitRef.current = null;
+    setSceneInspection(null);
     identifyingRef.current = false;
     pendingTaskSettlementsRef.current = [];
     pendingInspectionRef.current = null;
@@ -350,6 +390,7 @@ export function useAgentChat({
         ...message,
         pendingTaskIds: undefined,
         pendingInspectionAssetSlug: undefined,
+        pendingSceneInspectionView: undefined,
         agentStatus: { label: "Follow-up stopped", status: "failed" },
       }));
     }
@@ -488,28 +529,39 @@ export function useAgentChat({
       },
     );
 
-  /** agent 自检请求（inspect-asset 工具事件）：打开小窗并触发四视角截图 */
+  /**
+   * agent 检查请求（inspect 工具）：单模型走预览小窗的四视角截图，
+   * 整场景走主视口的一个机位截图。两条通道共用回传（截图 → 落盘 → resume）。
+   */
   const failInspection = (message: string) => {
     const owner = inspectionWaitRef.current;
     inspectionWaitRef.current = null;
+    setSceneInspection(null);
     syncWaiting();
     if (owner) updateMessage(owner.ownerId, (current) => ({
       ...current,
       pendingInspectionAssetSlug: undefined,
+      pendingSceneInspectionView: undefined,
       agentStatus: { label: "Inspection failed", status: "failed" },
     }));
     setActivity({ state: "attention", message });
     pushAssistant(`⚠️ ${message}`);
   };
 
-  const startInspection = async (assetSlug: string, toolCallId?: string, ownerId = activeAssistantIdRef.current) => {
+  const startAssetInspection = async (
+    assetSlug: string,
+    toolCallId?: string,
+    ownerId = activeAssistantIdRef.current,
+    views?: InspectionViewId[],
+  ) => {
     if (!projectSlug || !ownerId) return;
     const epoch = generationEpochRef.current;
-    inspectionWaitRef.current = { ownerId, assetSlug };
+    inspectionWaitRef.current = { ownerId, target: "asset", assetSlug };
     registeredInspectionsRef.current.add(ownerId);
     updateMessage(ownerId, (message) => ({
       ...message,
       pendingInspectionAssetSlug: assetSlug,
+      pendingSceneInspectionView: undefined,
       agentStatus: { label: "Inspecting generated model", status: "running" },
     }));
     syncWaiting();
@@ -529,10 +581,44 @@ export function useAgentChat({
       failInspection(`Inspection failed: asset "${assetSlug}" has no renderable model output.`);
       return;
     }
-    const id =
-      (toolCallId ?? "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) ||
-      `i-${Date.now().toString(36)}`;
-    setPreview({ asset, inspection: { id } });
+    setPreview({
+      asset,
+      inspection: {
+        id: inspectionBatchId(toolCallId),
+        target: "asset",
+        ...(views && views.length > 0 ? { views } : {}),
+      },
+    });
+  };
+
+  /**
+   * 整场景检查：不打开小窗，由主视口按请求里的机位拍一张。
+   *
+   * 机位由 agent 指定（它看得见上一张图，知道该换哪个方向）；这里不做自动取景的
+   * 择优——"合适不合适"是看图之后才有的判断，只能由发起者下一轮再决定。
+   */
+  const startSceneInspection = (
+    view?: InspectionViewId,
+    toolCallId?: string,
+    ownerId = activeAssistantIdRef.current,
+  ) => {
+    if (!projectSlug || !ownerId) return;
+    const picked = view ?? DEFAULT_SCENE_VIEW;
+    inspectionWaitRef.current = { ownerId, target: "scene", view: picked };
+    registeredInspectionsRef.current.add(ownerId);
+    updateMessage(ownerId, (message) => ({
+      ...message,
+      pendingInspectionAssetSlug: undefined,
+      pendingSceneInspectionView: picked,
+      agentStatus: { label: "Inspecting the scene", status: "running" },
+    }));
+    syncWaiting();
+    setActivity({ state: "working", message: "Inspecting the scene" });
+    setSceneInspection({
+      id: inspectionBatchId(toolCallId),
+      target: "scene",
+      views: [picked],
+    });
   };
 
   /** 截图完成：上传落盘，等当前流结束后作为 Agent 自己的自检产物继续下一轮 */
@@ -556,8 +642,10 @@ export function useAgentChat({
         .then((path) => {
           if (!activeRef.current || epoch !== generationEpochRef.current) return;
           pendingInspectionRef.current = {
+            target: "asset",
             assetSlug: current.asset.assetSlug,
             assetName: current.asset.name,
+            views: current.inspection?.views,
             path,
           };
           if (!streamingRef.current) flushPendingInspection();
@@ -570,8 +658,38 @@ export function useAgentChat({
     [preview, pushAssistant],
   );
 
+  /** 整场景检查图完成：与单模型同一条回传路径，只是落盘在项目级目录。 */
+  const handleSceneInspectionCaptured = useCallback(
+    (id: string, pngBase64: string | null) => {
+      const current = sceneInspection;
+      const epoch = generationEpochRef.current;
+      if (!inspectionWaitRef.current || current?.id !== id) return;
+      setSceneInspection(null);
+      if (!current) return;
+      if (!pngBase64) {
+        failInspection("Inspection screenshot failed: the scene did not render in the viewport.");
+        return;
+      }
+      void uploadSceneInspection(projectSlug, id, pngBase64)
+        .then((path) => {
+          if (!activeRef.current || epoch !== generationEpochRef.current) return;
+          pendingInspectionRef.current = {
+            target: "scene",
+            view: current.views?.[0] ?? DEFAULT_SCENE_VIEW,
+            path,
+          };
+          if (!streamingRef.current) flushPendingInspection();
+        })
+        .catch((err) => {
+          if (!activeRef.current || epoch !== generationEpochRef.current) return;
+          failInspection(`Failed to upload inspection image: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    },
+    [sceneInspection, projectSlug, pushAssistant],
+  );
+
   /**
-   * 让 Agent 看自己刚渲染出来的四视角检查图并继续判断。
+   * 让 Agent 看自己刚渲染出来的检查图并继续判断（单模型四视角，或整场景一个机位）。
    *
    * 检查图走 resume 而不是一条带图用户消息：图片在协议上仍然只能借 user 角色
    * 进模型，但服务端只把它接在本轮上下文末尾，工作台不写进会话记录，界面渲染成
@@ -591,18 +709,31 @@ export function useAgentChat({
     inspectionWaitRef.current = null;
     syncWaiting();
     if (owner) updateMessage(owner.ownerId, (message) => ({
-      ...message, pendingInspectionAssetSlug: undefined,
+      ...message,
+      pendingInspectionAssetSlug: undefined,
+      pendingSceneInspectionView: undefined,
       agentStatus: { label: "Inspection images ready", status: "completed" },
     }));
+    const sceneCheck = pending.target === "scene";
+    const view = pending.view ?? DEFAULT_SCENE_VIEW;
+    const views = resolveInspectionViews(pending.views);
     startStream(toOutgoingHistory(messagesRef.current), {
       resume: {
         kind: "inspection",
-        text: `[Self-check] ${pending.assetSlug}: four views (top left: ISO, top right: FRONT, bottom left: RIGHT, bottom right: TOP). Check each view.`,
+        text: sceneCheck
+          ? [
+              `[Scene check] whole project scene, camera view "${view}" (${INSPECTION_VIEW_LIBRARY[view].label}).`,
+              "Check this image against the user's intent for the scene as a whole.",
+              `If this camera is unusable (scene out of frame, blocked, or too small to judge), call inspect again with target="scene" and one of iso/front/right/top/left/back/bottom as the new view — at most 3 camera changes — then report what you can and cannot see.`,
+            ].join(" ")
+          : `[Self-check] ${pending.assetSlug ?? ""}: ${views.length} view${views.length === 1 ? "" : "s"} (2×2 sheet, reading order: ${views.map((item) => item.label).join(" / ")}). Check each view.`,
         images: [pending.path],
       },
       autoTurn: {
         kind: "inspection",
-        label: `Self-check · ${pending.assetName} · 4 views (ISO / Front / Right / Top)`,
+        label: sceneCheck
+          ? `Scene check · whole scene · ${INSPECTION_VIEW_LIBRARY[view].label}`
+          : `Self-check · ${pending.assetName ?? pending.assetSlug ?? ""} · ${views.map((item) => item.label).join(" / ")}`,
         images: [pending.path],
       },
     });
@@ -705,7 +836,7 @@ export function useAgentChat({
               ? `- ${taskSubjectLabel(task.subject)}: succeeded`
               : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
           ),
-          "Continue the original request automatically: inspect successful model outputs as needed, then deliver the result. Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",
+          "Continue the original request automatically: check the finished outputs, then deliver the result. Only call inspect if the user asked for a check or raised a question about the result — a finished single-model generation is delivered without a self-check. A finished complete-scene job ends with one whole-scene check (inspect with target=\"scene\"). Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",
         ].join("\n"),
       },
       autoTurn: {
@@ -884,7 +1015,10 @@ export function useAgentChat({
         onTool: (name, toolCallId, args) => {
           if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
-          const label = toolActivityMessage(name);
+          // inspect 的两种目标在状态行里是两件事：检查一个模型 vs 检查整个场景。
+          const label = name === "inspect" && args?.target === "scene"
+            ? inspectionStatusLabel("scene")
+            : toolActivityMessage(name);
           const activityId = toolCallId ?? `tool-${assistantId}-${++toolSequence}`;
           replying = false;
           // 只读查询不占时间线，也不顶掉状态行里正在跑的生成进度
@@ -908,8 +1042,16 @@ export function useAgentChat({
                   ],
             }));
           }
-          if (name === "inspect-asset" && typeof args?.assetSlug === "string") {
-            void startInspection(args.assetSlug, toolCallId);
+          if (name === "inspect") {
+            // views 只保留认识的 id：模型给错名字时退化成默认视角，而不是让整条链路失败。
+            const views = Array.isArray(args?.views)
+              ? args.views.filter((view): view is InspectionViewId => isInspectionViewId(view))
+              : undefined;
+            if (args?.target === "scene") {
+              void startSceneInspection(views?.[0], toolCallId);
+            } else if (typeof args?.assetSlug === "string") {
+              void startAssetInspection(args.assetSlug, toolCallId, undefined, views);
+            }
           } else if (
             name === "identify-asset" &&
             Array.isArray(args?.assetSlugs) &&
@@ -1086,7 +1228,9 @@ export function useAgentChat({
                 : hasFailedStep
                   ? { label: "Some steps failed", status: "failed" }
                   : working
-                    ? { label: inspectionWaitRef.current ? "Inspecting generated model" : "Generating; will continue automatically", status: "running" }
+                    ? { label: inspectionWaitRef.current
+                        ? inspectionStatusLabel(inspectionWaitRef.current.target)
+                        : "Generating; will continue automatically", status: "running" }
                     : planContinues
                       ? { label: "Continuing plan", status: "running" }
                       : planPaused
@@ -1100,7 +1244,7 @@ export function useAgentChat({
               ? { state: "waiting", message: "Waiting for your decision" }
               : working
                 ? { state: "working", message: inspectionWaitRef.current
-                    ? "Inspecting generated model"
+                    ? inspectionStatusLabel(inspectionWaitRef.current.target)
                     : "Generating; will continue automatically" }
                 : planContinues
                   ? { state: "working", message: "Continuing plan" }
@@ -1111,7 +1255,7 @@ export function useAgentChat({
           // agent 可能更新了计划或产出了资产：刷新派生状态
           bumpRefresh();
           /*
-            两条回传只能串行发，不能都发：agent 完全可能在同一轮里既调 inspect-asset
+            两条回传只能串行发，不能都发：agent 完全可能在同一轮里既调 inspect
             又调 identify-asset，两个 flush 各自 startStream 就会并发拉起两条 SSE 流；
             而且第二条的 history 取自 messagesRef，此时还没包含第一条刚 push 的消息，
             两条流会带着分叉的历史打给 agent、回复交错写进两个气泡。
@@ -1229,7 +1373,18 @@ export function useAgentChat({
       if (message.role !== "assistant") continue;
       if (message.pendingTaskIds?.length) trackTasks(message.id, message.pendingTaskIds);
       if (message.pendingInspectionAssetSlug && !registeredInspectionsRef.current.has(message.id)) {
-        void startInspection(message.pendingInspectionAssetSlug, undefined, message.id);
+        void startAssetInspection(message.pendingInspectionAssetSlug, undefined, message.id);
+      } else if (
+        message.pendingSceneInspectionView &&
+        !registeredInspectionsRef.current.has(message.id)
+      ) {
+        startSceneInspection(
+          isInspectionViewId(message.pendingSceneInspectionView)
+            ? message.pendingSceneInspectionView
+            : undefined,
+          undefined,
+          message.id,
+        );
       }
     }
   });
@@ -1257,7 +1412,9 @@ export function useAgentChat({
     openPreview,
     closePreview,
     closePreviewFor,
+    sceneInspection,
     handleInspectionCaptured,
+    handleSceneInspectionCaptured,
     send,
     answerQuestion,
     stopStream,

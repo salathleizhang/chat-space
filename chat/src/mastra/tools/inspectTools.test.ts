@@ -2,9 +2,15 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalFileStorage } from "../../services/assetStorage";
+import { LocalFileStorage, setAssetStorage } from "../../services/assetStorage";
 import { toAgentMessages } from "../../services/chatService";
-import { saveInspectionSheet } from "./inspectTools";
+import { buildRequestContext } from "../../services/workflowRuns";
+import {
+  InspectParamsSchema,
+  inspectTool,
+  saveInspectionSheet,
+  saveSceneInspectionSheet,
+} from "./inspectTools";
 import { createProject } from "./projectTools";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-inspect-test-"));
@@ -16,6 +22,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  setAssetStorage(undefined);
   await rm(root, { recursive: true, force: true });
 });
 
@@ -48,6 +55,72 @@ describe("saveInspectionSheet", () => {
         bytes: new Uint8Array(0),
       }),
     ).rejects.toThrow(/为空/);
+  });
+});
+
+describe("saveSceneInspectionSheet", () => {
+  test("整场景检查图落盘项目级 inspections/，不挂到任何资产下", async () => {
+    const { path } = await saveSceneInspectionSheet(storage, {
+      projectSlug: "inspect-demo",
+      inspectionId: "scene_Abc-1",
+      bytes: PNG_BYTES,
+    });
+    expect(path).toBe("projects/inspect-demo/inspections/scene_Abc-1.png");
+    expect(await storage.readBytes(path)).toEqual(PNG_BYTES);
+  });
+
+  test("拒绝路径注入型 id 与空内容（与资产级同一套校验）", async () => {
+    await expect(
+      saveSceneInspectionSheet(storage, {
+        projectSlug: "inspect-demo",
+        inspectionId: "a/b",
+        bytes: PNG_BYTES,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      saveSceneInspectionSheet(storage, {
+        projectSlug: "inspect-demo",
+        inspectionId: "empty",
+        bytes: new Uint8Array(0),
+      }),
+    ).rejects.toThrow(/为空/);
+  });
+});
+
+describe("inspect 工具入参", () => {
+  test("入参是一个平铺对象（火山方舟不接受顶层 union，组合约束在 execute 里校验）", () => {
+    // 顶层必须是 object：判别联合会序列化成 anyOf，整轮请求会 400。
+    const schema = InspectParamsSchema;
+    expect(schema.safeParse({ target: "asset" }).success).toBe(true);
+    expect(schema.safeParse({ target: "scene", views: ["top"] }).success).toBe(true);
+    // 未知视角 id 直接拒绝，而不是悄悄退化成默认四视角
+    expect(schema.safeParse({ target: "scene", views: ["diagonal"] }).success).toBe(false);
+    expect(schema.safeParse({ target: "whatever" }).success).toBe(false);
+  });
+});
+
+describe("inspect 工具", () => {
+  test("整场景检查：项目里没有可渲染内容时立刻失败，不让 app 空转", async () => {
+    setAssetStorage(storage);
+    await createProject(storage, { name: "空场景", slug: "empty-scene" });
+    await expect(
+      inspectTool.execute!({ target: "scene" } as never, {
+        requestContext: buildRequestContext({ projectSlug: "empty-scene" }),
+      } as never),
+    ).rejects.toThrow(/还没有可渲染/);
+  });
+
+  /**
+   * 判别联合被拆成平铺对象（火山方舟要求顶层 object），所以"target=asset 但没给
+   * assetSlug"这类组合约束只能在 execute 里报错——这条断言把它钉住。
+   */
+  test("单模型检查：没给 assetSlug 时明确拒绝，而不是去查一个 undefined 的资产", async () => {
+    setAssetStorage(storage);
+    await expect(
+      inspectTool.execute!({ target: "asset" } as never, {
+        requestContext: buildRequestContext({ projectSlug: "inspect-demo" }),
+      } as never),
+    ).rejects.toThrow(/assetSlug/);
   });
 });
 

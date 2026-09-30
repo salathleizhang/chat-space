@@ -15,8 +15,13 @@ import type { AssetMaterial, AssetTransform, LibraryAsset } from "../../shared/l
 import { Badge, Button, Panel } from "../../shared/ui";
 import { ModelMesh } from "../Viewport/ModelMesh";
 import { CameraAxes } from "../Viewport/PaneCamera";
-import { createInspectionCamera, INSPECTION_VIEWS } from "./inspectionViews";
-import { composeInspectionSheet, sheetToBase64, SHEET_TILE } from "../../shared/lib/inspectionSheet";
+import { createInspectionCamera } from "./inspectionViews";
+import {
+  composeInspectionSheet,
+  resolveInspectionViews,
+  sheetToBase64,
+  SHEET_TILE,
+} from "../../shared/lib/inspectionSheet";
 
 /**
  * 模型预览小窗：模型栏双击打开，独立轨道相机 + 右上角视角球（Blender 式）。
@@ -91,12 +96,14 @@ function InspectionCapturer({
       }
 
       const sphere = box.getBoundingSphere(new THREE.Sphere());
+      // 视角由请求指定（默认四视角；用户点名只看某个面时就只拍那一格）。
       // 截图相机独立于用户相机。ISO 用透视；轴向视角与主视口一样用正交投影。
+      const views = resolveInspectionViews(request.views);
 
       try {
-        // Submit all four views in this JS task, before yielding to animation or
+        // Submit all views in this JS task, before yielding to animation or
         // user edits. Readbacks remain asynchronous, but the pose is identical.
-        const images = await captureQueue.enqueue("inspection", signal, () => Promise.all(INSPECTION_VIEWS.map((view) => {
+        const images = await captureQueue.enqueue("inspection", signal, () => Promise.all(views.map((view) => {
           const inspectionCamera = createInspectionCamera(
             camera as THREE.PerspectiveCamera,
             view,
@@ -106,8 +113,11 @@ function InspectionCapturer({
           return captureScene(webgpuRenderer(gl), scene, inspectionCamera, SHEET_TILE);
         })));
         if (cancelled) return;
-        // 版式在纯模块里，与 PlayCanvas 侧共用同一份（见 shared/lib/inspectionSheet.ts）
-        const sheet = composeInspectionSheet(images.map((image: HTMLCanvasElement) => ({ image })));
+        // 版式在纯模块里，与 PlayCanvas 侧共用同一份（见 shared/lib/inspectionSheet.ts）。
+        // 标注必须显式传：默认标签按四视角的**位置**取，只拍一格时那一格的语义会不对。
+        const sheet = composeInspectionSheet(
+          images.map((image: HTMLCanvasElement, index: number) => ({ image, label: views[index]!.label })),
+        );
         // 让下一帧重新绘制用户的预览视角。
         invalidate();
         onCaptured(request.id, sheetToBase64(sheet));

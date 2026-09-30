@@ -8,4 +8,16 @@ describe("creator 回复协议", () => {
     expect(CREATOR_INSTRUCTIONS).toContain("不输出 HTML");
     expect(CREATOR_INSTRUCTIONS).toContain("由工作台组件单独展示");
   });
+
+  /**
+   * 自检的触发口径是产品决策，写在提示词里就容易被后人"顺手"改回"生成完就查"。
+   * 这几条把口径钉住：单模型不查、用户点名才查、整场景检查是唯一的自动例外。
+   */
+  test("自检只在用户要求时做，整场景检查是唯一的自动例外", () => {
+    expect(CREATOR_INSTRUCTIONS).toContain("只在用户明确要求检查");
+    expect(CREATOR_INSTRUCTIONS).toContain("单模型生成完成不做视觉自检");
+    expect(CREATOR_INSTRUCTIONS).toContain('target="scene"');
+    // 旧口径不该再出现：工具已改名，提示词里也不该再写"生成完就自检"
+    expect(CREATOR_INSTRUCTIONS).not.toContain("inspect-asset");
+  });
 });

@@ -21,7 +21,7 @@ import {
   saveAssetThumbnail,
   writeSceneLayout,
 } from "../mastra/tools/projectTools";
-import { saveInspectionSheet } from "../mastra/tools/inspectTools";
+import { saveInspectionSheet, saveSceneInspectionSheet } from "../mastra/tools/inspectTools";
 
 export const projectRoutes = new Hono();
 
@@ -172,6 +172,18 @@ projectRoutes.post("/:slug/assets/:assetSlug/inspection", async (c) => {
   const result = await saveInspectionSheet(getAssetStorage(), {
     projectSlug,
     assetSlug,
+    inspectionId: req.inspectionId,
+    bytes: new Uint8Array(Buffer.from(req.dataBase64, "base64")),
+  });
+  return c.json(result, 201);
+});
+
+/** 整场景检查图上传：主视口按机位拍的图落盘 <project>/inspections/（不属于单个资产） */
+projectRoutes.post("/:slug/inspection", async (c) => {
+  const projectSlug = SlugSchema.parse(c.req.param("slug"));
+  const req = UploadInspectionSchema.parse(await c.req.json());
+  const result = await saveSceneInspectionSheet(getAssetStorage(), {
+    projectSlug,
     inspectionId: req.inspectionId,
     bytes: new Uint8Array(Buffer.from(req.dataBase64, "base64")),
   });

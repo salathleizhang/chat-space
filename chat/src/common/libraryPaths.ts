@@ -25,6 +25,8 @@
  *       asset.json                 正式资产提交标记（只存意图与溯源）
  *       N-<slug>.<ext>             生成产物
  *       .N-<slug>-request.json     请求侧写
+ *       inspections/<id>.png       该资产的检查图（四视角自检）
+ *     inspections/<id>.png         整场景检查图（一张图，不属于任何单个资产）
  *   sessions/<session-id>.json     会话历史（归 chat/，决策 8）
  *
  * 所有函数返回相对资产库根的逻辑路径（云迁移纪律 ①，绝无绝对路径）。
@@ -90,6 +92,13 @@ export const assetDir = (projectSlug: string, assetSlug: string) =>
 
 export const assetIdentityFile = (projectSlug: string, assetSlug: string) =>
   `${assetDir(projectSlug, assetSlug)}/asset.json`;
+
+/**
+ * 整场景检查图的目录。与资产级检查图（`assets/<asset>/inspections/`）分开：
+ * 一张整场景的图不属于任何一个资产，混进去就答不上"这张图是谁的 QC 证据"。
+ */
+export const projectInspectionsDir = (projectSlug: string) =>
+  `${projectDir(projectSlug)}/inspections`;
 
 export const sessionFile = (sessionId: string) =>
   `${LIBRARY_DIRS.sessions}/${sessionId}.json`;

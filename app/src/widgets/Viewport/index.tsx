@@ -49,6 +49,8 @@ import { ModelMesh } from "./ModelMesh";
 import { LAYOUTS, gridTemplateFor, type CameraKind, type LayoutMode, type Projection } from "./paneLayouts";
 import { PaneCamera } from "./PaneCamera";
 import { computeSceneLayout, type AssetPlacement } from "./scenePlacement";
+import { SceneInspectionCapturer } from "./SceneInspectionCapturer";
+import type { InspectionRequest } from "../../shared/lib/inspection";
 import type { LiveTransforms } from "./liveTransforms";
 import {
   TransformGizmo,
@@ -103,6 +105,13 @@ interface ViewportProps {
   onFocusAsset: (asset: LibraryAsset) => void;
   /** 拖入本地模型文件（一批 File，可能含 .mtl/贴图附属文件） */
   onImportModel?: (files: File[]) => void;
+  /**
+   * 整场景检查请求（agent 的 `inspect` 工具，target=scene）：按请求里的**一个机位**
+   * 拍一张整个场景的检查图。为 null 时不拍、也不挂截图器。
+   */
+  inspection?: InspectionRequest | null;
+  /** 场景检查图完成（pngBase64 不含 data: 前缀）；失败时 base64 为 null */
+  onInspectionCaptured?: (id: string, pngBase64: string | null) => void;
 }
 
 type ViewMode = "orbit" | "firstPerson";
@@ -160,7 +169,7 @@ function SkyBackdrop({ texture }: { texture: THREE.Texture }) {
   const ref = useRef<THREE.Mesh>(null);
 
   return (
-    <mesh ref={ref} renderOrder={-1} frustumCulled={false} onBeforeRender={(_renderer, _scene, camera) => {
+    <mesh ref={ref} name="editor:sky" renderOrder={-1} frustumCulled={false} onBeforeRender={(_renderer, _scene, camera) => {
       if (!ref.current) return;
       camera.getWorldPosition(ref.current.position);
       ref.current.updateMatrixWorld();
@@ -303,10 +312,14 @@ function SceneContents({
           fallback={null}
         >
           <Suspense fallback={null}>
-            <SplatModel
-              url={`${libraryUrl(worldAsset.spzPath)}?revision=${worldAsset.resourceRevision ?? 0}`}
-              semantics={worldAsset.worldSemantics}
-            />
+            {/* 名字是给整场景检查取景用的：world 内容算场景，网格/天空球不算（见
+                SceneInspectionCapturer 的 sceneContentBox）。 */}
+            <group name="scene:world">
+              <SplatModel
+                url={`${libraryUrl(worldAsset.spzPath)}?revision=${worldAsset.resourceRevision ?? 0}`}
+                semantics={worldAsset.worldSemantics}
+              />
+            </group>
           </Suspense>
         </ResettableErrorBoundary>
       )}
@@ -378,6 +391,8 @@ export const Viewport = memo(function Viewport({
   onClearSelection,
   onFocusAsset,
   onImportModel,
+  inspection,
+  onInspectionCaptured,
 }: ViewportProps) {
   const [mode, setMode] = useState<ViewMode>("orbit");
   const [showGrid, setShowGrid] = useState(true);
@@ -647,6 +662,9 @@ export const Viewport = memo(function Viewport({
           ))}
           {firstPerson && <><FirstPersonView /><FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} /></>}
         </ProjectRenderRuntime>
+        {onInspectionCaptured && (
+          <SceneInspectionCapturer request={inspection ?? null} onCaptured={onInspectionCaptured} />
+        )}
       </WebGPUCanvas>
 
       {/*

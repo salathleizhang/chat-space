@@ -920,6 +920,13 @@ engine GSplat 用默认的 `unified = true`（**不要设 `false`**，§二.4）
 合成器也已与 three 版共用同一份（`shared/lib/inspectionSheet.ts`）；缺的是"在应用里由谁触发"——
 那属于 Phase 6 的整体切换。
 
+> ⚠️ **新增的整场景检查只在 three 侧实现（2026-10-01）**：`inspect` 工具的 `target="scene"`
+> 由主视口按一个机位拍整张场景图（`widgets/Viewport/SceneInspectionCapturer.tsx`），
+> 检查图落盘在项目级 `inspections/`，回传文案是 `[Scene check]`。
+> `inspectionCapture.ts` 目前只有"一个资产、四个视角"这一种口径，**迁移到 PlayCanvas 时要一并补上
+> 场景级取景**（取景对象是 `asset:` 摆放组，编辑器网格与天空背景球不参与——见
+> `SceneInspectionCapturer` 的 `sceneContentBox`）。
+
  / 探针
 
 - `capture.ts`(91) / `CaptureQueue.ts`(78) / `ModelResources.ts`(194) / `ResourceBudget.ts`(154) / `gpuProbe.ts`(869)。

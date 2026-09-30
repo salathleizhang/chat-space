@@ -63,6 +63,11 @@ export interface ChatMessage {
   pendingTaskIds?: string[];
   /** 等待工作台截图的资产；恢复后继续自检。 */
   pendingInspectionAssetSlug?: string;
+  /**
+   * 等待主视口截图的整场景检查机位（视角 id）；恢复后继续那次场景检查。
+   * 与 pendingInspectionAssetSlug 是两条并列的通道：一个查模型，一个查场景。
+   */
+  pendingSceneInspectionView?: string;
   /** 消息携带的库内图片（用户附件或工具生成图），逻辑路径 */
   images?: string[];
   /**

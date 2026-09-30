@@ -5,7 +5,7 @@ export { buildCadModelTool, getCadSourceTool } from "./cadOps";
 export { generateCleanPlateTool } from "./cleanPlate";
 export { unwrapUvTool } from "./hunyuanOps";
 export { identifyAssetTool } from "./identifyTools";
-export { inspectAssetTool } from "./inspectTools";
+export { inspectTool } from "./inspectTools";
 export { retopologizeTool, rigModelTool } from "./meshOps";
 export { generateTextureTool } from "./textureOps";
 export { analyzeReferenceTool } from "./referenceAnalysis";

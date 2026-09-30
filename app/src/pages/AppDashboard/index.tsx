@@ -341,7 +341,9 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     openPreview,
     closePreview,
     closePreviewFor,
+    sceneInspection,
     handleInspectionCaptured,
+    handleSceneInspectionCaptured,
     send,
     answerQuestion,
     stopStream,
@@ -423,6 +425,8 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         onClearSelection={clearSelection}
         onFocusAsset={focusAsset}
         onImportModel={handleImportModel}
+        inspection={sceneInspection}
+        onInspectionCaptured={handleSceneInspectionCaptured}
       />
       <div className="absolute top-4 left-1/2 z-10 -translate-x-1/2 animate-chrome-enter">
         <Panel className="flex items-center gap-2 py-2 pr-4 pl-2">

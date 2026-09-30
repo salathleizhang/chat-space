@@ -31,7 +31,7 @@ export async function verifyWebGPUWorkflows(projectSlug: string, assetSlug: stri
         };
         root.render(<StrictMode>{mode === "thumbnail"
           ? <ThumbnailRenderer asset={asset} onCaptured={(_, png) => captured(png)} />
-          : <ModelPreviewWindow asset={asset} inspection={{ id: "webgpu-integration-test" }} onClose={() => {}} onInspectionCaptured={(_, png) => captured(png)} />
+          : <ModelPreviewWindow asset={asset} inspection={{ id: "webgpu-integration-test", target: "asset" }} onClose={() => {}} onInspectionCaptured={(_, png) => captured(png)} />
         }</StrictMode>);
       });
     } finally {
