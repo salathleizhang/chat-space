@@ -27,7 +27,7 @@ import type {
   ChatAssetAttachment,
   ChatMessage,
 } from "../../widgets/AgentDock";
-import type { InspectionRequest } from "../../widgets/ModelPreviewWindow";
+import type { InspectionRequest } from "../../shared/lib/inspection";
 import { nextId } from "./useChatMessages";
 import type { TaskSettlement } from "./useTaskPolling";
 

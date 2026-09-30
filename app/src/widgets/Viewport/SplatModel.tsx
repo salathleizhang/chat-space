@@ -5,16 +5,10 @@ import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundar
 import type { WorldSemantics } from "../../shared/lib/libraryApi";
 import { webgpuRenderer } from "../../shared/rendering/webgpu";
 import { DeferredResource } from "../../shared/rendering/DeferredResource";
-import { VIEW_LAYERS } from "./sharedPicking";
 import { worldTransform } from "./worldTransform";
 
 interface Resource { splats: Splats; refs: number; release?: ReturnType<typeof setTimeout> }
 const resources = new Map<string, Resource>();
-// Native WebGPU sorter compilation for a 1.9M-point world can exceed a minute
-// after repeated create/dispose cycles. These four instances belong to the
-// Splat surface, not a source URL or layout. Source replacement reuses the
-// pipelines; removing the world/surface disposes each exactly once.
-const WORLD_VIEW_LAYERS = Object.values(VIEW_LAYERS);
 
 function acquire(url: string) {
   let resource = resources.get(url);
@@ -36,7 +30,23 @@ function release(url: string, resource: Resource) {
   }, 0);
 }
 
-function SplatViewRenderer({ layer, active, generation }: { layer: number; active: boolean; generation: string }) {
+/**
+ * **一个** `GaussianSplatRenderer` 服务全部窗格，不再每窗格（每 layer）一个。
+ *
+ * 为什么：one renderer per pane 曾经是为了"布局切换只切 `visible`、不销毁重建"——因为原生 WebGPU
+ * 的排序器重编译在 1.9M 点上可能超过一分钟。但那样做的代价是每个窗格各持一份 ProjectionCache /
+ * SortCenterCache / 排序器 / splat 纹理，而且每帧各走一次 `onBeforeRender`（场景遍历、uniform 准备、
+ * 输入指纹比对），各自独立投影独立排序。
+ *
+ * 现在核心场景用**一趟 ArrayCamera** 画（见 paneViewports.ts），GSL 的投影器看到 `array.cameras`
+ * 就把所有眼放进**同一条 compute 链**、用 `cameraIndex` 取每眼的排序——所以一个实例就够，
+ * 而且它顺便修掉一个真实缺陷：逐窗格时 GSL 的 `renderSize` 取的是 `getDrawingBufferSize()`（整张画布），
+ * 于是 `minPixelRadius` / `clipXY` 在分屏下按整画布而不是窗格算；multiView 路径取的是
+ * `camera.viewport`，也就是各窗格自己的尺寸。
+ *
+ * 这个对象停留在 layer 0（`Object3D` 默认），所以每个子相机都看得见它（子相机 mask 恒为 `1 | 1<<layer`）。
+ */
+function SplatRenderer({ generation }: { generation: string }) {
   const gl = useThree((state) => state.gl);
   const invalidate = useThree((state) => state.invalidate);
   const [renderer, setRenderer] = useState<GaussianSplatRenderer | null>(null);
@@ -44,10 +54,9 @@ function SplatViewRenderer({ layer, active, generation }: { layer: number; activ
   const resource = useMemo(() => new DeferredResource(() => {
     const owned = new GaussianSplatRenderer({ renderer: webgpuRenderer(gl), onDirty: invalidate,
       renderDepth: false, autoStochastic: false, stochastic: false });
-    owned.layers.set(layer);
-    owned.name = `splat-view:${layer}`;
+    owned.name = "splat-view";
     return owned;
-  }), [gl, invalidate, layer]);
+  }), [gl, invalidate]);
   useEffect(() => {
     try {
       const lease = resource.acquire();
@@ -57,13 +66,12 @@ function SplatViewRenderer({ layer, active, generation }: { layer: number; activ
     } catch (cause) { setError(cause instanceof Error ? cause : new Error(String(cause))); }
   }, [resource, invalidate]);
   useLayoutEffect(() => {
-    // Hidden views must also drop references to the previous source. Keep only
-    // reusable capacity/pipelines, never a display mapping to disposed Splats.
+    // 换代时必须丢掉指向已释放 Splats 的显示映射；保留可复用的容量与管线。
     renderer?.clearSplats();
     invalidate();
   }, [renderer, generation, invalidate]);
   if (error) throw error;
-  return renderer ? <primitive object={renderer} visible={active} dispose={null} /> : null;
+  return renderer ? <primitive object={renderer} dispose={null} /> : null;
 }
 
 function SplatScene({ url, semantics }: { url: string; semantics: WorldSemantics }) {
@@ -105,7 +113,7 @@ function SplatScene({ url, semantics }: { url: string; semantics: WorldSemantics
   </>;
 }
 
-/** Native WebGPU projection/sorting, with separate camera state for each view. */
+/** Native WebGPU projection/sorting, shared by every pane through one multiView pass. */
 function SplatSource(props: { url: string; semantics: WorldSemantics }) {
   const [attempt, setAttempt] = useState(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -120,9 +128,9 @@ function SplatSource(props: { url: string; semantics: WorldSemantics }) {
   </ResettableErrorBoundary>;
 }
 
-export default function SplatModel(props: { url: string; semantics: WorldSemantics; viewLayers: number[] }) {
+export default function SplatModel(props: { url: string; semantics: WorldSemantics }) {
   return <>
-    {WORLD_VIEW_LAYERS.map((layer) => <SplatViewRenderer key={layer} layer={layer} active={props.viewLayers.includes(layer)} generation={props.url} />)}
+    <SplatRenderer generation={props.url} />
     <SplatSource key={props.url} url={props.url} semantics={props.semantics} />
   </>;
 }

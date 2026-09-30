@@ -10,3 +10,6 @@ node_modules
 .DS_Store
 .wrangler/
 *.log
+
+# PlayCanvas migration research clones (shallow, ~990MB, not part of the build)
+.pc-research/

@@ -499,12 +499,31 @@ function PaneGizmo({
     gl.setViewport(left, top, w, h);
     gl.setScissor(left, top, w, h);
     gl.setScissorTest(true);
-    const prevAutoClear = gl.autoClear;
-    gl.autoClear = false;
+    /*
+      深度**不能**用 `gl.clearDepth()` 单独清（那是一次独立 encoder + 空 pass + 独立 submit）。
+      three 在本后端上把 `autoClear*` 折进 render pass 的 `loadOp`，所以把 `autoClearDepth` 打开、
+      `autoClearColor` 关掉，深度就在这一趟 pass 的起点被清掉：语义等价，但少一趟提交。
+      **颜色必须显式关掉**，否则会把刚画好的整个窗格擦掉。
+    */
+    const previous = {
+      autoClear: gl.autoClear,
+      color: gl.autoClearColor,
+      depth: gl.autoClearDepth,
+      stencil: gl.autoClearStencil,
+    };
+    gl.autoClear = true;
+    gl.autoClearColor = false;
+    gl.autoClearDepth = true;
+    gl.autoClearStencil = false;
     try {
-      gl.clearDepth();
       gl.render(hudScene, hudCameraRef.current);
-    } finally { gl.autoClear = prevAutoClear; gl.setScissorTest(false); }
+    } finally {
+      gl.autoClear = previous.autoClear;
+      gl.autoClearColor = previous.color;
+      gl.autoClearDepth = previous.depth;
+      gl.autoClearStencil = previous.stencil;
+      gl.setScissorTest(false);
+    }
   });
 
   const compute = (event: { clientX: number; clientY: number }, state: { pointer: THREE.Vector2; raycaster: THREE.Raycaster; camera: THREE.Camera | null }) => {

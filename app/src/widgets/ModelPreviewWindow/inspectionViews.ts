@@ -1,21 +1,9 @@
 import * as THREE from "three";
+// 视角定义是**纯数据**，已搬到 shared/lib/inspectionSheet.ts，与 PlayCanvas 侧共用同一份。
+// 本文件只剩 three 相关的"把相机摆到某个视角"。
+import { INSPECTION_VIEWS, type InspectionView } from "../../shared/lib/inspectionSheet";
 
-interface InspectionView {
-  label: string;
-  dir: [number, number, number];
-  up: [number, number, number];
-  projection: "perspective" | "orthographic";
-}
-
-/** 与检查图提示词一致：ISO/前/右/顶；轴向视图不添加俯角。 */
-export const INSPECTION_VIEWS: InspectionView[] = [
-  { label: "ISO", dir: [1, 0.8, 1], up: [0, 1, 0], projection: "perspective" },
-  { label: "FRONT", dir: [0, 0, 1], up: [0, 1, 0], projection: "orthographic" },
-  { label: "RIGHT", dir: [1, 0, 0], up: [0, 1, 0], projection: "orthographic" },
-  // 俯视沿 -Y 看，屏幕上方为 -Z，与主视口一致。
-  // 不能沿用 Y-up 再偏移 X/Z 来避开共线，否则会产生约 45° 的滚转。
-  { label: "TOP", dir: [0, 1, 0], up: [0, 0, -1], projection: "orthographic" },
-];
+export { INSPECTION_VIEWS, type InspectionView };
 
 export function createInspectionCamera(
   source: THREE.PerspectiveCamera,

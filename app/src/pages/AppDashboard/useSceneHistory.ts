@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { AssetMaterial, AssetTransform } from "../../shared/lib/libraryApi";
-import { DEFAULT_MATERIAL } from "../../shared/lib/materialOverrides";
+import { DEFAULT_MATERIAL } from "../../shared/lib/materialSchema";
 // 只取类型：变换模式的权威定义在 gizmo 那边，不在这里另立一份
-import type { TransformMode } from "../../widgets/Viewport/TransformGizmo";
+import type { TransformMode } from "../../widgets/Viewport/transformMode";
 import type { LiveTransforms } from "../../widgets/Viewport/liveTransforms";
 import type { AssetPlacement } from "../../widgets/Viewport/scenePlacement";
 

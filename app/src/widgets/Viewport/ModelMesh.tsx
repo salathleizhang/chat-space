@@ -20,9 +20,11 @@ import type { LibraryAsset, AssetMaterial } from "../../shared/lib/libraryApi";
 import { libraryUrl } from "../../shared/lib/libraryApi";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
 import { useMaterialOverride } from "./materialOverride";
+import { needsAnimationFrame } from "./animationLoop";
 import { mergeLoadedModel, type LoadedModel } from "./modelAssembly";
 import { MTLLoader, OBJLoader } from "./modelLoaders";
 import { useModelResource } from "../../shared/rendering/useModelResource";
+import { ModelDescriptionPublisher } from "./publishModelDescription";
 import { disposeSkeletons } from "../../shared/rendering/ModelResources";
 import { resourcePath } from "../../shared/rendering/resourcePath";
 
@@ -290,19 +292,34 @@ function HighlightBox({ root, dim, mask }: { root: Object3D; dim: boolean; mask:
 function AnimatedObject({ object, animations }: LoadedModel) {
   useEffect(() => () => disposeSkeletons(object), [object]);
   const { actions, names } = useAnimations(animations, object);
-  const hasAnimation = names.length > 0;
+  const invalidate = useThree((state) => state.invalidate);
+  /** 本次挂载真正在播的 action；续帧只看它们是否还在推进。 */
+  const playing = useRef<THREE.AnimationAction[]>([]);
 
   useEffect(() => {
-    const action = hasAnimation ? actions[names[0]!] : undefined;
+    const action = names.length > 0 ? actions[names[0]!] : undefined;
+    playing.current = action ? [action] : [];
     action?.reset().play();
+    /*
+      起播必须自己索要一帧。下面那条续帧条件只在"片段真的在推进"时才成立，所以不能再
+      依赖"反正每帧都会 invalidate"——不主动要这一帧，起播就可能永远等不到第一次绘制。
+    */
+    invalidate();
     return () => {
+      playing.current = [];
       action?.stop();
     };
-  }, [actions, names, hasAnimation]);
+  }, [actions, names, invalidate]);
 
-  // 预览窗和缩略图使用 frameloop="demand"。动画活跃时每帧续约下一帧，静态模型零开销。
+  /*
+    预览窗和缩略图使用 frameloop="demand"，靠这里续帧把动画推下去。续帧条件必须是
+    **片段真的在推进**，而不是"这个模型带了片段"——判据本身与理由见 animationLoop.ts。
+    旧写法只看 `names.length > 0`，而 `AnimatedObject` 本来只在有片段时才渲染，
+    等于无条件续帧：只要场景里有一个带动画的模型，整块画布就永远以 vsync 重绘，
+    `frameloop="demand"` 形同虚设。三个画布（视口 / 预览小窗 / 缩略图）都会中招。
+  */
   useFrame((state) => {
-    if (hasAnimation) state.invalidate();
+    if (needsAnimationFrame(playing.current)) state.invalidate();
   });
 
   return <primitive object={object} dispose={null} />;
@@ -420,7 +437,12 @@ function ModelAssembly({
             onPermanentError={() => registerFailure(index)}
           >
             {(model) => (
-              <LoadedRegistration index={index} model={model} onLoaded={registerLoaded} />
+              <>
+                <LoadedRegistration index={index} model={model} onLoaded={registerLoaded} />
+                {/* 渲染层在这里发布"模型描述"，供 Inspector 消费（见 modelDescription.ts）。
+                    放在真实渲染路径上，而不是让编辑层自己再挂一份模型。 */}
+                <ModelDescriptionPublisher asset={asset} object={model.object} />
+              </>
             )}
           </RecoverableModelLoader>
         </Suspense>

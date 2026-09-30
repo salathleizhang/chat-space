@@ -5,11 +5,12 @@ import * as THREE from "three";
 import type { AssetTransform } from "../../shared/lib/libraryApi";
 import type { LiveTransforms } from "./liveTransforms";
 import type { AssetPlacement } from "./scenePlacement";
+import { type TransformMode, type TransformSpace } from "./transformMode";
 
-export const TRANSFORM_MODES = ["translate", "rotate", "scale"] as const;
-export type TransformMode = (typeof TRANSFORM_MODES)[number];
-/** 变换参考系：world = 世界轴，local = 对象自身轴（Blender 的 Global/Local） */
-export type TransformSpace = "world" | "local";
+// 这三个类型定义已搬到 ./transformMode（纯数据、不含 three）。这里原样再导出，是为了让
+// 迁移期间的既有两个导入方（AppDashboard / useSceneHistory 已改指新模块）以及任何遗留引用
+// 都不断掉；等本文件被 PlayCanvas 实现取代时，只删本文件即可。
+export { TRANSFORM_MODES, type TransformMode, type TransformSpace } from "./transformMode";
 
 
 export interface GizmoMember {
@@ -43,6 +44,9 @@ const tmpQuaternion = new THREE.Quaternion();
 const tmpScale = new THREE.Vector3();
 const tmpEuler = new THREE.Euler();
 const tmpMatrix = new THREE.Matrix4();
+// 多选轴心的包围盒：resetPivot 在"别的窗格正在拖"时每个窗格每帧都会调一次
+// （见下面的 useFrame），所以这里也不能每次 new。
+const tmpBox = new THREE.Box3();
 
 function composeMatrix(placement: AssetPlacement, out: THREE.Matrix4): THREE.Matrix4 {
   return out.compose(
@@ -133,7 +137,8 @@ export function TransformGizmo({
       } else {
         // 多选取各成员位置的包围中心（Blender 默认的"中位点"轴心），姿态归零——
         // 一组朝向各异的对象没有共同的"自身轴"，整组变换从单位姿态起算最不意外
-        const box = new THREE.Box3();
+        // 复用模块级 tmpBox：必须先 makeEmpty，否则会把上一次的极值累加进来
+        const box = tmpBox.makeEmpty();
         for (const member of current) box.expandByPoint(tmpPosition.fromArray(at(member).position));
         pivot.position.copy(box.getCenter(tmpPosition));
         pivot.rotation.set(0, 0, 0);

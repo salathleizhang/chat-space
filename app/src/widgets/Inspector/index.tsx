@@ -6,7 +6,7 @@ import {
   type MaterialTextureSlot,
   type Vec3,
 } from "../../shared/lib/libraryApi";
-import { DEFAULT_MATERIAL, normalizeMaterial } from "../../shared/lib/materialOverrides";
+import { DEFAULT_MATERIAL, normalizeMaterial } from "../../shared/lib/materialSchema";
 import { Panel } from "../../shared/ui";
 import type { LiveTransforms } from "../Viewport/liveTransforms";
 import { NumberField } from "./NumberField";

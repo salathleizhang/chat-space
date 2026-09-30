@@ -196,4 +196,25 @@ describe("useThumbnailQueue", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  /*
+    返回值引用必须稳定，否则 `memo(ModelList)` 会被打穿：`AppDashboard` 每来一个流式聊天 token
+    就重渲染并把同一个对象传下去，旧写法每次新建对象 + 新建 `Set`，于是整张资产列表（所有行、
+    tooltip、悬浮卡片）每个 token 重协调一遍。这里钉住"输入没变 → 引用不变"。
+  */
+  test("输入没变时返回值引用稳定，memo 下游才能 bail out", async () => {
+    const asset = modelAsset("p1", 1, true);
+    const h = await renderHook<HookProps, ReturnType<typeof useThumbnailQueue>>(
+      (props: HookProps) => useThumbnailQueue(props),
+      { projectSlug: "p1", assets: [asset] },
+    );
+    try {
+      const first = h.result.current;
+      await h.rerender({ projectSlug: "p1", assets: [asset] });
+      expect(h.result.current).toBe(first);
+      expect(h.result.current.pendingIds).toBe(first.pendingIds);
+    } finally {
+      await h.unmount();
+    }
+  });
 });

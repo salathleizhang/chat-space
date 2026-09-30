@@ -32,16 +32,37 @@ export class NativeWebGPURenderer extends Renderer {
   static antialias = typeof location !== "undefined"
     && new URLSearchParams(location.search).has("msaa");
 
-  constructor(canvas: HTMLCanvasElement, options?: { antialias?: boolean; trackTimestamp?: boolean }) {
+  /**
+   * Opt-in **opaque** canvas, for the same reason as `?msaa=1`: so the cost of the
+   * alpha canvas can be **measured** instead of asserted.
+   *
+   * `alpha: true` makes Chrome configure the swapchain with `alphaMode: 'premultiplied'`,
+   * which means the compositor has to blend this canvas over the page every frame. That
+   * cost never appears in Three's timestamp queries — it is compositor work, not a render
+   * pass the app submits. Measured context: the frame interval scales with pane count
+   * (~1 vsync per pane) while `gpuUtilization` stays ~23%, i.e. the remaining limiter is
+   * on the submit→present→next-rAF path, not in the passes.
+   *
+   * Off by default and off in the shipped renderer — this is a measurement flag
+   * (`bun run probe:gpu -- --opaque 1`), never a user-facing setting. **Do not flip the
+   * default without a visual check**: if the sky backdrop is missing (asset failed to
+   * load) the pane currently shows the page background through the canvas, and an opaque
+   * canvas would show the clear color instead.
+   */
+  static opaque = typeof location !== "undefined"
+    && new URLSearchParams(location.search).has("opaque");
+
+  constructor(canvas: HTMLCanvasElement, options?: { antialias?: boolean; trackTimestamp?: boolean; opaque?: boolean }) {
     // antialias defaults to Three's own default (false). Gaussian Splat Lite
     // documents that MSAA does not improve splat rendering and significantly
     // reduces performance. The option (and the `?msaa=1` flag above) exists so a
     // probe can measure that claim instead of asserting it.
+    const alpha = !(options?.opaque ?? NativeWebGPURenderer.opaque);
     super(new WebGPUBackend({
       canvas,
-      alpha: true,
+      alpha,
       trackTimestamp: options?.trackTimestamp ?? NativeWebGPURenderer.trackTimestamp,
-    }), { antialias: options?.antialias ?? NativeWebGPURenderer.antialias, alpha: true });
+    }), { antialias: options?.antialias ?? NativeWebGPURenderer.antialias, alpha });
     this.library = new StandardNodeLibrary();
   }
 

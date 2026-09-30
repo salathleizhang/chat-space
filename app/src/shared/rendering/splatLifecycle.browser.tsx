@@ -58,14 +58,15 @@ export async function verifySplatLifecycle(projectSlug: string, assetSlug: strin
       root.render(<StrictMode><WebGPUCanvas dpr={1} frameloop="demand" camera={{ position: [5, 4.5, 5], fov: 45 }} onFailure={onFailure}>
         <ProbeViews onState={onState} />
         <SplatModel url={`${libraryUrl(asset.spzPath)}?revision=${asset.resourceRevision ?? 0}&lifecycleProbe=${cycle}`}
-          semantics={asset.worldSemantics} viewLayers={[1, 2, 3, 4]} />
+          semantics={asset.worldSemantics} />
       </WebGPUCanvas></StrictMode>);
       await wait(() => {
         if (!state) return false;
         const source = state.scene.getObjectByName("project-splats") as SplatMesh | undefined;
         if (!source || source.uuid === previousSource || source.numSplats === 0) return false;
         renderers = state.scene.children.filter((object): object is GaussianSplatRenderer => object instanceof GaussianSplatRenderer);
-        return renderers.length === 4 && renderers.every((renderer) => renderer.activeSplats === source.numSplats &&
+        // 一个实例服务全部窗格（一趟 ArrayCamera / multiView）；见 SplatModel 的说明。
+        return renderers.length === 1 && renderers.every((renderer) => renderer.activeSplats === source.numSplats &&
           (renderer.geometry as unknown as { instanceCount: number }).instanceCount > 0);
       });
       const source = state!.scene.getObjectByName("project-splats")!;

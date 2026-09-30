@@ -2,9 +2,9 @@
 
 给在本仓库工作的 AI agent 的入口与硬约束。**先读这一份。** 它只有一页，但下面每一条"不得"都是硬约束，不是建议。
 
-仓库有 1000+ 行 WebGPU 文档，其中**只有 `WEBGPU_FINDINGS.md` 第 1 节的 14 条是当前可信的性能结论**。不要从别处推断性能数字。
+仓库有 1000+ 行 WebGPU 文档，其中**只有 `WEBGPU_FINDINGS.md` 第 1 节的 16 条是当前可信的性能结论**。不要从别处推断性能数字。
 
-核对基准：2026-09-29，`bun run check` 退出码 0（app **363** pass / chat **341** pass）。
+核对基准：2026-09-30，`bun run check` 退出码 0（app **542** pass / chat **341** pass）。增量来历：363 → 377 是 `VIEWPORT_REVIEW.md` §〇.1–0.3 那批回归测试（`animationLoop.test.ts` 6 条、`drawableContent.test.ts` 7 条、`WebGPUView.test.ts` 1 条）；377 → 382 是 §〇.9 的 ArrayCamera 那批（`paneViewports.test.ts` 5 条）；382 → **458** 是 PlayCanvas 迁移层带来的（边界守卫 4 条、设备/会话 18 条、窗格 19 条、材质与模型描述 20 条、截图与准入 15 条，见 §四之二）；**458 → 511** 里有 **39 条是窗格指针输入**（`playcanvas/paneInput.test.ts` 37 条 + `shared/lib/cameraRig.test.ts` 新增 2 条），**511 → 542** 是拾取与变换 gizmo（`panePicking.test.ts` 15 条、`paneGizmo.test.ts` 9 条、`paneRegistry` 的 `extraLayerIds` 2 条、`paneInput` 的点击/让手势/聚焦口径 5 条），见 §四之二；其余 14 条来自工作区里**本节之前就存在的未提交改动**。**文档里其余"app 363 / 377 / 382"的旧措辞按旧基准读。**
 
 ---
 
@@ -20,6 +20,8 @@ bun run check                        # typecheck + test + build
 `bun run check | tail` 会吞掉退出码——管道的 `$?` 是 `tail` 的。要判成败必须 `set -o pipefail` 或读 `${PIPESTATUS[0]}`。
 
 单测（`bun test` + happy-dom）**不能证明 WebGPU 可运行**。真实 GPU 行为只能在真实浏览器里验证，见第五节。
+
+**check 在过载机器上会假失败。** 实测（2026-10-01）：一次 `bun run check` 在机器被顶到高负载时耗了 **2909 s** 并以退出码 1 结束（报 `app test: Exited with code 1`）；同一份代码单跑 `bun test` 是 **459 pass / 0 fail**，负载回落到 3.5 后重跑 `bun run check` 退出码 0。所以**看到 check 失败先 `uptime`**：负载高时先重跑一次再判代码有问题，别急着改代码。
 
 ---
 
@@ -41,11 +43,13 @@ bun run check                        # typecheck + test + build
 9. 记录当轮 `load average`。静机与忙机的绝对值**不可并列比较**。
 10. **测量必须独占机器。** 并发跑探针、`bun run check` 或另一个 agent 的测量，会把 `load` 顶到 30+，那一轮的数字**全部作废**（实测：一边跑探针一边跑 check，`load` 从 3 升到 31）。
     `bun run probe:gpu` 用 CDP 端口 **9333** 做互斥——端口被占会直接拒绝启动并提示 `pkill`；但它挡不住探针之外的负载。开测前先 `uptime`，测完再记一次。
+11. **帧间隔的单对 A/B 分辨不了 1 个 vsync。** 同负载（4.28 / 4.78）、同配置、连续两轮的 p50 实测是 **50.0 ms 与 66.6 ms**——差正好一个 vsync，而 io 计数几乎相同。所以**以帧间隔为因变量的改动必须用交替设计 + 多轮重复**（成例见 `WEBGPU_PROBE_PROTOCOL.md` §5.19），单对样本无效。
+12. **`io` 计数（`renders` / `presents` / `submits`）是结构性的，但只在同会话内可复现**：修好窗口缺陷后同配置两轮离散 **±0.3%**（`VIEWPORT_REVIEW.md` §〇.6）。跨会话会因应用状态不同而变，所以**io 只能同会话前后比**。另外它原先的分子含预热期、分母不含——**任何"每帧"量都要先确认分子分母同窗口**（长帧归因踩过同一个坑）。
 
 ### 依赖与补丁
 
-11. 锁定 three **0.186.1** / @types/three **0.186.0** / gaussian-splat-lite **1.1.5**（root `overrides` + `patchedDependencies`）。**升级任一者都必须重新验证 `patches/` 下两个补丁**，并重跑浏览器压力测试。
-12. `patches/` 改的是**释放路径**，不是渲染、投影、排序或画质。改补丁时同步更新 `patches/README.md`，并跑 `app/src/shared/rendering/attributeDisposal.test.ts`。
+13. 锁定 three **0.186.1** / @types/three **0.186.0** / gaussian-splat-lite **1.1.5**（root `overrides` + `patchedDependencies`）。**升级任一者都必须重新验证 `patches/` 下两个补丁**，并重跑浏览器压力测试。
+14. `patches/` 改的是**释放路径**，不是渲染、投影、排序或画质。改补丁时同步更新 `patches/README.md`，并跑 `app/src/shared/rendering/attributeDisposal.test.ts`。
 
 ---
 
@@ -60,23 +64,164 @@ bun run check                        # typecheck + test + build
 | `SCENE_COMMAND_PLAN.md` | 实施记录。§三「缺口清单」描述的是改造**前**的状态，勿当现状；§Phase 3「已知遗留（重要）」里"两本账不联动、reclaim 基本是 no-op"**已解决**（`ResourceBudget` 已接 `MemoryPressure`，`capture.ts:32` 改调 `trimToFit(needBytes)`），勿再照它去改 |
 | `EDITOR_PRACTICES.md` / `PLAN.md` | 资料与里程碑索引，不是当前状态 |
 | `README.md` / `app/README.md` | 使用说明，架构描述与代码一致 |
-| `VIEWPORT_REVIEW.md` | 视口热路径已逐行审查完成。**结论是这一层没有可观的每帧浪费，不要重复审查**；文中列出的微小结余已被判断为"不值得改"，勿再当待办 |
+| `PLAYCANVAS_MIGRATION.md` | **渲染层迁移到 PlayCanvas 的权威记录**：每条结论都带文件:行号或本机实测原始读数，并区分"已核实 / 未核实"。§四–§六是各 Phase 的实际状态；**未完成项都显式标了 🔴，不要当成已交付** |
+| `VIEWPORT_REVIEW.md` | 视口热路径已逐行审查完成。**但 2026-09-30 的第〇节是更正**：§一 的 demand 判断被推翻（动画续帧条件恒真），§二 的"每帧 3 次 `gl.render` 不值得优化"被推翻，并新增三处已修的每帧浪费 + 同会话 A/B 实测。**读这份文档必须先读第〇节**；第〇节之外的"勿再当待办"只对未被第〇节点名的项成立 |
 
 ---
 
 ## 四、渲染架构速查
 
 - **一个** `NativeWebGPURenderer`（`webgpu.ts`，直接组 `WebGPUBackend` + `StandardNodeLibrary`，不注册 WebGL 回退）+ **一份**核心 `Scene`（`ProjectRenderRuntime`）。
-- 每个窗格有自己的：相机、overlay `Scene`（HUD/Gizmo）、`GaussianSplatRenderer`（按 `VIEW_LAYERS` 分层）。1/2/4 布局定义在 `paneLayouts.ts`。
+- 每个窗格有自己的：相机、overlay `Scene`（拾取代理 + gizmo）、HUD `Scene`（坐标轴球）。1/2/4 布局定义在 `paneLayouts.ts`。**splat 不是每窗格一份**——见下面 `SplatModel` 那条。
 - **帧顺序**（三层 priority，不要打乱）：
   1. `WebGPUCanvas` 的 `ClearFrame`（priority 0）——`setRenderTarget(null)`、关 scissor、**清屏一次**；
-  2. `ProjectRenderRuntime`（priority 1）——`scene.updateMatrixWorld()`，期间置 `matrixWorldAutoUpdate = false`，然后 `RenderSchedule.draw(delta)`；
-  3. 每个 `WebGPUView` 的 scene pass——设 viewport/scissor（**顶部为原点**），`gl.render(coreScene, camera)` 再 `gl.render(overlayScene, camera)`。
-- 因为是统一清屏，**各视图 pass 里 `autoClear` 必须保持 `false`**；谁改成 `true` 谁就把其它窗格擦掉。
-- `SplatModel` **恒定保留 4 个** `GaussianSplatRenderer`（对应 4 个 layer），布局切换只切 `visible`，不销毁重建——因为原生 WebGPU 的排序器重编译在 1.9M 点上可能超过一分钟。代价是单视图也持有四视图的显存。
+  2. `ProjectRenderRuntime`（priority 1）——`scene.updateMatrixWorld()`，期间置 `matrixWorldAutoUpdate = false`，然后 `RenderSchedule.draw(delta)`。`draw()` 的**第一步是核心场景那一趟**：所有窗格共享同一个 `Scene`，用一个 `ArrayCamera` 在**同一个 render pass** 里逐子相机 `setViewport` + layer 过滤，所以核心场景只要 1 次 `gl.render()`（改之前是每窗格一次）。实现与"三件 three 不会替你做"的细节见 `paneViewports.ts`；
+  3. 每个 `WebGPUView` 的 scene pass（**现在只剩 overlay**）——设 viewport/scissor（**顶部为原点**），**有可绘制对象时才** `gl.render(overlayScene, camera)`（判据 `hasDrawableContent`，`drawableContent.ts`）。**它必须仍然返回 `true`**：返回 false 会让 `RenderSchedule` 连带跳过本窗格的 HUD pass，坐标轴球就没了；
+  4. 每个 `WebGPUView` 的 hud pass（`PaneGizmo`）——设自己的 viewport/scissor 后画坐标轴球。
+- **`ArrayCamera.cameras` 的长度必须恒定**（`ARRAY_CAMERA_CAPACITY = 4`，不足的槽位用 `layers.mask = 0` 的空相机补齐）。three 给 `cameraProjectionMatrices` 分配的 uniform buffer 按**当时的相机数**定容，之后按名字共享且**不会增长**：实测 2 窗格建了 `size(128)`，切 4 窗格 `Queue.WriteBuffer` 写 256 字节 → `GPUValidationError`，整块画布落到 "3D rendering needs WebGPU" 失败面板。回归测试 `paneViewports.test.ts`。**不要**把这行改成"按需变长"。
+- 因为是统一清屏，**各视图 pass 里 `autoClear` 必须保持 `false`**；谁改成 `true` 谁就把其它窗格擦掉。**唯一例外是 `PaneGizmo` 的 HUD pass**：它用 `autoClear = true` + `autoClearColor = false` + `autoClearDepth = true` 把深度清屏折进那一趟 pass 的 `depthLoadOp`（替代原来独立的 `gl.clearDepth()`，省一次 encoder + 空 pass + submit）。**颜色那一项绝不能打开**，否则就是上面说的"擦掉其它窗格"；照抄这一段时四个 flag 要成套改、成套还原。
+- `SplatModel` 现在只有**一个** `GaussianSplatRenderer`，服务全部窗格：three 的 `ArrayCamera` 路径把"N 个窗格"并成一趟，GSL 的投影器看到 `array.cameras` 就把所有眼放进**同一条 compute 链**、用 `cameraIndex` 取每眼排序。此前是每窗格（每 layer）一个实例——4 份 ProjectionCache / 排序器 / splat 纹理，每帧 4 次 `onBeforeRender`，当初那样做只为免去"布局切换时重编译"。顺带修掉一个真实缺陷：逐窗格时 GSL 的 `renderSize` 取的是 `getDrawingBufferSize()`（整张画布），于是 `minPixelRadius` / `clipXY` 在分屏下按整画布而不是窗格算；multiView 路径取 `camera.viewport`。
 - 截图/缩略图走 `CaptureQueue`（检查图优先、交互让行、1.5 s 老化、16 上限）+ `capture.ts` 的私有 RenderTarget + 异步读回 + GPU 行填充解包。
 - 资源两层账：截图目标有申请预算（`ResourceBudget`，超限走尺寸阶梯降级，缺额度时按差额回收空闲模型条目再重试同一尺寸）；模型缓存只淘汰闲置项（`ModelResources`：空闲 **128 MiB / 8 项 / 30 s TTL**，另有 **512 MiB 的总驻留安全上限**，超出时立刻回收空闲条目，绝不释放在用项）。**截图准入同时看两侧余量**（`ResourceBudget` 的 `MemoryPressure` 探针，谁能给的少按谁算）。**两者都不是整个项目的显存上限**——这本账不覆盖 splat（`GaussianSplatRenderer` 不走 `ModelResources`），而已知风险恰恰在 splat。
 - 诊断代码（`gpuProbe.ts` / `benchmark.browser.js` / `*.browser.ts`）**不进生产包**，只被探针和测试引用。保持这个状态。
+
+---
+
+## 四之二、PlayCanvas 迁移层（**并行存在，尚未接入应用**）
+
+> **现状**：应用**仍然跑在 three 上**（§四 描述的就是它）。`app/src/shared/rendering/playcanvas/`
+> 是一套**并行**的、已在本机真实浏览器里验证过的实现，通过 `app/pc-panes.html` 这个 dev 探针驱动。
+> 完整计划、证据与各 Phase 状态见 **`PLAYCANVAS_MIGRATION.md`**（那份是权威）。
+> 本节只收录**新代码的硬约束**——它们运行时大多**静默失败**（不报错、不崩，只是画面不对），
+> 而且每一条都踩过或实测过。
+
+### 设备与循环
+
+- **绝不用 `createGraphicsDevice()`**。它无条件把 `WEBGL2` 与 `NULL` 追加进 `deviceTypes`
+  （`graphics-device-create.js:6-12`），WebGPU 一失败就**静默给你一个 WebGL 设备**。
+  必须 `new WebgpuGraphicsDevice(canvas, opts)` + `await device.initWebGpu()`（不传 glslang/twgsl），
+  并断言 `isWebGPU === true && isWebGL2 === false`。`device.ts` 已封装，用 `createWebGPUDevice()`。
+  ⚠️ `playcanvas/supersplat` 就是这个错法的现成例子（注释写 "requests webgpu only"、全仓库无断言）。
+- **`AppOptions.componentSystems` 默认是空数组**（`app-options.js:16-17`），`AppBase.init` 只注册你列进来的。
+  漏了的后果是 `entity.addComponent("camera")` **什么也不做、`entity.camera` 是 undefined、零报错**。
+  显式清单**不是优化而是必需**；`app.ts` 里还加了一道 `init` 后的必需系统校验。
+
+### 多窗格
+
+- **每个窗格都必须清深度**（`clearDepthBuffer: true`）。多窗格共享同一个深度附件，只清第一格时
+  其余窗格的深度区保留残留值 → 深度测试全灭 → **整格纯黑且零报错**（本机二分定位：同机位无效、
+  每格只清深度即恢复）。**每格清屏并不阻断 pass 合并**（非满尺寸 rect 的清屏是 pass 内被 viewport
+  裁剪的 quad，不是 `loadOp: clear`）。
+- **`camera.rect` 是归一化、左下原点**；DOM 测量（`viewRect()`）是左上原点。
+  必须 `y = 1 - (top + height) / canvasHeight`；**不要自己再翻一次**——WebGPU 后端会翻（`webgpu-graphics-device.js:1867-1891`），
+  WebGL 不翻，所以 rect 语义是后端无关的。分母用**画布 CSS 尺寸**（归一化后 DPR 自然抵消）。
+- **layer id 0–4 是引擎默认层的**（World/Depth/Skybox/Immediate/UI）。逐窗格 HUD 层必须**新建**
+  （`new Layer({ name })` 不给 id，`layer.js:87-90` 会自动分配），不要拿 0–4 当"应用自己的层"。
+- 验收看 **`startRenderPass` 是否 ≈ 每帧 1 次**（1/2/4 窗格实测都是 1）——它比 `TRACEID` 直接，
+  不需要 debug 构建。
+
+### 指针输入（`paneInput.ts`，每格各自输入）
+
+- **不能用引擎自带的 `orbitCamera` 脚本**：它是**全局输入**（挂 `app.mouse`、对整张画布生效）。
+  `paneInput.ts` 按与 `camera.rect` **同源**的 CSS px 视口命中测试，自己接指针事件；
+  手势一旦在某一格按下就**绑定那一格**，指针拖到别的格子上也不改弦更张（真机断言过）。
+- **拖动必须 `setPointerCapture` 且在 `window` 上收 `pointermove`/`pointerup`/`pointercancel`/`blur`**：
+  只听画布自己的 `pointerup` 时，指针在画布外松手就没有 up 事件，手势**永久粘住**
+  （此后每次移动都在转视角）。`pointercancel`/失焦/布局变化都要按"抬手"处理。
+- **`wheel` 监听必须 `{ passive: false }`**：passive 里 `preventDefault()` 静默失效，
+  滚轮会**同时**缩放页面（控制台只有一条 warning）。命中窗格时要 `preventDefault()`。
+- **双击是自算的，不要挂 `dblclick`**。实测（Chrome 154，真实事件）：本层取消 `pointerdown` 默认行为后
+  **`mousedown` 被抑制（0 次）**，而 `click`/`dblclick` **照旧派发**——兼容事件的生成规则是浏览器实现细节、
+  而我们在扰动它，所以双击按"两次左键点击 + 位移/间隔在窗口内"自己判定。
+  **推论：画布上的拾取要走指针事件，`mousedown`/`mouseup` 已经收不到。**
+- **正交窗格的滚轮/缩放不动**：可见高度是产品常量 `ORTHO_VIEW_WORLD_HEIGHT`（15 世界单位），缩放会破坏它。
+  俯视窗格平移要把它自己的 up（`(0,0,-1)`）传给 `panBy`，否则方向差 90°。
+- **旋转/平移/中键缩放的比例尺按窗格高**，不是画布高。three 侧 `OrbitControls` 挂在整张画布上：
+  4 窗格布局下它的旋转、平移、缩放全都只有**一半**响应（平移时模型不跟手）。这是与 three 侧的**有意**差异。
+
+### 拾取与变换 gizmo（`panePicking.ts` / `paneGizmo.ts`）
+
+- **用引擎自带的 `pc.Picker`，不要照抄 SuperSplat 的 `picker.ts`**。引擎那份已经把 ID pass + 深度 pass
+  做完，而且 WebGPU 路径**自己就是** `texture.read(…, { immediate: true, renderTarget })`；SuperSplat 那份是
+  **splat 编辑专用**（`prepareId(splat, 'add'|'remove'|…)`）。只借它一条**坐标约定**：
+  读缓冲用**画布归一化坐标 × 缓冲尺寸**（不是窗格局部坐标）——`panePicking.toPickPixel()` 就是这条。
+- **`Picker.prepare(camera, scene, layers)` 的 `layers` 必须只给共享核心层**（`[worldLayer]`）。不传就是相机的
+  全部 layers，于是 HUD 坐标轴球与 gizmo 手柄也会被拾取到（症状：点空白也选中东西）。
+- **splat 拾取要先 `scene.gsplat.enableIds = true`**（默认 **false**，`gsplat-params.js:142`），
+  否则 splat 永远选不中而模型能选中。`MeshInstance.pick` 默认是 `true`（`mesh-instance.js:100`），不用自己开。
+- **`Picker.prepare()` 是同步渲染一趟**（`RenderPass.render()` 自己 start/end pass），读回是异步的：
+  **不要每帧、也不要每个 pointermove 都拾取**（悬停高亮要另想办法）；并发拾取必须串行化（同一块缓冲）。
+- **变换手柄用引擎的 `TranslateGizmo`/`RotateGizmo`/`ScaleGizmo`，逐窗格各一个**。它们的射线走
+  `camera.screenToWorld()`，按 `camera.rect` 换算（`camera.js:538-541`），所以指针在别格时 NDC 落在
+  [0,1] 之外、本格自然不响应——**不需要**自己写逐格输入路由。
+- **`Gizmo.destroy()` 不删层**（`gizmo.js` 的 `destroy()` 只摘监听 + `root.destroy()`），而
+  `Gizmo.createLayer()` 把层插进了 `scene.layers`。不自己 `removeLayer` 就是每轮泄漏一层。
+- **gizmo 层必须走 `PaneSpec.extraLayerIds`**：`PaneRegistry.sync()` 每次都重写 `camera.layers`，
+  gizmo 在构造时 concat 进去的层下一次同步就被抹掉（症状：手柄突然不画、零报错）。相机 layers 只能有一个写入点。
+- **拖手柄时必须让出指针手势**：订阅引擎自己的 `transform:start` / `transform:end` → `PaneGizmoHandle.dragging()`
+  → `PaneInputHost.isPointerClaimed`。输入层还会在 `move()` 途中复查（`paneInput.ts`），所以**不依赖两边监听器的注册顺序**。
+- **点击手柄不会变成"选择"**：手柄认领了那次 pointerdown，输入层就不开始手势、也就没有 `onClick`。
+  这与 three 侧 `pickSuppressedRef` 的行为一致（gizmo 拖动期间不选中/不聚焦）。
+  要测"点击选择"、或在手柄附近放可点物体时，必须**避开手柄**（本仓库的探针往 −X 偏了 0.45）。
+- **双击聚焦有两种口径**：three 侧现行的是"**摆放位置 + 固定偏移 `[3,2,3]`**"
+  （`widgets/Viewport/index.tsx:113-114,453-469`），**不是**包围球。`focusRigWithTarget()` 两种都支持
+  （`{center, radius}` / `{center, offset}`）；正交窗格两种都只挪目标点。
+
+### Splat
+
+- engine GSplat 用默认的 **`unified = true`**（WebGPU 上 = GPU compute radix sort，每帧每相机、
+  **无 CPU 回读也无同步等待**）。**不要设 `false`**：legacy 路径 `gsplat-instance.js:137` 硬编码
+  `cameras[0]`，多视图排序**是错的**（不是慢，是错）。2.22.6 的默认值也已核实是 `true`。
+- **资产必须是 SPZ v4**。解析器只认 version 4；本项目原有的四份 `.spz` 全是 legacy（头部 `1f8b` = gzip），
+  必须用 `@playcanvas/splat-transform` 转（实测 1.92M 约 2.5 s）。
+- **ZSTD 解码器要自己 vendor**：它在引擎仓库的 `examples/assets/wasm/zstd/` 下、
+  **不在 npm 包的 `files` 白名单里**。胶水是 IIFE（靠 `window.ZstdDecoderModule` 注册），
+  不能当模块打进来——用 Vite 的 `?url`。见 `playcanvas/vendor/` 与 `splat.ts`。
+
+### 截图与模型描述
+
+- **不要移植 three 侧的 `unpackRGBA`**。three 的读回带 256 字节行对齐所以要手工解；
+  PlayCanvas 的 `Texture.read` **自己**解（`webgpu-texture.js` 里 `roundUp(bytesPerRow, 256)` 后逐行拷贝）。
+  实测判据：返回的 `bytes` **恰好等于 `w*h*4`**。
+- **`Texture.read` 在帧外必须 `immediate: true`**，否则会在拷贝执行前 map staging buffer、读到零值。
+- **`Texture.getSource()` 返回的就是 level，而对 GLB 贴图这个 level 本身就是 `ImageBitmap`**——
+  图像**不在** `level.source` 上（证据：引擎 `releaseImageSources()` 直接判 `level instanceof ImageBitmap`）。
+  按 `.source`/`.img`/`.data` 找会全落空，症状是"尺寸读得到、缩略图全 null"。
+- `RenderTarget` **没有 `width`/`height`/`colorFormat` 选项**——尺寸与格式来自你给的那张纹理。
+- **`CaptureQueue` / `ResourceBudget` / `useCaptureResult` / `ModelResources` 的纯逻辑部分不要重写**：
+  它们与引擎无关（优先级、老化、尺寸阶梯降级、两本账取更紧一侧）。只有底层"渲染进私有 RT + 读回"要换。
+- **设备丢失不是终态**：引擎自己会重建设备（`handleDeviceLost` → `fire('devicelost')` → `createDevice()` →
+  `fire('devicerestored')`）。不要一丢就判死、也不要在释放时忘了退订。
+
+### 编辑层边界（这是迁移的前提）
+
+- `app/src/pages/`、`widgets/Inspector`、`AgentDock`、`Sidebar`、`SettingsDialog`、**`widgets/ModelList`**、
+  `shared/storage` 是**冻结集**：渲染层换引擎时它们**不得改**。
+- `app/src/pages/editingLayerBoundary.test.ts` 用真实模块依赖图守这条线（规则 A/B/C）。
+  它有三张例外表，**语义各不相同，不要合并**（规则 D 会拦住重叠）：
+  `SEAMS`（跨集目标）、`FROZEN_IMPORTERS`（集内直接导入渲染库，属**待消除的越界**）、
+  `RENDERING_COMPONENTS_IN_FROZEN_DIRS`（**本来就不属于编辑层**的 3D surface，两条规则都豁免）。
+  三张表都有**失效检查**：某条不再被触达时测试会失败要求删除。
+  **不要为了让测试过而把表清空或乱塞**；新增条目必须写清"为什么允许"与"迁移时怎么处理"。
+- 渲染层要告诉编辑层"这个模型有哪些通道"时，走 **`shared/lib/modelDescription.ts`**（按稳定 id `asset.id`
+  索引的模块级 store），**不要**让编辑层自己挂载模型加载器去遍历引擎对象——那正是已经消除掉的越界。
+
+### 探针怎么跑
+
+`bun run dev:web` 起 dev server（注意别和用户已有的 5173 抢），然后
+`node .tmp/pc-panes/drive.mjs <baseUrl> <panes> [extraQuery]`。两个环境陷阱（都会读出**假的 0**）：
+
+1. 应用有**访问门禁**。规范做法是调应用自己的 `passAccessGate()`（照 `app/scripts/gpu-probe.mjs:232-247`），
+   **不嗅探 DOM 文案、不硬编码口令**。
+2. **解锁只写 localStorage，已渲染的门禁页不会因此重渲染**——必须**解锁后重载页面**；
+   重载又会销毁执行上下文，所以要带重试。
+
+`pc-panes.html` 这个渲染层探针没有门禁，另有两条入口（**指针输入必须走真机，单测证明不了**）：
+
+| 命令 | 覆盖 |
+| --- | --- |
+| `drive.mjs <baseUrl> <panes> "input=1&picking=1&gizmo=1"` | 页面内**合成事件**自检：轨道/滚轮/平移/双击 + 多窗格隔离 + 画布外松手不粘住 + 投影点拾取/空白对照 + gizmo 逐格像素隔离 |
+| `node .tmp/pc-panes/drive-input.mjs <baseUrl> <panes>` | CDP **可信**事件复测（24 条断言，**≥2 窗格**）：真实 `pointerId`（`setPointerCapture` 真的成功）、真实 wheel、浏览器自己生成的 click/dblclick、可信点击拾取、**可信拖动手柄**（物体动而相机不动） |
 
 ---
 
@@ -120,7 +265,8 @@ cd <repo> && ~/.bun/bin/bun run dev:web
 
 - Metal 上 Xcode Metal Debugger 是**唯一**可用的抓帧工具，RenderDoc 不支持 Metal。
 - Xcode 路径成本很高：需要能附加调试器的 Chrome 构建（标准 Chrome 的签名会阻止附加）、`--disable-gpu-sandbox`、`MTL_CAPTURE_ENABLED=1`、`--enable-dawn-features=use_user_defined_labels_in_backend`，附加到 **GPU 进程** PID，而且**每次抓帧后浏览器必然挂死，需重启**。参考 [Profiling WebGPU with Xcode's Metal Debugger](https://toji.dev/webgpu-profiling/xcode)。
-- 而且 Three 0.186.1 **不发 `pushDebugGroup`，也不给 GPU 资源设 `label`**，抓下来会是一片无法辨认的 `Dawn_Buffer_*`。要让它可用，得先加第三个补丁给 buffer/texture 打标签。
+- **✅ 已核实并更正（2026-09-30）**：Three 0.186.1 **不发 `pushDebugGroup`（0 处）**，**但确实给 GPU 资源设了 `label`**（bundle 内 60 处 `.label =`，约 23 处在真实渲染描述符上：buffer 用 `BufferAttribute.name`、texture 用 `Texture.name`、pipeline 是 `` `renderPipeline_${material.name||material.type}_${material.id}` ``、bind group / command encoder / query set 也都有）。原句"也不给 GPU 资源设 `label`"作废。**抓帧要可用的话，正确做法是"给应用自己的资源起名字"，而不是"再加一个补丁打标签"**——label 只在 `--enable-dawn-features=use_user_defined_labels_in_backend` 下进后端，而 swapchain 纹理本身由浏览器持有、无法命名。
+- **✅ 已修（2026-09-30）：仓库根那份陈旧的 `node_modules/three` 已重指到运行时副本。** 之前根目录的 `node_modules/three` 是一个**不同 revision** 的实体目录（09-27、无 `typeof` guard），而且它的 `WebGPUBackend.updateViewport` **带着 WebGL 那条 `height - h - y` 翻转**——照它推理会把 viewport 原点判反（实际那份在权威副本里只存在于 `WebGLBackend`）。现已 `rm -rf` 后改指 `node_modules/.bun/three@0.186.1/node_modules/three`，根目录解析与 grep 都落到权威副本。**教训：审计依赖一定要先确认 `import.meta.resolve` 落在哪一份。**
 - **更便宜的第一步已经做完了**：`long-animation-frame` 归因现在有了报告入口 `formatProbeReport(result)`（`WEBGPU_PROBE_PROTOCOL.md` §4.1），并已在可见窗口实测（§5.13）。做这件事时发现探针本身有两处缺陷（见上），修好后**没有复现**那个缺口——所以现在没有理由为此上 Metal 抓帧。
 - **同一分母也已经做完了**：探针改为**窗口配对**。Three 的查询池在 `_resolveQueries` 入口就快照并清空，所以一次 resolve 返回的是"自上次 resolve 以来"的**区间总和**；探针现在在发起 resolve 的同一刻对 wall 做快照，于是 `paired(ms)` 与 `gpuUtilization=` 是同分母的比较（字段与口径见 `WEBGPU_PROBE_PROTOCOL.md` §4.2）。**读报告只用 `paired` 行**——`means` 行与 `unexplained` 仍是混合分母，不要拿它们下结论。
 - **✅ 已用新口径重跑**（`bun run probe:gpu`，见 §5.13/§5.14）：**`gpuUtilization` 现已含 compute 池**（旧版只算 render，系统性偏低），修正后 **22%–33%** —— **GPU 没饱和**。
@@ -135,6 +281,10 @@ cd <repo> && ~/.bun/bin/bun run dev:web
      `submits≈3.5×视图数`，**而且与 motion 策略无关**（结构性）。相邻呈现间隔 **p50 0.4–0.6 ms**，
      远小于一个 vsync（16.7 ms）→ **"每个视图各等一次呈现"已证伪**；要等的时间在**帧与帧之间**。
      另一处修正：`gpuUtilization` 以前只算 render 池，现已含 compute；修正后是 **22%–33%**（结论不变）。
+     > ⚠️ **`renders≈4×视图数` / `submits≈3.5×视图数` 已被 `VIEWPORT_REVIEW.md` §〇 的改动取代**。修好探针
+     > （§〇.6：io 计数的分子原先含预热期）之后，4 窗格、1.92M 的稳定读数是 `renders=7.96`、
+     > `presents=8.96`、`submits=22.13`（同配置两轮离散 ±0.3%）。这一段里"呈现成堆发生"的定性结论
+     > 仍然成立，**但不要再引用这两个倍率**。
   4. **✅ 同步计数已做，结果出乎意料但很干净**（`WEBGPU_PROBE_PROTOCOL.md` §5.15）：
      包住 `mapAsync` / `onSubmittedWorkDone` 并记调用方指纹后发现——**100% 的 `mapAsync` 都来自探针自己的
      `WebGPUTimestampQueryPool._resolveQueries`**，应用侧一次都没有；`onSubmittedWorkDone` 0 次。
@@ -176,3 +326,4 @@ cd <repo> && ~/.bun/bin/bun run dev:web
 - [ ] 新增的每帧工作问过一遍"静态场景下它还跑吗"（静止场景不应持续提交绘制/排序）。
 - [ ] 我区分了"单测通过"和"真实浏览器验证过"。
 - [ ] 我更新了受影响的文档，并且没有把作废结论重新写回。
+- [ ] 若我动了 `app/src/shared/rendering/playcanvas/`：先读 §四之二，并复核 `PLAYCANVAS_MIGRATION.md` 里该项的验证级别。**那里大多数约束是"静默失败"型的**（不报错、只是画面不对）。

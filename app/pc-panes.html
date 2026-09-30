@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>PlayCanvas 窗格探针（dev）</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#111}#c{width:100vw;height:100vh;display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+  // dev 探针入口：不属于生产构建（vite build 只以 index.html 为入口）。
+  import { runPaneHarness } from "/src/shared/rendering/playcanvas/panes.browser.ts";
+  const params = new URLSearchParams(location.search);
+  const panes = Math.max(1, Math.min(4, Number(params.get("panes")) || 1));
+  const asset = params.get("asset") || undefined;
+  const motion = params.get("motion") === "1";
+  const glb = params.get("glb") || undefined;
+  const capture = params.get("capture") === "1";
+  const inspection = params.get("inspection") === "1";
+  const rig = params.get("rig") === "1";
+  const input = params.get("input") === "1";
+  const inputHoldMs = Math.max(0, Number(params.get("inputHoldMs")) || 0);
+  const picking = params.get("picking") === "1";
+  const gizmo = params.get("gizmo") === "1";
+  window.__PANES__ = { ok: false, panes, done: false, errors: [], steps: [] };
+  runPaneHarness(document.getElementById("c"), { panes, asset, motion, glb, capture, inspection, rig, input, inputHoldMs, picking, gizmo })
+    .then((result) => { window.__PANES__ = { ...result, done: true }; })
+    .catch((error) => { window.__PANES__ = { ok: false, panes, done: true, errors: [String(error && error.stack || error)], steps: [] }; });
+</script>
+</body>
+</html>

@@ -1,47 +1,20 @@
 import * as THREE from "three";
-import {
-  MATERIAL_TEXTURE_SLOTS,
-  type AssetMaterial,
-  type MaterialTextureSlot,
-} from "./libraryApi";
+import { CANDIDATE_SLOTS, type MaterialTextureSlot } from "./materialSchema";
 
 /**
- * 材质覆盖的展示名与判据，以及"模型自带材质到底认哪些通道"的探测。
+ * **渲染层**的材质探测：从真实的场景图里问出"模型自带材质认哪些通道"。
  *
- * 覆盖本身只做一件事：把用户指定的通道换成工程里的另一张图（见
- * `widgets/Viewport/materialOverride.ts`）。**没有"换 shader"这回事**——早先版本提供过
- * 九个着色器档位，后来删掉了：这个面板的主要工作是换贴图，而那些档位要么与"保持原材质"
- * 逐像素相同（面板不暴露 clearcoat/transmission，Physical 与 Standard 等价），要么是把
- * 外观改成用户调不回来的样子（Phong/Lambert 往回退，Toon 没有 gradientMap 可调）。
+ * ⚠️ 本文件里只有 `collectSupportedSlots` 是渲染相关的。展示名、默认值、判据与收敛这四样
+ * 是纯数据，已搬到 `./materialSchema`——撤销栈与 Inspector 从那里导入，**不要**让编辑层
+ * 再从本文件取它们（会把 three 拉进编辑层，`pages/editingLayerBoundary.test.ts` 会拦下来）。
+ *
+ * 迁移到 PlayCanvas 时，`collectSupportedSlots` 要换成引擎中立的接口（例如由渲染层在加载后
+ * 产出一份"支持的通道"描述，Inspector 只消费数据），本文件随 three 一起删除。
  */
 
-export const SLOT_LABELS: Record<MaterialTextureSlot, string> = {
-  map: "Base color",
-  normalMap: "Normal",
-  roughnessMap: "Roughness",
-  metalnessMap: "Metalness",
-  aoMap: "Ambient occlusion",
-  emissiveMap: "Emissive",
-  alphaMap: "Alpha",
-};
-
-/** 没有覆盖记录时的语义默认值：一张贴图都不换 */
-export const DEFAULT_MATERIAL: AssetMaterial = { textures: {} };
-
-/**
- * 这个材质记录是否等于"什么都不改"。等于默认值时视口直接跳过覆盖，
- * 因此不需要额外的开关，也不需要把记录从 scene.json 里删掉。
- */
-export function isDefaultMaterial(material: AssetMaterial | undefined): boolean {
-  if (!material) return true;
-  return Object.values(material.textures).every((path) => path == null);
-}
-
-/** 把可能来自旧版本/手写文件的记录收敛成完整值，避免下游到处做 undefined 判断 */
-export function normalizeMaterial(material: AssetMaterial | undefined): AssetMaterial {
-  if (!material) return DEFAULT_MATERIAL;
-  return { textures: material.textures ?? {} };
-}
+// 兼容性再导出：现有导入方（widgets/Viewport/materialOverride.ts 等）暂不受影响，
+// 但编辑层的新代码请直接指向 ./materialSchema。
+export { CANDIDATE_SLOTS, DEFAULT_MATERIAL, SLOT_LABELS, isDefaultMaterial, normalizeMaterial } from "./materialSchema";
 
 /**
  * 一批候选通道里，模型自带材质**真正声明过**的那些。
@@ -56,7 +29,7 @@ export function normalizeMaterial(material: AssetMaterial | undefined): AssetMat
  */
 export function collectSupportedSlots(
   root: THREE.Object3D,
-  candidates: readonly MaterialTextureSlot[] = MATERIAL_TEXTURE_SLOTS,
+  candidates: readonly MaterialTextureSlot[] = CANDIDATE_SLOTS,
 ): Set<MaterialTextureSlot> {
   const supported = new Set<MaterialTextureSlot>();
   root.traverse((node) => {

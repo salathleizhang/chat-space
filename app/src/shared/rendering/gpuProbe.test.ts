@@ -695,8 +695,8 @@ test("motion：正交窗格（没有 controls）也会被移动并还原", async
 });
 
 
-/** io 计数：present / submit / render 三类各自计数，且收尾必须把钩子摘干净。 */
-test("io 计数：present/submit/render 分别计数，收尾还原钩子", async () => {
+/** io 计数：present / submit / render 三类各自计数、**只在采样窗口内**计数，且收尾必须把钩子摘干净。 */
+test("io 计数：present/submit/render 只在采样窗口内计数，收尾还原钩子", async () => {
   const { renderer } = fakeRenderer({ durations: [5] });
   const originalGetCurrentTexture = () => ({});
   const originalSubmit = () => {};
@@ -716,9 +716,20 @@ test("io 计数：present/submit/render 分别计数，收尾还原钩子", asyn
     setFrameloop(mode: string) { state.frameloop = mode; },
     invalidate() {},
   };
-  const run = startGpuFrameProbe({ getState: () => state }, { label: "io", warmupMs: 0, durationMs: 60 });
+  const run = startGpuFrameProbe({ getState: () => state }, { label: "io", warmupMs: 0, durationMs: 200 });
 
-  // 走一遍被包装过的三个入口：呈现两次、提交一次、渲染两次（两次呈现间隔 30 ms）
+  /*
+    **预热期（第一次 rAF 之前）的调用不得计数。** 这三个数最终都除以 `wallFrames`，而
+    `wallFrames` 只覆盖采样窗口；分子若把窗口外也算进去，"每帧"数就会虚高。实测踩过：
+    同一配置两次运行给出 `renders=9.85` 与 `renders=15.76`，看着像结构性差异，其实只是
+    预热窗口长短不同。所以下面这三次调用预期**全部被丢掉**。
+  */
+  context.getCurrentTexture();
+  queue.submit();
+  gl.render();
+  await new Promise((resolve) => setTimeout(resolve, 30)); // 让 rAF 跑起来，采样窗口开始
+
+  // 窗口内：呈现两次、提交一次、渲染两次（两次呈现间隔 30 ms）
   context.getCurrentTexture();
   await new Promise((resolve) => setTimeout(resolve, 30));
   context.getCurrentTexture();
@@ -728,9 +739,9 @@ test("io 计数：present/submit/render 分别计数，收尾还原钩子", asyn
   await new Promise((resolve) => setTimeout(resolve, 30));
 
   const result = run.stop();
-  expect(result.io.presents).toBe(2);
-  expect(result.io.submits).toBe(1);
-  expect(result.io.renders).toBe(2);
+  expect(result.io.presents).toBe(2); // 不是 3：窗口外那次没计
+  expect(result.io.submits).toBe(1); // 不是 2
+  expect(result.io.renders).toBe(2); // 不是 3
   // 相邻呈现间隔被记下来：两次呈现相隔 ~30 ms
   expect(result.io.presentGapMs.frames).toBe(1);
   expect(result.io.presentGapMs.p50).toBeGreaterThan(20);

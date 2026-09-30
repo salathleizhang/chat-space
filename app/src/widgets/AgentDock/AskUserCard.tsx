@@ -6,6 +6,8 @@ import { Badge, Button, Panel } from "../../shared/ui";
 
 /** 跟帧入视的上限：只防内容一直变时无限跟下去，正常展开 300ms 内就稳定了。 */
 const CARD_FOLLOW_MAX_MS = 1500;
+/** 尺寸静默多久算长完了。ResizeObserver 只在真的变尺寸时回调，所以这个值只决定"何时收手"。 */
+const CARD_SETTLE_MS = 120;
 
 /**
  * 展开后逐帧把卡片自己的底部带进视野，直到卡片高度连续两帧不变。
@@ -18,23 +20,27 @@ const CARD_FOLLOW_MAX_MS = 1500;
  * 刚点开的这张卡滚出视野。这里用 block:"nearest"，露够就停、不越界。
  */
 function followCardIntoView(card: Element) {
-  const started = performance.now();
-  let lastHeight = -1;
-  let stableTicks = 0;
-  const step = () => {
-    if (!card.isConnected) return;
-    const height = (card as HTMLElement).offsetHeight;
-    if (height === lastHeight) stableTicks += 1;
-    else {
-      lastHeight = height;
-      stableTicks = 0;
-    }
-    card.scrollIntoView({ block: "nearest" });
-    if (stableTicks < 2 && performance.now() - started < CARD_FOLLOW_MAX_MS) {
-      requestAnimationFrame(step);
-    }
+  /*
+    用 `ResizeObserver` 而不是**每帧读 `offsetHeight`**：后者是每帧一次强制同步布局
+    （展开后最多 1.5 s，约 90 次），而这里真正要等的只有"卡片不再长高"这一件事。
+    ResizeObserver 只在尺寸真的变化时回调，静默 `CARD_SETTLE_MS` 就收手；热路径上一次
+    布局读都不做。上限仍然保留，防止内容一直变时无限跟下去。
+  */
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => {
+    clearTimeout(settle);
+    observer.disconnect();
   };
-  requestAnimationFrame(step);
+  const observer = new ResizeObserver(() => {
+    if (!card.isConnected) { stop(); return; }
+    // 判据照旧用 block:"nearest"：露够就停、不越界（见上面与 followScroll.ts 的差异说明）。
+    card.scrollIntoView({ block: "nearest" });
+    clearTimeout(settle);
+    settle = setTimeout(stop, CARD_SETTLE_MS);
+  });
+  observer.observe(card);
+  card.scrollIntoView({ block: "nearest" });
+  settle = setTimeout(stop, CARD_FOLLOW_MAX_MS);
 }
 
 /**

@@ -321,6 +321,12 @@ export function startGpuFrameProbe(store: ProbeStore, options: GpuProbeOptions =
     - `queue.submit`：命令缓冲提交了几批；
     - `gl.render`：应用主动渲染了几次（本应用每个窗格至少一次）。
     分别除以 rAF 帧数，就能区分"每帧一次"与"每视图一次"。
+
+    **必须在采样窗口内计数。** 这三个数最终都除以 `wallFrames`，而 `wallFrames` 只覆盖
+    预热之后的窗口；如果分子从探针启动（含 2 s 预热）就开始累加，预热期的任何绘制都会把
+    "每帧"数抬高，而分母不含那段。实测代价：同一配置两次运行给出 `renders=9.85` 与
+    `renders=15.76`（load 都是 4.1），看起来像"结构性差异"，其实只是预热窗口不同。
+    这与长帧归因踩过的是同一个坑（见 §5.13 对 `mainThreadTotalMs` 的窗口修正）。
   */
   const counters = { presents: 0, submits: 0, renders: 0 };
   /** 每次取画布纹理的时刻；有上限，避免长跑撑爆内存（5000 次 ≈ 几秒的 4 视图） */
@@ -330,8 +336,10 @@ export function startGpuFrameProbe(store: ProbeStore, options: GpuProbeOptions =
   if (context && typeof context.getCurrentTexture === "function") {
     const original = context.getCurrentTexture;
     context.getCurrentTexture = function (this: unknown, ...args: never[]) {
-      counters.presents += 1;
-      if (presentTimes.length < 5000) presentTimes.push(performance.now());
+      if (samplingWindow) {
+        counters.presents += 1;
+        if (presentTimes.length < 5000) presentTimes.push(performance.now());
+      }
       return original.apply(this, args);
     };
     restoreHooks.push(() => { context.getCurrentTexture = original; });
@@ -341,7 +349,7 @@ export function startGpuFrameProbe(store: ProbeStore, options: GpuProbeOptions =
   if (queue && typeof queue.submit === "function") {
     const original = queue.submit;
     queue.submit = function (this: unknown, ...args: never[]) {
-      counters.submits += 1;
+      if (samplingWindow) counters.submits += 1;
       return original.apply(this, args);
     };
     restoreHooks.push(() => { queue.submit = original; });
@@ -353,7 +361,8 @@ export function startGpuFrameProbe(store: ProbeStore, options: GpuProbeOptions =
   let cpuMs = 0;
   const measuredRender = function (this: unknown, ...args: [scene: unknown, camera: unknown]) {
     const start = performance.now();
-    counters.renders += 1;
+    // 同样只在采样窗口内计数：这个数最后要除以 `wallFrames`（见上面 io 计数的说明）
+    if (samplingWindow) counters.renders += 1;
     try { return originalRender.apply(this, args); }
     finally { cpuMs += performance.now() - start; }
   };

@@ -15,7 +15,7 @@
  * 退出码：0 = 每轮 `valid === true`；2 = 有轮次不成立；1 = 工具自身失败。
  */
 import { spawn } from "node:child_process";
-import { existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,12 +35,20 @@ function usage() {
 
   --url <url>          起始地址（默认 http://localhost:5173/app/p-mu5l6om3）
   --layouts <list>     布局，逗号分隔（默认 1,2,4；只有 1/2/4 三种）
-  --views <n>          额外构造"只剩 n 个可见 splat 视图"：先切到能容纳 n 的布局，再把多余的隐藏。
-                       历史记录的"3 视图"在 UI 里不存在，这是最接近的构造方式（默认不构造）
+  --views <n>          ❌ 已失效（会直接拒绝）：一个 GaussianSplatRenderer 现在服务全部窗格，
+                       「4 窗格 + n 个可见 splat」不再可构造。用 --layouts 1,2,4 测窗格数曲线。
   --duration <ms>      每轮采样时长（默认 10000）
   --warmup <ms>        每轮预热（默认 2000）
   --motion <0|1|persp> 0=静止，1=所有窗格相机（默认），persp=只动透视（旧行为）
   --msaa <0|1>         打开 MSAA（默认 0）。只为实测"关 MSAA 的收益"，不是可用设置
+  --opaque <0|1>       关掉画布的 alpha（默认 0 = 保持 alpha，即线上行为）。只为实测
+                       "合成器每帧混合一张 alpha 画布"的代价，不是可用设置
+  --shot <dir>         每个布局在跑探针**之前**存一张 PNG 到 <dir>/<布局>.png。
+                       用途是目视核对（AGENTS.md 要求"真实浏览器验证过"要能指明是哪一种），
+                       例如 4 窗格的 viewport y 轴原点、gizmo/grid 是否落在正确的格子里。
+  --eval <expr>        走完"起浏览器 → 解锁门禁 → 等画布与泼溅就绪"之后，在页面里求值 <expr>
+                       并打印 JSON，**不跑探针**。用来在不猜代码的前提下问运行时事实
+                       （例如 three 的 needsFrameBufferTarget / getPixelRatio / viewport 单位）。
   --json <path>        把结果写成 JSON
   --keep-open          结束后保留浏览器窗口（调试用）
   --headless           不允许：时间戳在 headless 下静默返回 0
@@ -58,6 +66,9 @@ function parseArgs(argv) {
     motionMode: "all",
     views: null,
     msaa: false,
+    opaque: false,
+    shot: null,
+    eval: null,
     json: null,
     keepOpen: false,
   };
@@ -67,7 +78,12 @@ function parseArgs(argv) {
     if (arg === "--help" || arg === "-h") { usage(); process.exit(0); }
     else if (arg === "--url") options.url = next();
     else if (arg === "--layouts") options.layouts = next().split(",").map((value) => Number(value.trim()));
-    else if (arg === "--views") options.views = Number(next());
+    else if (arg === "--views") {
+      console.error("--views 已失效：2026-09-30 起 splat 由**一个** GaussianSplatRenderer 服务全部窗格"
+        + "（一趟 ArrayCamera / multiView），所以「4 窗格 + n 个可见 splat」不再可构造。"
+        + "改用 --layouts 1,2,4 测窗格数曲线。");
+      process.exit(1);
+    }
     else if (arg === "--duration") options.durationMs = Number(next());
     else if (arg === "--warmup") options.warmupMs = Number(next());
     else if (arg === "--motion") {
@@ -76,7 +92,10 @@ function parseArgs(argv) {
       else if (value === "persp") { options.motion = true; options.motionMode = "perspective"; }
       else { options.motion = true; options.motionMode = "all"; }
     }
-    else if (arg === "--msaa") options.msaa = next() !== "0";
+    else if (arg === "--msaa") options.msaa = next() !== "0"
+    else if (arg === "--opaque") options.opaque = next() !== "0"
+    else if (arg === "--shot") options.shot = next()
+    else if (arg === "--eval") options.eval = next();
     else if (arg === "--json") options.json = next();
     else if (arg === "--keep-open") options.keepOpen = true;
     else if (arg === "--headless") {
@@ -163,12 +182,14 @@ class Session {
 
 /**
  * 探针专用 URL：始终带 `gpuTimestamps=1`（时间戳必须在 backend 构造前开启），
- * `--msaa 1` 时再加 `msaa=1`。用 URL API 拼接，避免原 URL 已带查询串时拼出 `??`。
+ * `--msaa 1` 再加 `msaa=1`，`--opaque 1` 再加 `opaque=1`。用 URL API 拼接，避免原 URL
+ * 已带查询串时拼出 `??`。
  */
-function probeUrl(base, msaa) {
+function probeUrl(base, msaa, opaque) {
   const url = new URL(base);
   url.searchParams.set("gpuTimestamps", "1");
   if (msaa) url.searchParams.set("msaa", "1");
+  if (opaque) url.searchParams.set("opaque", "1");
   return url.toString();
 }
 
@@ -247,14 +268,16 @@ const pageHelpers = {
     if (!main) return { ok: false, reason: 'no webgpu R3F root' };
     const until = Date.now() + ${timeoutMs};
     while (Date.now() < until) {
-      let splats = 0, views = 0;
+      let splats = 0;
       main.store.getState().scene?.traverse?.((object) => {
         if (object.activeSplats === undefined && object.geometry?.instanceCount === undefined) return;
         if (object.visible === false) return;
-        views += 1;
         splats = Math.max(splats, object.activeSplats ?? 0);
       });
-      if (splats > 0) return { ok: true, views, splats };
+      // 视图数按**窗格**数，不按 GaussianSplatRenderer 实例数：一个实例现在服务全部窗格
+      // （一趟 ArrayCamera / multiView，见 paneViewports.ts）。
+      const panes = document.querySelectorAll('[data-viewport-pane]').length;
+      if (splats > 0) return { ok: true, views: panes, splats };
       await sleep(500);
     }
     return { ok: false, reason: 'no visible splat within budget' };
@@ -302,15 +325,7 @@ const pageHelpers = {
       此时沿用调用方"点过按钮"的假设，就会把 1 视图的读数挂上 "4 视图" 的标签——测出来的数字
       是错的，而且看不出错。实测踩到过：视图数不匹配时 GPU 时间只有三分之一。
     */
-    const visibleViews = () => {
-      let views = 0;
-      main.store.getState().scene?.traverse?.((object) => {
-        if (object.activeSplats === undefined && object.geometry?.instanceCount === undefined) return;
-        if (object.visible === false) return;
-        views += 1;
-      });
-      return views;
-    };
+    const visibleViews = () => document.querySelectorAll('[data-viewport-pane]').length;
     if (visibleViews() !== ${expectedViews}) {
       const button = [...document.querySelectorAll('button')]
         .find((b) => (b.getAttribute('aria-label') || '') === ${JSON.stringify(layoutLabel)});
@@ -447,7 +462,7 @@ async function main() {
         取值。用 PROBE_CHROME_SANDBOX=1 可以把它关掉（在正常桌面环境里跑时更安全）。
       */
       ...(process.env.PROBE_CHROME_SANDBOX === "1" ? [] : ["--no-sandbox", "--disable-gpu-sandbox"]),
-      probeUrl(options.url, options.msaa),
+      probeUrl(options.url, options.msaa, options.opaque),
     // detached 是为了拿到**独立进程组**：Chrome 会派一堆 helper 子进程，只杀主进程
     // 会留下孤儿（实测留下过 network/gpu helper，占着 profile 目录）。收尾时按组杀。
     // stderr 落盘而不是 ignore：渲染进程崩溃时，那是唯一的现场。
@@ -463,6 +478,8 @@ async function main() {
     const target = await findPageTarget(new URL(options.url).host);
     session = await Session.connect(target.webSocketDebuggerUrl);
     await session.send("Runtime.enable");
+    // 截图需要 Page 域；没有它 Page.captureScreenshot 会以 "Page is not enabled" 失败
+    await session.send("Page.enable");
 
     const appHost = new URL(options.url).host;
     /*
@@ -514,7 +531,23 @@ async function main() {
 
     const stable = await evaluate(pageHelpers.waitForStablePage(3000));
     if (!stable.ok) throw new Error(`页面仍在重载（开发服务器在改文件？）：${stable.reason}`);
-    console.log("页面已稳定 3 s，开始测量");
+    console.log("页面已稳定 3 s");
+
+    // 只问运行时事实，不测性能：`--eval` 在这里就结束。
+    if (options.eval) {
+      const value = await evaluate(`(async () => { const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const entry = performance.getEntriesByType('resource').find((e) => e.name.includes('/deps/@react-three_fiber.js'));
+        const mod = await import(entry.name);
+        const main = [...mod._roots.values()].find((r) => r.store.getState().gl?.domElement?.dataset?.renderer === 'webgpu');
+        if (!main) return { error: 'no webgpu R3F root' };
+        const gl = main.store.getState().gl;
+        await sleep(200);
+        return await (async () => (${options.eval}))();
+      })()`);
+      console.log(JSON.stringify(value, null, 2));
+      // 与 `--shot` 同用时继续走后面的布局循环：这样才能拍下"eval 里改过的运行时状态"。
+      if (!options.shot) return;
+    }
 
     /*
       `--views n` 用来构造 UI 里不存在的配置（历史记录说的"3 视图"）：先切到能容纳 n 的布局，
@@ -529,14 +562,29 @@ async function main() {
       const clicked = await evaluate(pageHelpers.clickLayout(LAYOUT_LABEL[layout]));
       if (clicked !== "clicked") throw new Error(`切不到 ${layout} 视图：${clicked}`);
       await sleep(2500);
+      if (options.shot) {
+        /*
+          目视核对用。必须在**探针之前**拍：探针会把 frameloop 临时切成 always 并移动相机，
+          拍到的就不是用户实际看到的画面了。此时布局已切换并稳定 2.5 s。
+        */
+        const shot = await session.send("Page.captureScreenshot", { format: "png" });
+        const data = shot?.result?.data;
+        if (!data) throw new Error(`截图失败：CDP 没有返回图像数据（${JSON.stringify(shot?.error ?? {})}）`);
+        mkdirSync(options.shot, { recursive: true });
+        const path = join(options.shot, `${layout}view.png`);
+        writeFileSync(path, Buffer.from(data, "base64"));
+        console.log(`截图：${path}`);
+      }
       const result = await evaluate(pageHelpers.probe(
         `probe-${target}view`, options.warmupMs, options.durationMs, options.motion, options.motionMode,
         layout, LAYOUT_LABEL[layout], expectedVisible,
       ));
-      // 视图数不符就是测错了对象，不能只靠 valid
+      // 视图数不符就是测错了对象，不能只靠 valid。
+      // 注意用 `layoutSettled`（DOM 里的窗格数）判布局，**不要**用 `result.views`：后者是
+      // "有几个 splat drawable 在画"，一个实例服务全部窗格之后它恒为 1。
       const wanted = expectedVisible ?? layout;
-      if (result.views !== wanted || result.layoutSettled !== wanted) {
-        console.error(`⚠️ 目标 ${wanted} 个可见泼溅视图，实到 ${result.views ?? result.error}，读数不可引用`);
+      if (result.layoutSettled !== wanted) {
+        console.error(`⚠️ 目标 ${wanted} 个窗格，实到 ${result.layoutSettled ?? result.error}，读数不可引用`);
         result.valid = false;
       }
       runs.push({ layout, targetViews: target, ...result });
@@ -550,7 +598,7 @@ async function main() {
       const a = run.attribution;
       const utilization = a.gpuUtilization === null ? "n/a" : `${(a.gpuUtilization * 100).toFixed(1)}%`;
       const io = run.io ?? { presentsPerWallFrame: 0, submitsPerWallFrame: 0, rendersPerWallFrame: 0 };
-      console.log(`${run.targetViews ?? run.layout} 视图：valid=${run.valid} views=${run.views} instances=${run.instanceCount} `
+      console.log(`${run.layout} 窗格：valid=${run.valid} panes=${run.layoutSettled} splatDrawables=${run.views} instances=${run.instanceCount} `
         + `splats=${run.activeSplats} 帧间隔p50=${run.wallMs.p50.toFixed(1)}ms `
         + `pairedGpu均值=${a.pairedGpuMeanMs.toFixed(1)}ms pairedWall均值=${a.pairedWallMeanMs.toFixed(1)}ms `
         + `gpuUtilization=${utilization} 覆盖=${a.gpuFrames}/${a.wallFrames} `

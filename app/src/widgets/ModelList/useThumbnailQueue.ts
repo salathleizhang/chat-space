@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { libraryUrl, uploadThumbnail, type LibraryAsset } from "../../shared/lib/libraryApi";
 
 /**
@@ -161,7 +161,15 @@ export function useThumbnailQueue({
           queued.add(stamp);
         }
       }
-      return next;
+      /*
+        内容没变就**返回原数组**，别换新引用。
+
+        这个 effect 的依赖里有 `assets`，而它每次被上层重建引用都会重跑；旧写法无条件
+        `return next`，于是队列换新数组 → 下面 `useMemo` 的返回值跟着换 → `memo(ModelList)`
+        照样被打穿。这里做一次逐项同一性比较，让"队列内容真的没变"这条路径不产生新引用。
+      */
+      const unchanged = next.length === items.length && next.every((asset, index) => asset === items[index]);
+      return unchanged ? items : next;
     });
   }, [assets, needsThumbnail]);
 
@@ -218,14 +226,20 @@ export function useThumbnailQueue({
     scheduleRetry(asset);
   }, [replaceGenerated, replaceInvalidImages, scheduleRetry]);
 
-  return {
-    current: queue[0] ?? null,
-    pendingIds: new Set(queue.map((a) => a.id)),
-    generated,
-    invalidImages,
-    onImageError,
-    onCaptured,
-  };
+  /*
+    返回值的引用必须**稳定**，否则下游 `memo(ModelList)` 会被打穿。
+
+    `AppDashboard` 每来一个流式聊天 token 就重渲染一次，而它把这个对象直接传进
+    `memo(ModelList)`（`AppDashboard/index.tsx:469`）。旧写法每次渲染都新建对象 + 新建
+    `Set`，于是 `memo` 的比较必然失败——每来一个 token 就把整张资产列表（所有行、
+    tooltip、悬浮卡片）重协调一遍。这里两个 `useMemo` 让"队列/生成表没变"的渲染
+    返回同一个引用，`memo` 才能真正 bail out。
+  */
+  const pendingIds = useMemo(() => new Set(queue.map((asset) => asset.id)), [queue]);
+  return useMemo(
+    () => ({ current: queue[0] ?? null, pendingIds, generated, invalidImages, onImageError, onCaptured }),
+    [queue, pendingIds, generated, invalidImages, onImageError, onCaptured],
+  );
 }
 
 /**

@@ -25,7 +25,7 @@ import { Sidebar, type SectionId } from "../../widgets/Sidebar";
 import { Viewport } from "../../widgets/Viewport";
 import { createLiveTransforms } from "../../widgets/Viewport/liveTransforms";
 import { computeSceneLayout } from "../../widgets/Viewport/scenePlacement";
-import type { TransformMode } from "../../widgets/Viewport/TransformGizmo";
+import type { TransformMode } from "../../widgets/Viewport/transformMode";
 import { useAgentChat } from "./useAgentChat";
 import { useAssetMaterials } from "./useAssetMaterials";
 import { useChatMessages } from "./useChatMessages";

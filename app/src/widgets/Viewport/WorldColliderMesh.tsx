@@ -1,11 +1,12 @@
 import { useGLTF } from "@react-three/drei/core/Gltf";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 import type { WorldSemantics } from "../../shared/lib/libraryApi";
 import { worldTransform } from "./worldTransform";
 import { useModelResource } from "../../shared/rendering/useModelResource";
 import { disposeSkeletons } from "../../shared/rendering/ModelResources";
+import { useDeferredDispose } from "../../shared/rendering/useDeferredDispose";
 
 /**
  * world 的 collider 网格：作为地形线框参照渲染，不参与拾取。
@@ -25,6 +26,23 @@ const ignoreRaycast: THREE.Object3D["raycast"] = () => {};
 const COLLIDER_COLOR = 0xffffff;
 const COLLIDER_OPACITY = 0.22;
 
+/**
+ * 参照线框材质没有任何参数，做成模块级单例：省掉每次挂载重建，也消掉原来那个 StrictMode 陷阱
+ * （`useMemo` 建 + effect cleanup `dispose()` → 回放时释放的正是**在用**的那一份，见
+ * `DeferredResource` 的注释）。
+ */
+const colliderMaterial = new THREE.MeshBasicMaterial({
+  color: COLLIDER_COLOR,
+  wireframe: true,
+  transparent: true,
+  opacity: COLLIDER_OPACITY,
+  // 只当参照：不写深度，免得跟后面渲染的东西互相打架
+  depthWrite: false,
+  toneMapped: false,
+  fog: false,
+});
+colliderMaterial.name = "world-collider";
+
 export default function WorldColliderMesh({
   url,
   semantics,
@@ -35,22 +53,7 @@ export default function WorldColliderMesh({
   const { scene } = useGLTF(url);
   useModelResource(scene, () => useGLTF.clear(url));
   const transform = useMemo(() => worldTransform(semantics), [semantics]);
-
-  const material = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: COLLIDER_COLOR,
-        wireframe: true,
-        transparent: true,
-        opacity: COLLIDER_OPACITY,
-        // 只当参照：不写深度，免得跟后面渲染的东西互相打架
-        depthWrite: false,
-        toneMapped: false,
-        fog: false,
-      }),
-    [],
-  );
-  useEffect(() => () => material.dispose(), [material]);
+  const material = colliderMaterial;
 
   /*
     useGLTF 的场景是按 URL 共享的缓存对象，直接改材质会污染其他消费者（模型列表的
@@ -70,7 +73,9 @@ export default function WorldColliderMesh({
     });
     return cloned;
   }, [scene, material]);
-  useEffect(() => () => disposeSkeletons(model), [model]);
+  // 延迟一个 macrotask 再释放骨架：StrictMode 回放会在同一轮里 cleanup → 重新挂载，
+  // 立即释放会拆掉正在渲染的那一份。
+  useDeferredDispose(model, disposeSkeletons);
 
   return (
     <group position={transform.position} rotation={transform.rotation} scale={transform.scale}>

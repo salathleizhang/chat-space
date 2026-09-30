@@ -6,6 +6,7 @@ import { useThree } from "@react-three/fiber";
 import { WebGPUCanvas } from "../../shared/rendering/WebGPUCanvas";
 import { webgpuRenderer } from "../../shared/rendering/webgpu";
 import { captureScene } from "../../shared/rendering/capture";
+import type { InspectionRequest } from "../../shared/lib/inspection";
 import { captureQueue } from "../../shared/rendering/CaptureQueue";
 import { useCaptureResult } from "../../shared/rendering/useCaptureResult";
 import { memo, Suspense, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
@@ -15,6 +16,7 @@ import { Badge, Button, Panel } from "../../shared/ui";
 import { ModelMesh } from "../Viewport/ModelMesh";
 import { CameraAxes } from "../Viewport/PaneCamera";
 import { createInspectionCamera, INSPECTION_VIEWS } from "./inspectionViews";
+import { composeInspectionSheet, sheetToBase64, SHEET_TILE } from "../../shared/lib/inspectionSheet";
 
 /**
  * 模型预览小窗：模型栏双击打开，独立轨道相机 + 右上角视角球（Blender 式）。
@@ -22,10 +24,9 @@ import { createInspectionCamera, INSPECTION_VIEWS } from "./inspectionViews";
  * 合成 2×2 检查图（带视角标注）回调给上层上传并回传 agent。
  */
 
-export interface InspectionRequest {
-  /** 截图批次 id（来自 agent 工具调用的 toolCallId） */
-  id: string;
-}
+// 定义已搬到纯模块 `shared/lib/inspection.ts`（上层只取类型时不该依赖整个渲染组件）。
+// 这里再导出一次，避免迁移期既有引用断掉。
+export type { InspectionRequest } from "../../shared/lib/inspection";
 
 interface ModelPreviewWindowProps {
   asset: LibraryAsset;
@@ -39,7 +40,6 @@ interface ModelPreviewWindowProps {
   onInspectionCaptured: (id: string, pngBase64: string | null) => void;
 }
 
-const SHEET_TILE = 512;
 const INSPECTION_POLL_MS = 120;
 const INSPECTION_TIMEOUT_MS = 10_000;
 
@@ -93,15 +93,6 @@ function InspectionCapturer({
       const sphere = box.getBoundingSphere(new THREE.Sphere());
       // 截图相机独立于用户相机。ISO 用透视；轴向视角与主视口一样用正交投影。
 
-      const sheet = document.createElement("canvas");
-      sheet.width = SHEET_TILE * 2;
-      sheet.height = SHEET_TILE * 2;
-      const ctx = sheet.getContext("2d");
-      if (!ctx) {
-        onCaptured(request.id, null);
-        return;
-      }
-
       try {
         // Submit all four views in this JS task, before yielding to animation or
         // user edits. Readbacks remain asynchronous, but the pose is identical.
@@ -115,33 +106,16 @@ function InspectionCapturer({
           return captureScene(webgpuRenderer(gl), scene, inspectionCamera, SHEET_TILE);
         })));
         if (cancelled) return;
-        for (const [i, view] of INSPECTION_VIEWS.entries()) {
-          const x = (i % 2) * SHEET_TILE;
-          const y = Math.floor(i / 2) * SHEET_TILE;
-          ctx.drawImage(images[i]!, x, y, SHEET_TILE, SHEET_TILE);
-          ctx.fillStyle = "rgba(255,255,255,0.9)";
-          ctx.font = "bold 22px system-ui, sans-serif";
-          ctx.fillText(view.label, x + 14, y + 32);
-        }
+        // 版式在纯模块里，与 PlayCanvas 侧共用同一份（见 shared/lib/inspectionSheet.ts）
+        const sheet = composeInspectionSheet(images.map((image: HTMLCanvasElement) => ({ image })));
+        // 让下一帧重新绘制用户的预览视角。
+        invalidate();
+        onCaptured(request.id, sheetToBase64(sheet));
       } catch {
+        // 任何一步失败都回调 null：上层据此回传"截图失败"，而不是让 agent 干等。
         if (!cancelled) onCaptured(request.id, null);
         return;
       }
-      ctx.strokeStyle = "rgba(255,255,255,0.25)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(0, 0, sheet.width, sheet.height);
-      ctx.beginPath();
-      ctx.moveTo(SHEET_TILE, 0);
-      ctx.lineTo(SHEET_TILE, sheet.height);
-      ctx.moveTo(0, SHEET_TILE);
-      ctx.lineTo(sheet.width, SHEET_TILE);
-      ctx.stroke();
-
-      // 让下一帧重新绘制用户的预览视角。
-      invalidate();
-
-      const dataUrl = sheet.toDataURL("image/png");
-      onCaptured(request.id, dataUrl.slice(dataUrl.indexOf(",") + 1));
     };
 
     timer = setTimeout(capture, 0);

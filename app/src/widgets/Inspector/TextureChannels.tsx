@@ -1,19 +1,13 @@
 import { ArrowUUpLeftIcon } from "@phosphor-icons/react/ArrowUUpLeft";
 import { ImageSquareIcon } from "@phosphor-icons/react/ImageSquare";
 import { SwapIcon } from "@phosphor-icons/react/Swap";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Object3D } from "three";
-import {
-  libraryUrl,
-  type LibraryAsset,
-  type MaterialTextureSlot,
-} from "../../shared/lib/libraryApi";
-import { collectSupportedSlots, SLOT_LABELS } from "../../shared/lib/materialOverrides";
-import { collectChannelTextures } from "../../shared/lib/modelTextures";
+import { libraryUrl, type LibraryAsset, type MaterialTextureSlot } from "../../shared/lib/libraryApi";
+import { SLOT_LABELS } from "../../shared/lib/materialSchema";
+import { useModelDescription } from "../../shared/lib/modelDescription";
 import { Button, Tooltip } from "../../shared/ui";
 import { placePopover, type PopoverPlacement } from "../../shared/ui/popoverPosition";
-import { LoadedAssetObject } from "../Viewport/ModelMesh";
 
 /**
  * 材质区的贴图通道表：每个通道一行，显示"现在这一格是谁"，并提供换成工程里另一张图、
@@ -202,31 +196,40 @@ function ChannelRow({ slot, override, model, images, onChange }: ChannelRowProps
 }
 
 function ChannelList({
-  object,
+  assetId,
   slots,
   textures,
   images,
   onChange,
 }: {
-  object: Object3D;
+  assetId: string;
   slots: readonly MaterialTextureSlot[];
   textures: Partial<Record<MaterialTextureSlot, string>>;
   images: string[];
   onChange: (slot: MaterialTextureSlot, path: string | null) => void;
 }) {
+  /*
+    数据来自**渲染层发布的"模型描述"**（见 shared/lib/modelDescription.ts），
+    不再由本面板自己挂载一份模型加载器去遍历 three 对象。
+  */
+  const description = useModelDescription(assetId);
+
   /**
    * 候选表是七个通道的并集，但原材质不一定认全部（phong 没有 roughnessMap、
    * basic 没有 normalMap），换上去不会有任何效果。这里按模型真实声明的属性收窄；
    * 已经被覆盖过的通道一律保留，否则用户（或 agent）写下的旧覆盖会连"换回原图"都点不到。
    */
   const visible = useMemo(() => {
-    const supported = collectSupportedSlots(object, slots);
+    const supported = new Set(description?.supportedSlots ?? []);
     return slots.filter((slot) => supported.has(slot) || textures[slot] != null);
-  }, [object, slots, textures]);
+  }, [description, slots, textures]);
 
-  // object 身份变了才重抽（模型换代）；只改覆盖不动模型
-  const model = useMemo(() => collectChannelTextures(object, visible), [object, visible]);
+  const model = description?.channels ?? new Map();
+  const missing = description === undefined;
 
+  if (missing) {
+    return <p className="px-3 py-2 text-xs text-ink-faint">Loading model textures…</p>;
+  }
   if (visible.length === 0) {
     return (
       <p className="px-3 py-2 text-xs text-ink-subtle">
@@ -265,24 +268,14 @@ export function TextureChannels({
   onChange: (slot: MaterialTextureSlot, path: string | null) => void;
 }) {
   if (!asset.modelPath) return null;
+  // 不再自己挂载模型加载器：模型由视口加载并发布描述，这里只消费。
   return (
-    <Suspense
-      fallback={<p className="px-3 py-2 text-xs text-ink-faint">Loading model textures…</p>}
-    >
-      <LoadedAssetObject
-        asset={asset}
-        fallback={<p className="px-3 py-2 text-xs text-ink-faint">Failed to load textures</p>}
-      >
-        {(object) => (
-          <ChannelList
-            object={object}
-            slots={slots}
-            textures={textures}
-            images={images}
-            onChange={onChange}
-          />
-        )}
-      </LoadedAssetObject>
-    </Suspense>
+    <ChannelList
+      assetId={asset.id}
+      slots={slots}
+      textures={textures}
+      images={images}
+      onChange={onChange}
+    />
   );
 }

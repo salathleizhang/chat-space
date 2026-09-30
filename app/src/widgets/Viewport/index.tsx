@@ -205,7 +205,6 @@ interface SceneContentsProps {
   live: LiveTransforms;
   objects: Map<string, THREE.Object3D>;
   hoveredByLayer: Record<number, string>;
-  viewLayers: number[];
 }
 
 /** One project-owned model instance; per-view proxies handle picking. */
@@ -280,7 +279,6 @@ function SceneContents({
   live,
   objects,
   hoveredByLayer,
-  viewLayers,
 }: SceneContentsProps) {
   return (
     <>
@@ -308,7 +306,6 @@ function SceneContents({
             <SplatModel
               url={`${libraryUrl(worldAsset.spzPath)}?revision=${worldAsset.resourceRevision ?? 0}`}
               semantics={worldAsset.worldSemantics}
-              viewLayers={viewLayers}
             />
           </Suspense>
         </ResettableErrorBoundary>
@@ -486,7 +483,6 @@ export const Viewport = memo(function Viewport({
   const panes = LAYOUTS[paneLayout];
   const [objects] = useState(() => new Map<string, THREE.Object3D>());
   const [hoveredByLayer, setHoveredByLayer] = useState<Record<number, string>>({});
-  const viewLayers = useMemo(() => firstPerson ? [VIEW_LAYERS.persp!] : panes.map((pane) => VIEW_LAYERS[pane.id]!), [firstPerson, panes]);
   const handleHover = useCallback((layer: number, id: string, entered: boolean) => {
     setHoveredByLayer((current) => {
       if (entered) return current[layer] === id ? current : { ...current, [layer]: id };
@@ -632,7 +628,6 @@ export const Viewport = memo(function Viewport({
             live={live}
             objects={objects}
             hoveredByLayer={hoveredByLayer}
-            viewLayers={viewLayers}
           />
           {!firstPerson && panes.map((pane) => (
             <WebGPUView key={pane.id} id={pane.id} layer={VIEW_LAYERS[pane.id]!} track={paneRefs[pane.id] as RefObject<HTMLElement>}>
