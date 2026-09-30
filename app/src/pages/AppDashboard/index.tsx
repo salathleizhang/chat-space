@@ -453,7 +453,16 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           ⚠️ {projectError}
         </Panel>
       )}
-      <div className="absolute top-4 left-4 z-10 animate-chrome-enter">
+      {/*
+        左上列表与左下工具栏共用这一栏：面板从 top-4 一直**可以**长到工具栏上方，
+        高度由这段实际可用空间决定，不写死成 70vh —— 写死会在多资产项目里把后半截
+        资产行裁在面板下方，而 macOS 覆盖式滚动条不滚动时没有任何提示，看起来就是
+        "场景里有 10 件、列表里只显示 7 件"（实测 12 行需要 802px，70vh 只给 446px）。
+        `bottom-24`（96px）= 工具栏高 42px + 底边距 16px + 间距 38px；`items-start` 让面板
+        **内容自适应**：资产少时只占内容高，多时才长到这个上限、其余交给列表内部滚动。
+        改工具栏尺寸/位置时记得同步这一项。
+      */}
+      <div className="absolute top-4 bottom-24 left-4 z-10 flex animate-chrome-enter items-start">
         {section === "images" ? (
           <ImageGallery images={referenceImages} />
         ) : (

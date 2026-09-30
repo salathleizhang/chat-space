@@ -379,7 +379,12 @@ export const ModelList = memo(function ModelList({
   );
 
   return (
-    <Panel className="flex max-h-[70vh] w-64 flex-col overflow-hidden">
+    /*
+      高度上限由 AppDashboard 那一栏的可用空间给（`max-h-full`，见那里的说明），
+      不再是写死的 70vh：资产多时面板会长到左下工具栏上方，装不下的行才走内部滚动。
+      这里必须保留 `min-h-0` 的滚动容器，面板本身仍是 `overflow-hidden`。
+    */
+    <Panel className="flex max-h-full w-64 flex-col overflow-hidden">
       <div className="flex items-center justify-end border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-[11px] whitespace-nowrap text-ink-subtle">{count}</span>

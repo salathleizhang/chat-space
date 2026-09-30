@@ -24,7 +24,8 @@ export const ImageGallery = memo(function ImageGallery({ images }: ImageGalleryP
 
   return (
     <>
-      <Panel className="flex max-h-[70vh] w-80 flex-col overflow-hidden">
+      {/* 与 ModelList 同一个左上槽位，高度上限同源（见 AppDashboard 那一栏的说明） */}
+      <Panel className="flex max-h-full w-80 flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <span className="text-sm font-medium text-ink-strong">Reference images</span>
           <span className="text-[11px] text-ink-subtle">{images.length}</span>
