@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  CameraEstimateSchema,
   LogicalPathSchema,
   ObjectCandidateSchema,
   SlugSchema,
@@ -30,6 +31,8 @@ export const SceneSpecSchema = z.object({
     spatialLayout: z.string(),
   }).partial(),
   objects: z.array(SceneSpecObjectSchema).min(1),
+  /** 拍摄源图的相机估计；摆放节点用它把每个对象的归一化框反投影成 3D 摆放。 */
+  camera: CameraEstimateSchema.optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
@@ -40,6 +43,8 @@ export const SceneJobNodeKindSchema = z.enum([
   "model",
   "plate",
   "world",
+  /** 按参考图把全部模型摆回 3D 世界（免费、确定性），写完 scene.json 的 transforms。 */
+  "placement",
   "final-review",
 ]);
 export type SceneJobNodeKind = z.infer<typeof SceneJobNodeKindSchema>;

@@ -33,7 +33,7 @@ const taskSummary = (task: { id: string; subject: string; status: string }) => (
 export const startSceneJobTool = createTool({
   id: "start-scene-job",
   description:
-    "用户已确认 analyze-reference 的对象并授权整体付费生成后调用。它会确认本次 run，创建可修订 SceneSpec 和持久化 SceneJob，再并行调度「参考图→模型」与「干净底板→世界」两条分支。正常启动只调用一次；同一 run 在中断后重调会复用原任务，不会另建一套。",
+    "用户已确认 analyze-reference 的对象并授权整体付费生成后调用。它会确认本次 run，创建可修订 SceneSpec 和持久化 SceneJob，再并行调度「参考图→模型」与「干净底板→世界」两条分支，最后按参考图把每件家具摆回 3D 原位（摆放免费且不额外请求同意）。正常启动只调用一次；同一 run 在中断后重调会复用原任务，不会另建一套。",
   inputSchema: z.object({
     runId: z.uuid(),
     selectedSlugs: z.array(SlugSchema).min(1).optional(),
@@ -52,7 +52,7 @@ export const startSceneJobTool = createTool({
 export const reviseSceneJobTool = createTool({
   id: "revise-scene-job",
   description:
-    "修订已存在的完整场景：新增遗漏家具、删除误识别对象或修改对象描述。系统只会失效受影响节点：新家具生成新参考图/模型，底板和世界重建，已正确的其他模型保留。修订可能产生额外费用，必须先得到用户同意。",
+    "修订已存在的完整场景：新增遗漏家具、删除误识别对象或修改对象描述。系统只会失效受影响节点：新家具生成新参考图/模型，底板、世界与摆放重建，已正确的其他模型保留。修订可能产生额外费用，必须先得到用户同意。",
   inputSchema: z.object({
     jobId: z.uuid(),
     addObjects: z.array(ObjectCandidateSchema).default([]),
@@ -75,7 +75,7 @@ export const reviseSceneJobTool = createTool({
 export const retrySceneJobNodesTool = createTool({
   id: "retry-scene-job-nodes",
   description:
-    "对完整场景的指定失败/质量不合格节点做局部重建，并自动标记它的下游过期。例如底板不干净时传 nodes=[\"plate\"]，只会重做底板和 world；重新付费生成前必须先得到用户同意。",
+    "对完整场景的指定失败/质量不合格节点做局部重建，并自动标记它的下游过期。例如底板不干净时传 nodes=[\"plate\"]，只会重做底板、world 和摆放（摆放免费）；重新付费生成前必须先得到用户同意。",
   inputSchema: z.object({
     jobId: z.uuid(),
     nodes: z.array(z.string().min(1)).min(1),

@@ -1,16 +1,6 @@
-import { NodeIO } from "@gltf-transform/core";
-import { getBounds } from "@gltf-transform/functions";
 import { createTool } from "@mastra/core/tools";
-import {
-  Box3,
-  Euler,
-  Matrix4,
-  Quaternion,
-  Vector3,
-} from "three";
 import { z } from "zod";
 import { ChatServiceError } from "../../common/errors";
-import { parseIndexedName } from "../../common/indexedFiles";
 import { assetDir } from "../../common/libraryPaths";
 import type { LlmConfig } from "../../dto/chat";
 import type { AssetTransform, Vec3 } from "../../dto/library";
@@ -19,10 +9,10 @@ import {
   readAsDataUri,
   type AssetStorage,
 } from "../../services/assetStorage";
+import { latestModelFile, readGlbBounds } from "../../services/modelBounds";
 import {
   getCurrentSceneAnalyzer,
   type CurrentSceneSnapshot,
-  type SceneBounds,
 } from "../../services/sceneAnalysis";
 import {
   getProjectState,
@@ -34,7 +24,6 @@ import {
   requireCurrentProject,
 } from "./requestContext";
 
-const MODEL_EXT_RE = /^(glb|gltf|obj|fbx|stl)$/i;
 const GRID_CELL_SIZE = 3;
 const GRID_MAX_COLUMNS = 3;
 const ZERO: Vec3 = [0, 0, 0];
@@ -43,23 +32,6 @@ const ONE: Vec3 = [1, 1, 1];
 interface SceneModelAsset {
   asset: AssetState;
   modelFile: string;
-}
-
-function latestModelFile(files: string[]): string | null {
-  let best: { name: string; index: number; glb: boolean } | null = null;
-  for (const name of files) {
-    const parsed = parseIndexedName(name);
-    if (!parsed || !MODEL_EXT_RE.test(parsed.ext)) continue;
-    const glb = parsed.ext.toLowerCase() === "glb";
-    if (
-      !best ||
-      parsed.index > best.index ||
-      (parsed.index === best.index && glb && !best.glb)
-    ) {
-      best = { name, index: parsed.index, glb };
-    }
-  }
-  return best?.name ?? null;
 }
 
 function defaultPosition(index: number, total: number): Vec3 {
@@ -85,63 +57,6 @@ function effectiveTransform(
       scale: ONE,
     }
   );
-}
-
-function finiteVec3(value: readonly number[]): value is Vec3 {
-  return value.length === 3 && value.every(Number.isFinite);
-}
-
-function transformBounds(
-  min: Vec3,
-  max: Vec3,
-  transform: AssetTransform,
-): SceneBounds {
-  const matrix = new Matrix4().compose(
-    new Vector3(...transform.position),
-    new Quaternion().setFromEuler(new Euler(...transform.rotation, "XYZ")),
-    new Vector3(...transform.scale),
-  );
-  const box = new Box3();
-  for (const x of [min[0], max[0]]) {
-    for (const y of [min[1], max[1]]) {
-      for (const z of [min[2], max[2]]) {
-        box.expandByPoint(new Vector3(x, y, z).applyMatrix4(matrix));
-      }
-    }
-  }
-  const size = box.getSize(new Vector3());
-  return {
-    min: box.min.toArray() as Vec3,
-    max: box.max.toArray() as Vec3,
-    size: size.toArray() as Vec3,
-  };
-}
-
-async function measureGlbBounds(
-  storage: AssetStorage,
-  modelPath: string,
-  transform: AssetTransform,
-): Promise<SceneBounds | undefined> {
-  if (!modelPath.toLowerCase().endsWith(".glb")) return undefined;
-  try {
-    const document = await new NodeIO().readBinary(await storage.readBytes(modelPath));
-    const scenes = document.getRoot().listScenes();
-    let min: Vec3 | undefined;
-    let max: Vec3 | undefined;
-    for (const scene of scenes) {
-      const bounds = getBounds(scene);
-      if (!finiteVec3(bounds.min) || !finiteVec3(bounds.max)) continue;
-      min = min
-        ? [Math.min(min[0], bounds.min[0]), Math.min(min[1], bounds.min[1]), Math.min(min[2], bounds.min[2])]
-        : [...bounds.min] as Vec3;
-      max = max
-        ? [Math.max(max[0], bounds.max[0]), Math.max(max[1], bounds.max[1]), Math.max(max[2], bounds.max[2])]
-        : [...bounds.max] as Vec3;
-    }
-    return min && max ? transformBounds(min, max, transform) : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 async function buildCurrentSceneSnapshot(
@@ -187,7 +102,7 @@ async function buildCurrentSceneSnapshot(
         name: asset.identity?.name ?? asset.slug,
         kind: asset.identity?.kind ?? "other",
         transform,
-        bounds: await measureGlbBounds(storage, modelPath, transform),
+        bounds: await readGlbBounds(storage, modelPath, transform),
         thumbnailDataUri: asset.files.includes(thumbFile)
           ? await readAsDataUri(storage, thumbPath)
           : undefined,

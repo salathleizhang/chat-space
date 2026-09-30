@@ -62,7 +62,7 @@ async function succeededJob() {
 }
 
 describe("SceneSpec / SceneJob 依赖失效", () => {
-  test("从已确认 analysis 幂等创建 SceneSpec 和两条生成分支", async () => {
+  test("从已确认 analysis 幂等创建 SceneSpec 和生成分支", async () => {
     const first = await ensureSceneSpecFromAnalysis(storage, projectSlug);
     const repeated = await ensureSceneSpecFromAnalysis(storage, projectSlug);
     expect(repeated).toEqual(first);
@@ -71,14 +71,17 @@ describe("SceneSpec / SceneJob 依赖失效", () => {
     expect(job.nodes["model:sofa"]?.dependsOn).toEqual(["reference:sofa"]);
     expect(job.nodes.plate?.dependsOn).toEqual([]);
     expect(job.nodes.world?.dependsOn).toEqual(["plate"]);
-    expect(job.nodes["final-review"]?.dependsOn).toEqual([
+    // 摆放依赖"世界 + 全部模型"：世界给地面与米制尺度，模型给可测量的包围盒。
+    expect(job.nodes.placement?.dependsOn).toEqual([
       "world",
       "model:sofa",
       "model:table",
     ]);
+    // 交付汇总只等摆放，摆放的输出里已经含世界与全部模型产物，另加 scene.json。
+    expect(job.nodes["final-review"]?.dependsOn).toEqual(["placement"]);
   });
 
-  test("补充遗漏椅子：新建椅子参考图/模型，只失效底板、world 和汇总", async () => {
+  test("补充遗漏椅子：新建椅子参考图/模型，只失效底板、world、摆放和汇总", async () => {
     const job = await succeededJob();
     const { spec, job: revised } = await reviseSceneSpecAndJob(storage, projectSlug, job.id, {
       reason: "发现原图遗漏一把椅子",
@@ -91,17 +94,21 @@ describe("SceneSpec / SceneJob 依赖失效", () => {
     expect(revised.nodes["model:sofa"]?.status).toBe("succeeded");
     expect(revised.nodes.plate?.status).toBe("stale");
     expect(revised.nodes.world?.status).toBe("stale");
+    // 新增家具必须重新摆位，所以摆放跟着失效，并接住新模型的依赖。
+    expect(revised.nodes.placement?.status).toBe("stale");
+    expect(revised.nodes.placement?.dependsOn).toContain("model:chair");
     expect(revised.nodes["final-review"]?.status).toBe("stale");
-    expect(revised.nodes["final-review"]?.dependsOn).toContain("model:chair");
+    expect(revised.nodes["final-review"]?.dependsOn).toEqual(["placement"]);
     expect((await readCandidates(storage, projectSlug)).objects.find((object) => object.slug === "chair")?.sourceImages)
       .toEqual([sourceImage]);
   });
 
-  test("底板不干净：局部重做 plate 只失效 world/汇总，不碰已有模型", async () => {
+  test("底板不干净：局部重做 plate 只失效 world/摆放/汇总，不碰已有模型", async () => {
     const job = await succeededJob();
     const retried = await retrySceneJobNodes(storage, projectSlug, job.id, ["plate"]);
     expect(retried.nodes.plate?.status).toBe("pending");
     expect(retried.nodes.world?.status).toBe("stale");
+    expect(retried.nodes.placement?.status).toBe("stale");
     expect(retried.nodes["final-review"]?.status).toBe("stale");
     expect(retried.nodes["model:sofa"]?.status).toBe("succeeded");
     expect(retried.nodes["model:table"]?.status).toBe("succeeded");
@@ -208,11 +215,11 @@ function captureChatServiceError(run: () => unknown): ChatServiceError {
 }
 
 describe("planNodeInvalidation 纯函数", () => {
-  test("改一个对象：只失效该对象的参考图/模型与 plate/world/汇总，其他对象模型不受影响", () => {
+  test("改一个对象：只失效该对象的参考图/模型与 plate/world/摆放/汇总，其他对象模型不受影响", () => {
     const nodes = fixtureNodes();
     const plan = planNodeInvalidation(nodes, ["reference:sofa", "plate"]);
     expect(plan.pending).toEqual(["reference:sofa", "plate"]);
-    expect([...plan.stale].sort()).toEqual(["final-review", "model:sofa", "world"]);
+    expect([...plan.stale].sort()).toEqual(["final-review", "model:sofa", "placement", "world"]);
     const touched = [...plan.pending, ...plan.stale];
     expect(touched).not.toContain("reference:table");
     expect(touched).not.toContain("model:table");
@@ -226,10 +233,10 @@ describe("planNodeInvalidation 纯函数", () => {
     const nodes = fixtureNodes();
     const plan = planNodeInvalidation(nodes, ["plate", "reference:sofa"]);
     expect(plan.pending).toEqual(["plate", "reference:sofa"]);
-    // final-review 同时经 world 与 model:sofa 两条路径到达。
-    expect(plan.stale.filter((id) => id === "final-review")).toHaveLength(1);
+    // placement 同时经 world 与 model:sofa 两条路径到达。
+    expect(plan.stale.filter((id) => id === "placement")).toHaveLength(1);
     expect(plan.stale.filter((id) => id === "model:sofa")).toHaveLength(1);
-    expect([...plan.stale].sort()).toEqual(["final-review", "model:sofa", "world"]);
+    expect([...plan.stale].sort()).toEqual(["final-review", "model:sofa", "placement", "world"]);
     expect(new Set([...plan.pending, ...plan.stale]).size)
       .toBe(plan.pending.length + plan.stale.length);
   });
@@ -237,7 +244,10 @@ describe("planNodeInvalidation 纯函数", () => {
   test("obsolete 节点被跳过，且不沿它向下传播", () => {
     const nodes = fixtureNodes({ "model:table": "obsolete" });
     const plan = planNodeInvalidation(nodes, ["plate"]);
-    expect(plan).toEqual({ pending: ["plate"], stale: ["world", "final-review"] });
+    expect(plan).toEqual({
+      pending: ["plate"],
+      stale: ["world", "placement", "final-review"],
+    });
     // reference:table 的下游只有已废弃的 model:table，链路到此为止。
     const stoppedAtObsolete = planNodeInvalidation(nodes, ["reference:table"]);
     expect(stoppedAtObsolete).toEqual({ pending: ["reference:table"], stale: [] });
@@ -257,7 +267,13 @@ describe("planNodeInvalidation 纯函数", () => {
     const nodes = fixtureNodes();
     const plan = planNodeInvalidation(nodes, ["reference:sofa", "reference:table"]);
     expect(plan.pending).toEqual(["reference:sofa", "reference:table"]);
-    expect([...plan.stale].sort()).toEqual(["final-review", "model:sofa", "model:table"]);
+    // 两个模型都被重做 → 摆放必须重算（它依赖全部模型），汇总跟着失效。
+    expect([...plan.stale].sort()).toEqual([
+      "final-review",
+      "model:sofa",
+      "model:table",
+      "placement",
+    ]);
     const touched = [...plan.pending, ...plan.stale];
     expect(touched).not.toContain("plate");
     expect(touched).not.toContain("world");

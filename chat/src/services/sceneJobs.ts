@@ -63,6 +63,38 @@ function node(
   };
 }
 
+/**
+ * 摆放节点的依赖：世界（地面/尺度基准）与全部模型（要量每个模型的包围盒）。
+ * 单独抽出来是因为修订路径与旧任务回填都要用同一个定义。
+ */
+function placementDependencies(spec: Pick<SceneSpec, "objects">): string[] {
+  return ["world", ...spec.objects.map((object) => modelNodeId(object.slug))];
+}
+
+function placementFingerprint(spec: SceneSpec): string {
+  return sceneInputFingerprint({
+    specRevision: spec.revision,
+    sourceImage: spec.sourceImage,
+    camera: spec.camera ?? null,
+    // 框与高度是摆放的全部输入；对象顺序无关，所以按 slug 排序后再算。
+    boxes: [...spec.objects]
+      .sort((left, right) => left.slug.localeCompare(right.slug))
+      .map((object) => [object.slug, object.box ?? null, object.heightMeters ?? null]),
+    dependencies: placementDependencies(spec),
+  });
+}
+
+/** 摆放节点（免费、纯本地计算）：世界与全部模型就绪后按参考图把家具摆回原位。 */
+function placementNode(spec: SceneSpec): SceneJobNode {
+  return node({
+    id: "placement",
+    kind: "placement",
+    dependsOn: placementDependencies(spec),
+    status: "blocked",
+    inputFingerprint: placementFingerprint(spec),
+  });
+}
+
 /** 把场景事实编译成可持久化的生成 DAG。 */
 export function buildSceneJobNodes(spec: SceneSpec): Record<string, SceneJobNode> {
   const nodes: Record<string, SceneJobNode> = {};
@@ -111,14 +143,17 @@ export function buildSceneJobNodes(spec: SceneSpec): Record<string, SceneJobNode
       plate: "plate",
     }),
   });
+  // 摆放是纯本地计算（免费）：世界与全部模型就绪后按参考图把家具摆回原位。
+  nodes.placement = placementNode(spec);
+  // 交付汇总只依赖摆放：摆放的输出里已经含世界与全部模型产物，另加 scene.json。
   nodes["final-review"] = node({
     id: "final-review",
     kind: "final-review",
-    dependsOn: ["world", ...spec.objects.map((object) => modelNodeId(object.slug))],
+    dependsOn: ["placement"],
     status: "blocked",
     inputFingerprint: sceneInputFingerprint({
       specRevision: spec.revision,
-      dependencies: ["world", ...spec.objects.map((object) => modelNodeId(object.slug))],
+      dependencies: ["placement"],
     }),
   });
   return nodes;
@@ -189,13 +224,17 @@ export async function ensureSceneSpecFromAnalysis(
       sceneName: analysis.sceneName,
       sceneDescription: analysis.sceneDescription,
       environment: analysis.environment,
-      objects: analysis.objects.map(({ slug, name, description }) => ({
+      // box / heightMeters 是摆放（placement 节点）的输入，必须穿过升格这一步。
+      objects: analysis.objects.map(({ slug, name, description, box, heightMeters }) => ({
         slug,
         name,
         description,
+        ...(box ? { box } : {}),
+        ...(heightMeters ? { heightMeters } : {}),
         origin: "analysis" as const,
         addedAtRevision: revision,
       })),
+      ...(analysis.camera ? { camera: analysis.camera } : {}),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -339,7 +378,16 @@ export async function reviseSceneSpecAndJob(
     .filter((object) => !remove.has(object.slug))
     .map((object) => {
       const update = updates.get(object.slug);
-      return update ? { ...object, name: update.name, description: update.description } : object;
+      // 修订也可以补一个原本缺失的 box（旧分析没有框时唯一的补救入口）。
+      return update
+        ? {
+            ...object,
+            name: update.name,
+            description: update.description,
+            ...(update.box ? { box: update.box } : {}),
+            ...(update.heightMeters ? { heightMeters: update.heightMeters } : {}),
+          }
+        : object;
     })
     .concat(input.addObjects.map((object) => ({
       ...object,
@@ -367,6 +415,8 @@ export async function reviseSceneSpecAndJob(
         slug: object.slug,
         name: object.name,
         description: object.description,
+        ...(object.box ? { box: object.box } : {}),
+        ...(object.heightMeters ? { heightMeters: object.heightMeters } : {}),
         sourceImages: old?.sourceImages ?? [spec.sourceImage],
         ...(old?.referenceViews ? { referenceViews: old.referenceViews } : {}),
       });
@@ -436,14 +486,23 @@ export async function reviseSceneSpecAndJob(
         plate: "plate",
       }),
     );
+    // 场景事实变了（对象增删、描述或框变化），摆放必须按新事实重算：
+    // 新增/修好的家具要重新摆位，被删对象的摆放不该留在场景里。
+    nodes.placement = staleNode(
+      {
+        ...(nodes.placement ?? placementNode(spec)),
+        dependsOn: placementDependencies(spec),
+      },
+      placementFingerprint(spec),
+    );
     nodes["final-review"] = staleNode(
       {
         ...nodes["final-review"]!,
-        dependsOn: ["world", ...spec.objects.map((object) => modelNodeId(object.slug))],
+        dependsOn: ["placement"],
       },
       sceneInputFingerprint({
         specRevision: spec.revision,
-        dependencies: ["world", ...spec.objects.map((object) => modelNodeId(object.slug))],
+        dependencies: ["placement"],
       }),
     );
     return {
@@ -454,6 +513,42 @@ export async function reviseSceneSpecAndJob(
     };
   });
   return { spec, job: nextJob };
+}
+
+/**
+ * 把"摆放"节点补进一个已经存在的 SceneJob。
+ *
+ * `placement` 是后加的节点，磁盘上早先创建的 SceneJob 里没有它。恢复执行前补齐，
+ * 老场景才会跟着新流程一起把家具摆回原位，而不必重新跑一遍付费生成。
+ * 已经存在时只校正依赖与指纹（修订路径会改对象清单）。返回是否做过改动。
+ */
+export function ensurePlacementNode(
+  job: SceneJob,
+  spec: SceneSpec,
+): { job: SceneJob; changed: boolean } {
+  const dependencies = placementDependencies(spec);
+  const existing = job.nodes.placement;
+  const dependenciesMatch =
+    existing !== undefined &&
+    existing.dependsOn.length === dependencies.length &&
+    existing.dependsOn.every((id, index) => id === dependencies[index]);
+  if (existing && dependenciesMatch) return { job, changed: false };
+  const nodes = { ...job.nodes };
+  nodes.placement = existing
+    ? staleNode({ ...existing, dependsOn: dependencies }, placementFingerprint(spec))
+    : placementNode(spec);
+  // final-review 的产物要包含 scene.json，所以它必须跟着重算一遍（只是汇总，免费）。
+  const finalReview = nodes["final-review"];
+  if (finalReview) {
+    nodes["final-review"] = staleNode(
+      { ...finalReview, dependsOn: ["placement"] },
+      sceneInputFingerprint({
+        specRevision: spec.revision,
+        dependencies: ["placement"],
+      }),
+    );
+  }
+  return { job: { ...job, nodes }, changed: true };
 }
 
 /**

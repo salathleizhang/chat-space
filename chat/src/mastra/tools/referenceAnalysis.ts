@@ -9,6 +9,7 @@ import {
 } from "../../common/libraryPaths";
 import { slugifyOrFallback } from "../../common/slug";
 import {
+  CameraEstimateSchema,
   ImageAnalysisSchema,
   LogicalPathSchema,
   ObjectCandidateSchema,
@@ -64,13 +65,16 @@ export const AnalyzeReferenceDraftSchema = z.object({
     .partial()
     .default({}),
   observations: z.string().min(1),
+  /** 相机估计；摆放节点用它把下面每个对象的框反投影成 3D 坐标。 */
+  camera: CameraEstimateSchema.optional(),
   objects: z
     .array(
-      z.object({
-        /** LLM 产出的 slug 不可信；执行层会统一消毒，留空时从 name 推导。 */
+      /**
+       * 与 `ObjectCandidateSchema` 同源，只把 slug 换成"LLM 产出、执行层消毒"的可选字符串
+       * （见 `sanitizeCandidateSlugs`），这样 box / heightMeters 的类型只有一份定义。
+       */
+      ObjectCandidateSchema.omit({ slug: true }).extend({
         slug: z.string().optional(),
-        name: z.string().min(1),
-        description: z.string().min(1),
       }),
     )
     .max(50),
@@ -87,6 +91,7 @@ const PendingReferenceAnalysisSchema = z.object({
   environment: AnalyzeReferenceDraftSchema.shape.environment,
   observations: z.string().min(1),
   objects: z.array(ObjectCandidateSchema),
+  camera: CameraEstimateSchema.optional(),
   createdAt: z.iso.datetime(),
 });
 
@@ -107,7 +112,9 @@ function sanitizeCandidateSlugs(
     let suffix = 2;
     while (used.has(slug)) slug = `${base}-${suffix++}`;
     used.add(slug);
-    return { slug, name: object.name, description: object.description };
+    // 只替换 slug；box / heightMeters 是摆放的输入，必须原样穿过消毒这一步。
+    const { slug: _rawSlug, ...rest } = object;
+    return { ...rest, slug };
   });
 }
 
@@ -168,6 +175,7 @@ export async function runAnalyzeReference(
       environment: analysis.environment,
       observations: analysis.observations,
       objects,
+      ...(analysis.camera ? { camera: analysis.camera } : {}),
       createdAt: analyzedAt,
     },
   );
@@ -246,11 +254,8 @@ export async function runConfirmReferenceAssets(
         }
         return {
           projectSlug,
-          objects: confirmed.objects.map(({ slug, name, description }) => ({
-            slug,
-            name,
-            description,
-          })),
+          // 保留 box / heightMeters：摆放读的就是它们。
+          objects: confirmed.objects.map(({ sourceImages: _sources, ...object }) => object),
         };
       }
     }
@@ -321,6 +326,7 @@ export async function runConfirmReferenceAssets(
         sourceImages: [pending.image],
       })),
       sources: [pending.image],
+      ...(pending.camera ? { camera: pending.camera } : {}),
       analyzedAt: now,
     });
     return {
@@ -342,7 +348,7 @@ export async function runConfirmReferenceAssets(
 export const analyzeReferenceTool = createTool({
   id: "analyze-reference",
   description:
-    "把本条用户消息明确附带的图片作为完整场景生成的正式参考图，并产出等待用户确认的对象候选（免费，本地落盘，不会再调用另一个 LLM）。你已经能直接看到当前图片：请按实际画面填写场景描述，并把每件可独立拿起、独立建模的原子物品列入 objects；不要把墙、地面、地毯、天空、水面列为对象，也不要把一组家具合并成套装。用户确认后把返回的 runId 和可选 selectedSlugs 直接交给 start-scene-job。普通看图、截图排错、设计评价不调用。",
+    "把本条用户消息明确附带的图片作为完整场景生成的正式参考图，并产出等待用户确认的对象候选（免费，本地落盘，不会再调用另一个 LLM）。你已经能直接看到当前图片：请按实际画面填写场景描述，并把每件可独立拿起、独立建模的原子物品列入 objects；不要把墙、地面、地毯、天空、水面列为对象，也不要把一组家具合并成套装。**每个对象都要给出归一化包围框 box=[x0,y0,x1,y1]（原点左上、取值 0–1，紧贴该物体自身外轮廓，不要把地面投影、阴影或相邻物体框进去），并尽量给出 heightMeters 真实高度**；缺失 box 的对象无法被自动摆回 3D 场景。同时按你的观察填写 camera：horizonRow（地平线所在的归一化行，0 是图顶，相机水平时约等于画面中线）、cameraHeightMeters（拍摄高度，站立手持约 1.4–1.6）、verticalFovDeg（竖直视场角，手机主摄约 55–70）——摆放要靠这三个值把像素换算成米。用户确认后把返回的 runId 和可选 selectedSlugs 直接交给 start-scene-job。普通看图、截图排错、设计评价不调用。",
   inputSchema: AnalyzeReferenceDraftSchema,
   execute: async (input, context) => {
     if (!referenceAnalysisAllowed(context)) {

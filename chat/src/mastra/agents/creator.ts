@@ -15,6 +15,7 @@ import {
   inspectAssetTool,
   listGenerationTasksTool,
   getSceneJobTool,
+  placeSceneObjectsTool,
   repairAssetsTool,
   retopologizeTool,
   rigModelTool,
@@ -48,6 +49,7 @@ export function createCreatorAgent(
       "generate-skybox": generateSkyboxTool,
       "generate-texture": generateTextureTool,
       "analyze-scene": analyzeSceneTool,
+      "place-scene-objects": placeSceneObjectsTool,
       ...(options.enableAnalyzeReference
         ? { "analyze-reference": analyzeReferenceTool }
         : {}),

@@ -16,6 +16,7 @@ import { getAssetStorage, readJson, type AssetStorage } from "./assetStorage";
 import { readCandidates } from "./candidateRegistry";
 import {
   createSceneJob,
+  ensurePlacementNode,
   ensureSceneSpecFromAnalysis,
   listSceneJobs,
   mutateSceneJob,
@@ -36,6 +37,7 @@ import {
   composeEmptyWorldPrompt,
   runProjectWorldGeneration,
 } from "../mastra/tools/worldGen";
+import { runScenePlacement } from "./scenePlacementRun";
 
 function requireRunKey(keys: RunKeys, name: "volcengineApiKey" | "seed3dApiKey" | "worldLabsApiKey") {
   const value = keys[name];
@@ -286,6 +288,28 @@ async function executeFinalNode(
   return [...new Set(node.dependsOn.flatMap((dependency) => current.nodes[dependency]?.outputs ?? []))];
 }
 
+/**
+ * 摆放节点：按参考图把模型摆回世界，并把上游产物一并汇总成自己的输出。
+ * 上游（世界 + 全部模型）必须已经成功——`isRunnable` 已经保证了这一点。
+ */
+async function executePlacementNode(
+  storage: AssetStorage,
+  job: SceneJob,
+  node: SceneJobNode,
+): Promise<string[]> {
+  const report = await runScenePlacement(storage, job.projectSlug);
+  const current = await readSceneJob(storage, job.projectSlug, job.id);
+  const upstream = node.dependsOn.flatMap(
+    (dependency) => current.nodes[dependency]?.outputs ?? [],
+  );
+  // 摆放结果本身就是 scene.json，它是最终交付的一部分；与模型/世界产物并集去重。
+  // 一个对象都没摆成（例如旧分析没有框）时不把 scene.json 列进产物——那份文件
+  // 压根没被写过，列出去等于谎报。
+  return report.placed.length > 0
+    ? [...new Set([...upstream, report.scenePath])]
+    : [...new Set(upstream)];
+}
+
 async function executeSceneNode(
   storage: AssetStorage,
   job: SceneJob,
@@ -310,7 +334,9 @@ async function executeSceneNode(
           ? await executeWorldNode(storage, job, spec, keys)
           : running.kind === "model"
             ? await executeModelNode(storage, job, spec, running, keys)
-            : await executeFinalNode(storage, job, running);
+            : running.kind === "placement"
+              ? await executePlacementNode(storage, job, running)
+              : await executeFinalNode(storage, job, running);
     await updateNode(storage, job, original.id, (node) => ({
       ...node,
       status: "succeeded",
@@ -421,27 +447,36 @@ export async function createAndStartSceneJob(projectSlug: string, keys: RunKeys)
     job.specRevision === spec.revision,
   );
   const job = existing ?? await createSceneJob(storage, spec);
-  if (job.status === "succeeded" && job.parentTaskId) {
-    const completedTask = await getTask(projectSlug, job.parentTaskId);
-    if (completedTask?.status === "succeeded") return { job, task: completedTask };
+  // 旧版本创建的 SceneJob 没有 placement 节点：补上它，让老场景也能摆回原位。
+  const ensured = ensurePlacementNode(job, spec);
+  const current = ensured.changed
+    ? await mutateSceneJob(storage, projectSlug, job.id, () => ensured.job)
+    : job;
+  if (!ensured.changed && current.status === "succeeded" && current.parentTaskId) {
+    const completedTask = await getTask(projectSlug, current.parentTaskId);
+    if (completedTask?.status === "succeeded") return { job: current, task: completedTask };
   }
-  const task = job.status === "failed" || job.status === "paused"
-    ? await resumeSceneJob(projectSlug, job.id, keys)
-    : await startSceneJobExecution(projectSlug, job.id, keys);
-  return { job: await readSceneJob(storage, projectSlug, job.id), task };
+  const task = current.status === "failed" || current.status === "paused"
+    ? await resumeSceneJob(projectSlug, current.id, keys)
+    : await startSceneJobExecution(projectSlug, current.id, keys);
+  return { job: await readSceneJob(storage, projectSlug, current.id), task };
 }
 
 export async function resumeSceneJob(projectSlug: string, jobId: string, keys: RunKeys) {
   const storage = getAssetStorage();
-  await mutateSceneJob(storage, projectSlug, jobId, (job) => ({
-    ...job,
-    status: "paused",
-    nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [
-      id,
-      node.status === "running" || node.status === "failed"
-        ? { ...node, status: "pending" as const, error: undefined }
-        : node,
-    ])),
-  }));
+  const spec = await readSceneSpec(storage, projectSlug);
+  await mutateSceneJob(storage, projectSlug, jobId, (job) => {
+    const resumed: SceneJob = {
+      ...job,
+      status: "paused",
+      nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [
+        id,
+        node.status === "running" || node.status === "failed"
+          ? { ...node, status: "pending" as const, error: undefined }
+          : node,
+      ])),
+    };
+    return spec ? ensurePlacementNode(resumed, spec).job : resumed;
+  });
   return startSceneJobExecution(projectSlug, jobId, keys);
 }

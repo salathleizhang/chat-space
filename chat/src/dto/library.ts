@@ -66,11 +66,50 @@ export const ProjectSchema = z.object({
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
+/**
+ * 归一化图像包围框 `[x0, y0, x1, y1]`：原点左上，取值 0–1，与图像像素尺寸无关。
+ *
+ * 摆放（`place-scene-objects`）靠它把物体从参考图反投影回 3D 世界，所以框要**贴着
+ * 物体自身外轮廓**：把地面投影、阴影或旁边物体包进来，接地像素就会整体偏下，
+ * 推算出的纵深随之后退。它只是视觉分析的产物，不参与任何供应商调用。
+ */
+export const ObjectBoxSchema = z
+  .tuple([
+    z.number().min(0).max(1),
+    z.number().min(0).max(1),
+    z.number().min(0).max(1),
+    z.number().min(0).max(1),
+  ])
+  .refine(([x0, y0, x1, y1]) => x1 > x0 && y1 > y0, {
+    message: "包围框必须满足 x1 > x0 且 y1 > y0",
+  });
+export type ObjectBox = z.infer<typeof ObjectBoxSchema>;
+
+/**
+ * 参考图的相机估计，供摆放做单目反投影。三项都有安全默认值
+ * （地平线行 0.5、相机高 1.5 m、竖直视场角 60°），缺一项只降精度不降可用性。
+ *
+ * - `horizonRow`：地平线所在的归一化行（0 = 图顶）。相机水平时它同时是主点行，
+ *   也是"地面无穷远处"那一行；物体的接地像素离它越近，推算出的纵深越大。
+ * - `cameraHeightMeters`：拍摄时相机离地高度，决定纵深比例的绝对尺度。
+ * - `verticalFovDeg`：竖直视场角，决定焦距；手机主摄大约 55–70°。
+ */
+export const CameraEstimateSchema = z.object({
+  horizonRow: z.number().min(0).max(1).optional(),
+  cameraHeightMeters: z.number().positive().max(10).optional(),
+  verticalFovDeg: z.number().min(15).max(120).optional(),
+});
+export type CameraEstimate = z.infer<typeof CameraEstimateSchema>;
+
 /** 图片分析抽出的原子对象候选（"可单独拿起"，不含场景表面） */
 export const ObjectCandidateSchema = z.object({
   slug: SlugSchema,
   name: z.string().min(1),
   description: z.string().min(1),
+  /** 参考图里的归一化包围框；旧分析没有它，摆放会跳过该对象并如实报告。 */
+  box: ObjectBoxSchema.optional(),
+  /** 真实世界高度（米），用来把生成模型缩放到现实尺寸；缺失时保留模型原始缩放。 */
+  heightMeters: z.number().positive().max(20).optional(),
 });
 export type ObjectCandidate = z.infer<typeof ObjectCandidateSchema>;
 
@@ -130,6 +169,8 @@ export const SceneAnalysisSchema = z.object({
   /** 跨图去重后的对象候选 */
   objects: z.array(ConfirmedObjectSchema),
   sources: z.array(LogicalPathSchema),
+  /** 拍摄这批源图的相机估计；摆放用它把 2D 框反投影成 3D 摆放。 */
+  camera: CameraEstimateSchema.optional(),
   analyzedAt: z.iso.datetime(),
 });
 export type SceneAnalysis = z.infer<typeof SceneAnalysisSchema>;
