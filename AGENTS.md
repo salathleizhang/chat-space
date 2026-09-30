@@ -4,7 +4,7 @@
 
 仓库有 1000+ 行 WebGPU 文档，其中**只有 `WEBGPU_FINDINGS.md` 第 1 节的 16 条是当前可信的性能结论**。不要从别处推断性能数字。
 
-核对基准：2026-09-30，`bun run check` 退出码 0（app **542** pass / chat **341** pass）。增量来历：363 → 377 是 `VIEWPORT_REVIEW.md` §〇.1–0.3 那批回归测试（`animationLoop.test.ts` 6 条、`drawableContent.test.ts` 7 条、`WebGPUView.test.ts` 1 条）；377 → 382 是 §〇.9 的 ArrayCamera 那批（`paneViewports.test.ts` 5 条）；382 → **458** 是 PlayCanvas 迁移层带来的（边界守卫 4 条、设备/会话 18 条、窗格 19 条、材质与模型描述 20 条、截图与准入 15 条，见 §四之二）；**458 → 511** 里有 **39 条是窗格指针输入**（`playcanvas/paneInput.test.ts` 37 条 + `shared/lib/cameraRig.test.ts` 新增 2 条），**511 → 542** 是拾取与变换 gizmo（`panePicking.test.ts` 15 条、`paneGizmo.test.ts` 9 条、`paneRegistry` 的 `extraLayerIds` 2 条、`paneInput` 的点击/让手势/聚焦口径 5 条），见 §四之二；其余 14 条来自工作区里**本节之前就存在的未提交改动**。**文档里其余"app 363 / 377 / 382"的旧措辞按旧基准读。**
+核对基准：2026-09-30，`bun run check` 退出码 0（app **542** pass / chat **365** pass）。增量来历：363 → 377 是 `VIEWPORT_REVIEW.md` §〇.1–0.3 那批回归测试（`animationLoop.test.ts` 6 条、`drawableContent.test.ts` 7 条、`WebGPUView.test.ts` 1 条）；377 → 382 是 §〇.9 的 ArrayCamera 那批（`paneViewports.test.ts` 5 条）；382 → **458** 是 PlayCanvas 迁移层带来的（边界守卫 4 条、设备/会话 18 条、窗格 19 条、材质与模型描述 20 条、截图与准入 15 条，见 §四之二）；**458 → 511** 里有 **39 条是窗格指针输入**（`playcanvas/paneInput.test.ts` 37 条 + `shared/lib/cameraRig.test.ts` 新增 2 条），**511 → 542** 是拾取与变换 gizmo（`panePicking.test.ts` 15 条、`paneGizmo.test.ts` 9 条、`paneRegistry` 的 `extraLayerIds` 2 条、`paneInput` 的点击/让手势/聚焦口径 5 条），见 §四之二；其余 14 条来自工作区里**本节之前就存在的未提交改动**。**chat 341 → 365** 是按参考图摆放那一步带来的（`imageSize.test.ts` 6 条、`scenePlacement.test.ts` 8 条、`groundSampler.test.ts` 8 条、`scenePlacementRun.test.ts` 2 条端到端），另有 `sceneJobs.test.ts` 的既有断言随 `placement` 节点改写而不是新增。**app 542 → 561** 里 **13 条**是 loader 身份（资源修订号）那批（`shared/lib/resourceRevisions.test.ts` 8 条、`pages/AppDashboard/useProjectState.test.ts` 4 条、`libraryApi.test.ts` 1 条），其余 6 条同样来自工作区里本节之前就有的未提交改动。**文档里其余"app 363 / 377 / 382"的旧措辞按旧基准读。**
 
 ---
 
@@ -83,6 +83,7 @@ bun run check                        # typecheck + test + build
 - `SplatModel` 现在只有**一个** `GaussianSplatRenderer`，服务全部窗格：three 的 `ArrayCamera` 路径把"N 个窗格"并成一趟，GSL 的投影器看到 `array.cameras` 就把所有眼放进**同一条 compute 链**、用 `cameraIndex` 取每眼排序。此前是每窗格（每 layer）一个实例——4 份 ProjectionCache / 排序器 / splat 纹理，每帧 4 次 `onBeforeRender`，当初那样做只为免去"布局切换时重编译"。顺带修掉一个真实缺陷：逐窗格时 GSL 的 `renderSize` 取的是 `getDrawingBufferSize()`（整张画布），于是 `minPixelRadius` / `clipXY` 在分屏下按整画布而不是窗格算；multiView 路径取 `camera.viewport`。
 - 截图/缩略图走 `CaptureQueue`（检查图优先、交互让行、1.5 s 老化、16 上限）+ `capture.ts` 的私有 RenderTarget + 异步读回 + GPU 行填充解包。
 - 资源两层账：截图目标有申请预算（`ResourceBudget`，超限走尺寸阶梯降级，缺额度时按差额回收空闲模型条目再重试同一尺寸）；模型缓存只淘汰闲置项（`ModelResources`：空闲 **128 MiB / 8 项 / 30 s TTL**，另有 **512 MiB 的总驻留安全上限**，超出时立刻回收空闲条目，绝不释放在用项）。**截图准入同时看两侧余量**（`ResourceBudget` 的 `MemoryPressure` 探针，谁能给的少按谁算）。**两者都不是整个项目的显存上限**——这本账不覆盖 splat（`GaussianSplatRenderer` 不走 `ModelResources`），而已知风险恰恰在 splat。
+- **loader 身份（`?revision=N`）按资产发号，不要把工作台的 `refreshKey` 当资源代次发给所有资产。** 判据是渲染产物路径（`app/src/shared/lib/resourceRevisions.ts`：模型主产物/部件、`.mtl`、splat、环境贴图）。`refreshKey` 在**每个**后台任务落盘时都会 +1（`useTaskPolling` 完成回调 → `bumpRefresh`），绑上去就变成"生成一件新家具，场景里全部已有模型重新下载 + 重新解析 + 重新挂载"——40 MB 级的 GLB 下这是可感知的卡顿（2026-09-30 修；回归见 `resourceRevisions.test.ts` 与 `useProjectState.test.ts`）。缩略图/自检图/预览图不属于 loader 输入，落盘不该换号。
 - 诊断代码（`gpuProbe.ts` / `benchmark.browser.js` / `*.browser.ts`）**不进生产包**，只被探针和测试引用。保持这个状态。
 
 ---

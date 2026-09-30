@@ -62,6 +62,32 @@ describe("deriveLibraryAssets 模型代次语义", () => {
     expect(asset?.hdrPath).toEndWith("2-evening-sky.png");
   });
 
+  test("修订号：一次性扫描传数字（全表共用），实时视图传函数（按资产取号）", () => {
+    const projectState = state(["0-chair.glb"]);
+    projectState.assets.push({ slug: "table", files: ["0-table.glb"] });
+    projectState.assets[0]!.identity = {
+      kind: "model",
+      name: "Chair",
+      intent: "chair",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      sourceImages: [],
+    };
+    projectState.assets[1]!.identity = {
+      kind: "model",
+      name: "Table",
+      intent: "table",
+      createdAt: "2026-02-01T00:00:00.000Z",
+      sourceImages: [],
+    };
+
+    expect(deriveLibraryAssets("demo", projectState, 7).map((a) => a.resourceRevision)).toEqual([7, 7]);
+    // 函数形态：每个资产各自取号，互不影响（useProjectState 用它避免"一新全刷"）
+    const perAsset = deriveLibraryAssets("demo", projectState, (asset) =>
+      asset.modelPaths.join("").includes("table") ? 21 : 11,
+    );
+    expect(perAsset.map((a) => a.resourceRevision)).toEqual([11, 21]);
+  });
+
   test("天空盒单例选择：当前指针优先，无指针时使用最近创建的一项", () => {
     const base = deriveLibraryAssets("demo", {
       ...state([]),

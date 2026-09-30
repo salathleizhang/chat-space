@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   deriveLibraryAssets,
@@ -8,6 +8,7 @@ import {
   type LibraryAsset,
   type ProjectPlan,
 } from "../../shared/lib/libraryApi";
+import { createResourceRevisions } from "../../shared/lib/resourceRevisions";
 
 /** 没有 scene.json 时共用同一个空表，免得每次重扫都造新引用触发下游重算 */
 const NO_TRANSFORMS: Record<string, AssetTransform> = {};
@@ -23,6 +24,18 @@ export function useProjectState(
   refreshKey: number,
 ) {
   const navigate = useNavigate();
+  /**
+   * loader 身份记账：**按资产**发修订号，而不是把 `refreshKey` 发给所有资产。
+   *
+   * `refreshKey` 在每个后台任务落盘时都会 +1，把它当资源代次用会让"生成一件新家具"变成
+   * "把场景里已有模型全部重新下载解析一遍"。判据见 `shared/lib/resourceRevisions.ts`。
+   * 换项目时清空（工作台以 projectSlug 为 key 重挂载，这里同时兜住热重载/复用场景）。
+   */
+  const revisionsRef = useRef<{ slug: string; store: ReturnType<typeof createResourceRevisions> } | null>(null);
+  if (!revisionsRef.current || revisionsRef.current.slug !== projectSlug) {
+    revisionsRef.current = { slug: projectSlug, store: createResourceRevisions() };
+  }
+  const revisions = revisionsRef.current.store;
   const [snapshot, setSnapshot] = useState<{
     projectName: string;
     projectError: string | null;
@@ -58,11 +71,16 @@ export function useProjectState(
           navigate("/app", { replace: true });
           return;
         }
+        const assets = deriveLibraryAssets(projectSlug, state, (asset) =>
+          revisions.revisionFor(asset),
+        );
+        // 已经不存在的资产不再占修订号；同名重建的资产拿的是新稳定 id，天然是新号。
+        revisions.prune(assets.map((asset) => asset.id));
         setSnapshot({
           projectName: state.project.name,
           projectError: null,
           plan: state.plan ?? null,
-          assets: deriveLibraryAssets(projectSlug, state, refreshKey),
+          assets,
           referenceImages: state.generatedReferences ?? [],
           currentSkybox: state.project.currentSkybox,
           currentWorld: state.project.currentWorld,

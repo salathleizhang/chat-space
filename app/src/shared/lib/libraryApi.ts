@@ -242,9 +242,24 @@ export interface LibraryAsset {
   thumbPath: string | null;
   /** 资产身份创建时间；无 identity 时为 null（共享场景网格布局按此排序） */
   createdAt: string | null;
-  /** 当前项目扫描代次；同路径 repair 后用于重新挂载错误边界并清除旧拒绝缓存。 */
+  /**
+   * loader 身份修订号：进资源 URL（`...?revision=N`）、R3F 的 `key` 与错误边界的 `resetKey`。
+   *
+   * **按资产发放，不按项目扫描代次**——发放规则与理由见 `shared/lib/resourceRevisions.ts`。
+   * 把它绑到全局刷新号上，会让任意一次刷新（例如每个后台任务落盘时的 `bumpRefresh`）
+   * 把全部模型重新下载解析一遍。
+   */
   resourceRevision?: number;
 }
+
+/** 参与"要不要换修订号"判定的字段（loader 真正加载的那几个路径） */
+export type AssetResourceIdentity = Pick<
+  LibraryAsset,
+  "id" | "modelPaths" | "mtlPath" | "spzPath" | "hdrPath"
+>;
+
+/** 修订号来源：一次性扫描给同一个数字，实时视图给一个按资产取号的函数 */
+export type ResourceRevisionSource = number | ((asset: AssetResourceIdentity) => number);
 
 /** 项目级天空盒是单例：显式当前项优先，旧项目无指针时采用最近创建的一项。 */
 export function selectProjectSkybox(
@@ -345,12 +360,19 @@ function findAuxFile(files: string[], ext: string): string | null {
  * 从已取到的 ProjectState 派生扁平资产列表：不发请求，纯计算。
  * 调用方已经手上有 state（如 useProjectState）时应直接用这个，
  * 避免和 fetchLibraryAssets 内部再发一次一模一样的 fetchProjectState。
+ *
+ * `resourceRevision` 决定 loader 身份（资源 URL / R3F key / 错误边界 resetKey）：
+ * 一次性扫描传一个数字（全部资产共用）；实时视图必须传**按资产取号**的函数，
+ * 见 `shared/lib/resourceRevisions.ts`——传全局刷新号会让每次刷新重载全部模型。
  */
 export function deriveLibraryAssets(
   projectSlug: string,
   state: ProjectState,
-  resourceRevision = 0,
+  resourceRevision: ResourceRevisionSource = 0,
 ): LibraryAsset[] {
+  const revisionOf = typeof resourceRevision === "function"
+    ? resourceRevision
+    : () => resourceRevision;
   const assets: LibraryAsset[] = [];
   for (const asset of state.assets) {
     const visible = asset.files.filter((f) => !f.startsWith("."));
@@ -366,7 +388,7 @@ export function deriveLibraryAssets(
     // 渲的是贴了 HDR 的球，源就是那张环境贴图（与 thumbSourcePath 同一套取舍）
     const thumbSource = model?.name ?? hdr;
     const thumb = thumbSource ? thumbnailFileName(thumbSource) : null;
-    assets.push({
+    const derived: Omit<LibraryAsset, "resourceRevision"> = {
       // 稳定 id：scene.json 的键。**不要退回 `${projectSlug}/${slug}`**——那个值会随 slug 复用
       // 而指向同一个键，正是那类"删了重建还继承旧摆放"的根因。
       id: assetStableId(asset.identity, asset.slug),
@@ -392,13 +414,14 @@ export function deriveLibraryAssets(
       files: visible,
       thumbPath: thumb && asset.files.includes(thumb) ? `${dir}/${thumb}` : null,
       createdAt: asset.identity?.createdAt ?? null,
-      resourceRevision,
-    });
+    };
+    // 取号放在最后：修订号的判据就是这个对象上的渲染产物路径（见 resourceSignature）
+    assets.push({ ...derived, resourceRevision: revisionOf(derived) });
   }
   return assets;
 }
 
-/** 独立扫描也要有代次：自检等调用方不经过 useProjectState 的 refreshKey。 */
+/** 独立扫描也要有代次：自检等调用方不经过 useProjectState 的 per-asset 记账。 */
 let libraryScanRevision = 0;
 
 /** 扫描当前项目的资产清单（磁盘即数据库：一切来自目录派生状态） */
@@ -425,6 +448,28 @@ export async function uploadInspection(
   );
   if (!response.ok) {
     throw await chatResponseError(response, `Failed to upload inspection image (${response.status})`);
+  }
+  return ((await response.json()) as { path: string }).path;
+}
+
+/**
+ * 上传整场景检查图（主视口按机位拍的 PNG，base64 不含 data: 前缀）。
+ *
+ * 与单模型检查图分开落盘：一张整场景的图不属于任何一个资产，塞进某个资产的
+ * `inspections/` 目录会让"这张图是谁的 QC 证据"变得没法回答。
+ */
+export async function uploadSceneInspection(
+  projectSlug: string,
+  inspectionId: string,
+  dataBase64: string,
+): Promise<string> {
+  const response = await chatFetch(`/api/projects/${projectSlug}/inspection`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ inspectionId, dataBase64 }),
+  });
+  if (!response.ok) {
+    throw await chatResponseError(response, `Failed to upload scene inspection image (${response.status})`);
   }
   return ((await response.json()) as { path: string }).path;
 }

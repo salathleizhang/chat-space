@@ -100,6 +100,8 @@ const PURE_CONTRACT = [
   "widgets/Viewport/scenePlacement.ts",
   "widgets/Viewport/transformMode.ts",
   "shared/lib/libraryApi.ts",
+  // loader 身份（资源修订号）的发放规则：纯数据+纯函数，两个引擎共用同一套缓存身份
+  "shared/lib/resourceRevisions.ts",
   "shared/lib/materialSchema.ts",
   // 贴图通道表 + 缩略图 + 数据类型：渲染层换引擎时这一半不动（只有遍历那一半要重写）
   "shared/lib/textureSlots.ts",
