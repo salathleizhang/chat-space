@@ -116,6 +116,14 @@ interface ImageGenerateInput {
   canvas: ReferenceImageCanvas;
   /** Seedream 的同一个 images/generations 端点接受参考图用于图片编辑。 */
   images?: string[];
+  /**
+   * 火山方舟专用：显式输出尺寸。可填档位（`2K` / `4K`）或精确 `宽x高`
+   * （总像素区间 [2560x1440, 4096x4096]、宽高比 [1/16, 16]）。
+   * 缺省按输入图（编辑）或 canvas（文生图）推断——**档位/上限与模型强相关，
+   * 5.0 系没有 3K/4K 档，塞超限值会直接 400**，所以只有明确知道模型上限的
+   * 调用方（天空盒那条，钉的是 4.5）才显式传。
+   */
+  size?: string;
 }
 
 const ASPECT_RATIO_BY_CANVAS: Record<ReferenceImageCanvas, "4:3" | "3:4" | "1:1"> = {
@@ -170,6 +178,10 @@ const RESPONSE_DATA_URL_RE = /^data:([^;]+);base64,(.*)$/;
  *   是「模型自主判断出几张」，max_images 只封顶，实际张数可能少于 count。
  *   另外 watermark 默认 true（右下角"AI 生成"字样）——这些图是要喂给图生 3D
  *   的参考图，水印会被烘进网格与贴图，必须关掉。
+ * - `size` 两家都收，但方舟的可选值与**模型强相关**：档位 `1K`/`2K`/`3K`/`4K`
+ *   （5.0 系没有 3K/4K、上限约 419 万像素），或精确 `宽x高`（总像素
+ *   [2560x1440, 4096x4096]、宽高比 [1/16, 16]）。传超限值直接 400，所以只有
+ *   明确知道模型上限的调用方（天空盒那条：4.5 + 4096x2048）才显式传 `size`。
  */
 export async function generateImagesOpenAICompat(
   baseUrl: string,
@@ -183,7 +195,8 @@ export async function generateImagesOpenAICompat(
   if (dialect === "volcengine") {
     requestBody.watermark = false;
     requestBody.response_format = "url";
-    requestBody.size = input.images?.length ? "2K" : VOLCENGINE_SIZE_BY_CANVAS[input.canvas];
+    requestBody.size =
+      input.size ?? (input.images?.length ? "2K" : VOLCENGINE_SIZE_BY_CANVAS[input.canvas]);
     if (input.images?.length) {
       for (const image of input.images) parseDataUri(image);
       requestBody.image = input.images.length === 1 ? input.images[0] : input.images;
@@ -488,6 +501,8 @@ export interface ImageEditInput {
   prompt: string;
   /** 输入图（data URI），至少一张 */
   images: string[];
+  /** 火山方舟专用：显式输出尺寸（档位或精确 `宽x高`），语义同 `ImageGenerateInput.size` */
+  size?: string;
 }
 
 /** Gemini generateContent：文本 part + 每张输入图一个 inlineData part（编辑=多模态输入） */
@@ -598,7 +613,13 @@ export async function runImageEdit(
       refs: await generateImagesOpenAICompat(
         "https://ark.cn-beijing.volces.com/api/v3",
         entry.model,
-        { prompt: input.prompt, count: 1, canvas: "landscape", images: input.images },
+        {
+          prompt: input.prompt,
+          count: 1,
+          canvas: "landscape",
+          images: input.images,
+          ...(input.size ? { size: input.size } : {}),
+        },
         callOptions,
         "volcengine",
       ),

@@ -114,6 +114,27 @@ export interface EditCurrentSkyboxResult {
   model: ImageEditModel;
 }
 
+/**
+ * 天空盒的固定生成口径：**Seedream 4.5 + 精确 4096×2048**，故意不看 AgentDock
+ * 当前选择的图片模型。
+ *
+ * 为什么钉 4.5：天空盒是项目级单张环境资产，视口一屏只取约 80° 水平视野，于是
+ * 2912×1456 的产物在单窗格里被放大 **约 3.4 倍**（8.1 px/度，而单窗格需要约
+ * 27 px/度）——"内容满意但非常不清楚"就是这么来的。方舟各模型的像素上限差别很大：
+ * 5.0 / 5.0 Pro 只有约 419 万（2K 档，2:1 全景落在 2912×1456 就到顶），
+ * **4.5 是方舟当前支持 4K 的编辑模型**（4.0 也能，但更旧）。
+ *
+ * 为什么用精确像素而不是 `4K` 档：档位下宽高比由模型按画面内容自选，一旦它给出
+ * 近似方形，等距柱状映射就废了；`4096x2048` 同时钉住 2:1 与像素预算（约 839 万，
+ * 落在方舟的 [2560x1440, 4096x4096] 区间内，也是 2:1 全景能拿到的上限）。
+ *
+ * 不做任何后处理：产物按供应商原格式（jpeg）直接落盘，不本地锐化、不重采样。
+ *
+ * 没有方舟 key 时才回退到调用方指定的模型（那种情况下我们控制不了分辨率）。
+ */
+const SKYBOX_EDIT_MODEL: ImageEditModel = "seedream";
+const SKYBOX_EDIT_SIZE = "4096x2048";
+
 const DEFAULT_SKYBOX_IMAGE_URLS = [
   new URL("../../../../app/dist/env/sky.jpg", import.meta.url),
   new URL("../../../../app/public/env/sky.jpg", import.meta.url),
@@ -197,7 +218,12 @@ export async function runCurrentSkyboxEdit(
   );
   const { skyboxSlug } = resolved;
   const dir = assetDir(params.projectSlug, skyboxSlug);
-  const route = routeImageEditChannel(params.model, keys, params.channel);
+  // 清晰度优先：有方舟 key 就固定 4.5 + 4096×2048（4K），不看 AgentDock 的图片模型选择。
+  // 显式指定 channel 的调用方保留逃生口（那种调用是有意选渠道的）。
+  const pinned = !params.channel && Boolean(keys.volcengineApiKey);
+  const effectiveModel = pinned ? SKYBOX_EDIT_MODEL : params.model;
+  const outputSize = pinned ? SKYBOX_EDIT_SIZE : undefined;
+  const route = routeImageEditChannel(effectiveModel, keys, params.channel);
   const effectivePrompt = composeSkyboxEditPrompt(params.prompt);
   const now = () => new Date().toISOString();
   const sidecarFor = (index: number): RequestSidecar => ({
@@ -209,7 +235,9 @@ export async function runCurrentSkyboxEdit(
     params: {
       prompt: params.prompt,
       effective_prompt: effectivePrompt,
+      // 调用方原本点的模型也留着，便于回溯"为什么不按我选的来"
       model: params.model,
+      ...(pinned ? { effective_model: effectiveModel, output_size: outputSize } : {}),
       input_image: resolved.inputLabel,
       operation: "skybox/edit",
     },
@@ -233,7 +261,11 @@ export async function runCurrentSkyboxEdit(
     const { refs } = await runImageEdit(
       route.channel,
       route.entry,
-      { prompt: effectivePrompt, images: [resolved.dataUri] },
+      {
+        prompt: effectivePrompt,
+        images: [resolved.dataUri],
+        ...(outputSize ? { size: outputSize } : {}),
+      },
       route.apiKey,
       options,
     );
@@ -278,7 +310,7 @@ export async function runCurrentSkyboxEdit(
       skyboxSlug,
       image: outputPath,
       sidecar: sidecarPath,
-      model: params.model,
+      model: effectiveModel,
     };
   } catch (err) {
     sidecar.status = "failed";
@@ -304,7 +336,7 @@ function imageProviderKeysFromContext(
 export const generateSkyboxTool = createTool({
   id: "generate-skybox",
   description:
-    "天空盒生成（付费操作——调用前须经用户同意）：根据提示词修改项目唯一的天空盒，并自动使用 AgentDock 当前选择的图片生成模型。有已生成天空盒就继续编辑它；没有则以内置默认天空盒为输入创建。保留旧代次，成功后立即用于当前场景，不要求用户选择天空盒。",
+    "天空盒生成（付费操作——调用前须经用户同意）：根据提示词修改项目唯一的天空盒。固定用火山方舟 Seedream 4.5 以 **4096×2048（4K，2:1 全景）** 生成，**故意不看对话框当前选择的图片生成模型**——5.0 系的像素上限只有约 419 万（2:1 全景约 2912×1456），做全景比 4.5 的 4K 更糊；只有没配方舟 key 时才回退到当前所选模型及其默认分辨率。产物按供应商原格式直接落盘，**不做任何后处理**。有已生成天空盒就继续编辑它；没有则以内置默认天空盒为输入创建。保留旧代次，成功后立即用于当前场景，不要求用户选择天空盒。",
   inputSchema: z.object({ prompt: z.string().min(1) }),
   execute: async (input, context) =>
     runCurrentSkyboxEdit(

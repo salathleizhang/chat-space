@@ -196,7 +196,7 @@ describe("runSkyboxGeneration", () => {
 });
 
 describe("runCurrentSkyboxEdit", () => {
-  test("用所选图片模型编辑当前天空盒，并把图片保存为同资产的新代次", async () => {
+  test("固定用 Seedream 4.5 + 4096x2048 编辑，忽略对话框所选的图片模型", async () => {
     await createProject(storage, { name: "编辑天空盒", slug: "sb-edit" });
     const dir = assetDir("sb-edit", "evening-sky");
     await writeJson(storage, assetIdentityFile("sb-edit", "evening-sky"), AssetIdentitySchema, {
@@ -234,12 +234,16 @@ describe("runCurrentSkyboxEdit", () => {
     expect(result).toMatchObject({
       skyboxSlug: "evening-sky",
       image: `${dir}/2-evening-sky.png`,
-      model: "seedream-5-pro",
+      // 回来的是**实际用了哪个模型**（4.5），不是请求里传的 5.0 Pro
+      model: "seedream",
     });
     expect(await storage.exists(`${dir}/0-evening-sky.png`)).toBe(true);
     expect(await storage.exists(`${dir}/1-evening-sky.hdr`)).toBe(true);
     expect(await storage.exists(result.image)).toBe(true);
-    expect(requestBody?.model).toBe("doubao-seedream-5-0-pro-260628");
+    // 5.0 系像素上限只有约 419 万（2:1 全景 ≈ 2912×1456），所以天空盒不看所选模型：
+    // 钉 4.5 + 精确 4096×2048（4K，2:1 全景能拿到的上限），且不做任何后处理
+    expect(requestBody?.model).toBe("doubao-seedream-4-5-251128");
+    expect(requestBody?.size).toBe("4096x2048");
     expect(requestBody?.image).toBeString();
     expect(String(requestBody?.prompt)).toContain("seamless 360-degree equirectangular");
     expect(String(requestBody?.prompt)).toContain("紫色极光");
@@ -247,9 +251,46 @@ describe("runCurrentSkyboxEdit", () => {
     const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
     expect(sidecar.status).toBe("succeeded");
     expect(sidecar.provider).toBe("volcengine");
+    expect(sidecar.model).toBe("doubao-seedream-4-5-251128");
+    // 请求侧写保留调用方原本点的模型，便于回溯"为什么不按我选的来"
     expect(sidecar.params.model).toBe("seedream-5-pro");
+    expect(sidecar.params.effective_model).toBe("seedream");
+    expect(sidecar.params.output_size).toBe("4096x2048");
     expect(sidecar.params.input_image).toBe(`${dir}/0-evening-sky.png`);
     expect((await requireProject(storage, "sb-edit")).currentSkybox).toBe("evening-sky");
+  });
+
+  test("没有方舟 key 时回退到所选渠道，且不硬塞方舟尺寸", async () => {
+    await createProject(storage, { name: "回退天空盒", slug: "sb-fallback" });
+    const bodies: { url: string; body: Record<string, unknown> }[] = [];
+    const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+      bodies.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+      return jsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [{ inlineData: { data: Buffer.from(PNG_BYTES).toString("base64") } }],
+            },
+          },
+        ],
+      });
+    }) as typeof fetch;
+
+    const result = await runCurrentSkyboxEdit(
+      storage,
+      { projectSlug: "sb-fallback", prompt: "改成清晨", model: "nano-banana" },
+      { googleApiKey: "google-key" },
+      { fetchFn },
+    );
+
+    expect(result.model).toBe("nano-banana");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.url).toContain("gemini-3.1-flash-image");
+    // Gemini 那条路本来就没有 size 字段，别把方舟的尺寸泄漏过去
+    expect(bodies[0]!.body).not.toHaveProperty("size");
   });
 
   test("没有已生成天空盒时以内置默认图创建唯一天空盒资产", async () => {
