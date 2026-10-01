@@ -101,6 +101,39 @@ function makeFakeTripoFetch() {
       calls.push({ url, body: JSON.parse(String(init?.body)) });
       return jsonResponse({ code: 0, data: { task_id: "anim-1" } });
     }
+    if (url.endsWith("/v3/tasks/list")) {
+      // 批量查询：一次请求回答一批 task_id（官方 POST /tasks/list 的形状）
+      const ids = (JSON.parse(String(init?.body)) as { task_ids: string[] }).task_ids;
+      calls.push({ url, body: { task_ids: ids } });
+      return jsonResponse({
+        code: 0,
+        data: {
+          tasks: Object.fromEntries(
+            ids.map((id) => [
+              id,
+              id === "seg-1"
+                ? {
+                    status: "success",
+                    output: {
+                      parts: [
+                        { model: "https://cdn.fake/part1.glb" },
+                        { model: "https://cdn.fake/part2.glb" },
+                      ],
+                    },
+                  }
+                : {
+                    status: "success",
+                    output: {
+                      pbr_model: "https://cdn.fake/model.glb",
+                      rendered_image: "https://cdn.fake/render.webp",
+                    },
+                  },
+            ]),
+          ),
+          missed: [],
+        },
+      });
+    }
     if (url.includes("/v3/tasks/seg-1")) {
       return jsonResponse({
         code: 0,

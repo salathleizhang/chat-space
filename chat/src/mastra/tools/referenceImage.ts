@@ -34,7 +34,7 @@ import {
   type ReferenceImageCanvas,
 } from "../../models/images";
 import {
-  createTripoV3Task,
+  runTripoTask,
   uploadTripoFile,
   waitForTripoTask,
 } from "../../models/tripo";
@@ -489,20 +489,18 @@ export async function runReferenceImageMultiview(
       await storage.readBytes(sourceImage),
       { apiKey, fetchFn: options.fetchFn, pollIntervalMs: options.pollIntervalMs },
     );
-    const taskId = await createTripoV3Task(
-      "/generation/image-to-multiview",
-      { input: fileToken },
-      { apiKey, fetchFn: options.fetchFn, pollIntervalMs: options.pollIntervalMs },
+    const tripoCall = { apiKey, fetchFn: options.fetchFn, pollIntervalMs: options.pollIntervalMs };
+    // 图像生成类目在 Tripo 侧只有 1 个并发槽，必须进闸门（多张参考图会排队而不是撞 429）
+    const task = await runTripoTask(
+      { path: "/generation/image-to-multiview", body: { input: fileToken } },
+      tripoCall,
+      async (taskId) => {
+        sidecar.providerTaskId = taskId;
+        sidecar.status = "running";
+        await saveSidecar();
+        return await waitForTripoTask(taskId, tripoCall);
+      },
     );
-    sidecar.providerTaskId = taskId;
-    sidecar.status = "running";
-    await saveSidecar();
-
-    const task = await waitForTripoTask(taskId, {
-      apiKey,
-      fetchFn: options.fetchFn,
-      pollIntervalMs: options.pollIntervalMs,
-    });
     const output = (task.output ?? {}) as Record<string, unknown>;
     const referenceViews: Partial<ReferenceImageViews> = {};
     const images: string[] = [];

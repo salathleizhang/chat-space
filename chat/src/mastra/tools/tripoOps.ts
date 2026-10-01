@@ -25,13 +25,13 @@ import {
 } from "../../dto/library";
 import { convertModel } from "../../services/modelConvert";
 import {
-  createTripoImageToModelTask,
-  createTripoImportModelTask,
-  createTripoMultiviewToModelTask,
-  createTripoSegmentTask,
-  createTripoV3Task,
   DEFAULT_TRIPO_IMAGE_MODEL,
   DEFAULT_TRIPO_TEXTURE_MODEL,
+  runTripoTask,
+  tripoImageToModelRequest,
+  tripoImportModelRequest,
+  tripoMultiviewToModelRequest,
+  tripoSegmentRequest,
   tripoTextureVersionFor,
   uploadTripoFile,
   uploadTripoModelViaSts,
@@ -226,33 +226,39 @@ export async function runTripoImageTo3d(
   await saveSidecar();
 
   try {
-    const taskId = useMultiview
-      ? await (async () => {
-          const uploaded = await Promise.all(
-            availableViews.map(async ([view, path]) => [
-              view,
-              await uploadTripoFile(
-                path.split("/").pop()!,
-                await storage.readBytes(path),
-                callOptions,
-              ),
-            ] as const),
-          );
-          return createTripoMultiviewToModelTask(Object.fromEntries(uploaded), callOptions);
-        })()
-      : await (async () => {
-          const fileToken = await uploadTripoFile(
+    // 上传（换 file_token）不占生成并发，先做完再进闸门
+    const request = useMultiview
+      ? tripoMultiviewToModelRequest(
+          Object.fromEntries(
+            await Promise.all(
+              availableViews.map(async ([view, path]) => [
+                view,
+                await uploadTripoFile(
+                  path.split("/").pop()!,
+                  await storage.readBytes(path),
+                  callOptions,
+                ),
+              ] as const),
+            ),
+          ),
+          callOptions,
+        )
+      : tripoImageToModelRequest(
+          await uploadTripoFile(
             resolved.image.split("/").pop()!,
             await storage.readBytes(resolved.image),
             callOptions,
-          );
-          return createTripoImageToModelTask(fileToken, callOptions);
-        })();
-    sidecar.providerTaskId = taskId;
-    sidecar.status = "running";
-    await saveSidecar();
+          ),
+          callOptions,
+        );
 
-    const data = await waitForTripoTask(taskId, callOptions);
+    // 槽一直持到轮询结束：Tripo 数的是"正在跑"的任务数，提交完就放槽等于没限并发
+    const { data, taskId } = await runTripoTask(request, callOptions, async (taskId) => {
+      sidecar.providerTaskId = taskId;
+      sidecar.status = "running";
+      await saveSidecar();
+      return { taskId, data: await waitForTripoTask(taskId, callOptions) };
+    });
     const files = await landTripoOutputs(
       storage,
       dir,
@@ -380,11 +386,17 @@ export async function importAssetModelToTripo(
       await storage.readBytes(modelPath),
       callOptions,
     );
-    const taskId = await createTripoImportModelTask(fileToken, callOptions);
-    sidecar.providerTaskId = taskId;
-    sidecar.status = "running";
-    await saveSidecar();
-    await waitForTripoTask(taskId, callOptions);
+    const taskId = await runTripoTask(
+      tripoImportModelRequest(fileToken),
+      callOptions,
+      async (taskId) => {
+        sidecar.providerTaskId = taskId;
+        sidecar.status = "running";
+        await saveSidecar();
+        await waitForTripoTask(taskId, callOptions);
+        return taskId;
+      },
+    );
     sidecar.status = "succeeded";
     await saveSidecar();
     return taskId;
@@ -450,21 +462,27 @@ export async function runTripoSegmentation(
   await saveSidecar();
 
   try {
-    const taskId = await createTripoSegmentTask(originalTaskId, callOptions);
-    sidecar.providerTaskId = taskId;
-    sidecar.status = "running";
-    await saveSidecar();
+    const { files, taskId } = await runTripoTask(
+      tripoSegmentRequest(originalTaskId),
+      callOptions,
+      async (taskId) => {
+        sidecar.providerTaskId = taskId;
+        sidecar.status = "running";
+        await saveSidecar();
 
-    const data = await waitForTripoTask(taskId, callOptions);
-    const files = await landTripoOutputs(
-      storage,
-      dir,
-      index,
-      params.assetSlug,
-      sidecar,
-      saveSidecar,
-      (data.output ?? data) as Record<string, unknown>,
-      callOptions.fetchFn,
+        const data = await waitForTripoTask(taskId, callOptions);
+        const files = await landTripoOutputs(
+          storage,
+          dir,
+          index,
+          params.assetSlug,
+          sidecar,
+          saveSidecar,
+          (data.output ?? data) as Record<string, unknown>,
+          callOptions.fetchFn,
+        );
+        return { files, taskId };
+      },
     );
     return { files, sidecar: sidecarPath, tripoTaskId: taskId };
   } catch (err) {
@@ -919,20 +937,26 @@ async function runTripoV3Job(
   await saveSidecar();
 
   try {
-    const taskId = await createTripoV3Task(request.path, request.body, callOptions);
-    sidecar.providerTaskId = taskId;
-    sidecar.status = "running";
-    await saveSidecar();
-    const data = await waitForTripoTask(taskId, callOptions);
-    const files = await landTripoOutputs(
-      storage,
-      dir,
-      index,
-      request.assetSlug,
-      sidecar,
-      saveSidecar,
-      (data.output ?? data) as Record<string, unknown>,
-      callOptions.fetchFn,
+    const { files, taskId } = await runTripoTask(
+      { path: request.path, body: request.body },
+      callOptions,
+      async (taskId) => {
+        sidecar.providerTaskId = taskId;
+        sidecar.status = "running";
+        await saveSidecar();
+        const data = await waitForTripoTask(taskId, callOptions);
+        const files = await landTripoOutputs(
+          storage,
+          dir,
+          index,
+          request.assetSlug,
+          sidecar,
+          saveSidecar,
+          (data.output ?? data) as Record<string, unknown>,
+          callOptions.fetchFn,
+        );
+        return { files, taskId };
+      },
     );
     return { files, sidecar: sidecarPath, tripoTaskId: taskId };
   } catch (err) {

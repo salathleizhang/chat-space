@@ -682,6 +682,25 @@ describe("runReferenceImageMultiview", () => {
       if (url.endsWith("/generation/image-to-multiview")) {
         return jsonResponse({ code: 0, data: { task_id: "multi-1" } });
       }
+      if (url.endsWith("/v3/tasks/list")) {
+        return jsonResponse({
+          code: 0,
+          data: {
+            tasks: {
+              "multi-1": {
+                status: "success",
+                output: {
+                  front_view_url: "https://cdn.fake/front.png",
+                  left_view_url: "https://cdn.fake/left.png",
+                  back_view_url: "https://cdn.fake/back.png",
+                  right_view_url: "https://cdn.fake/right.png",
+                },
+              },
+            },
+            missed: [],
+          },
+        });
+      }
       if (url.endsWith("/v3/tasks/multi-1")) {
         return jsonResponse({
           code: 0,
