@@ -201,7 +201,7 @@ interface SceneContentsProps {
   placedAssets: LibraryAsset[];
   layout: Map<string, AssetPlacement>;
   showGrid: boolean;
-  /** 是否把 world 的 collider 网格渲染成地形参照线框（见 WorldColliderMesh） */
+  /** 是否把 world 的 collider 网格挂进场景（地形参照层；当前 **100% 透明、一个像素都不画**，见 WorldColliderMesh） */
   showWorldCollider: boolean;
   /** 环境贴图 URL：当前天空盒资产的 HDR，无则回退写死的默认 sky.exr */
   skyboxUrl: string;
@@ -324,8 +324,9 @@ function SceneContents({
         </ResettableErrorBoundary>
       )}
       {/*
-        world 的 collider 网格，只作地形参照（见 WorldColliderMesh）。必须与泼溅用
-        同一份 worldTransform：World Labs 的 +Y 朝下，两者不一起翻就会互相错位。
+        world 的 collider 网格，只作地形参照（见 WorldColliderMesh：**当前 100% 透明、不画**，
+        GLB 仍照旧加载并挂在场景里）。必须与泼溅用同一份 worldTransform：World Labs 的 +Y 朝下，
+        两者不一起翻就会互相错位。
       */}
       {showWorldCollider && worldAsset?.modelPath && worldAsset.worldSemantics && (
         <ResettableErrorBoundary
@@ -396,7 +397,10 @@ export const Viewport = memo(function Viewport({
 }: ViewportProps) {
   const [mode, setMode] = useState<ViewMode>("orbit");
   const [showGrid, setShowGrid] = useState(true);
-  /** world 的地形参照线框：默认开，方便看清 collider 与泼溅是否对齐、把模型摆到地面上 */
+  /**
+   * world 的地形参照层：默认开（GLB 照旧加载、挂进场景），但该层当前 **100% 透明、不画**，
+   * 所以这个开关现在只决定"要不要把 collider 挂进场景"，画面不会变（见 WorldColliderMesh）。
+   */
   const [showWorldCollider, setShowWorldCollider] = useState(true);
   const [paneLayout, setPaneLayout] = useState<LayoutMode>(1);
   const [transformMode, setTransformMode] = useState<TransformMode>("translate");

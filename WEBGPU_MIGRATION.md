@@ -14,7 +14,7 @@
 | 所有 3D surface | 主视口、模型预览、缩略图均使用 `WebGPUCanvas`；通过 Three 的公共 Renderer + WebGPUBackend + StandardNodeLibrary 组装，不注册 WebGL fallback |
 | 初始化与错误 | 安全上下文与 GPU 检查、15 秒初始化超时提示、设备丢失提示与手动重建；StrictMode 下复用初始化，卸载后释放设备；超时的不可取消请求完成后释放迟到设备，失败初始化不会在 dispose 中再次启动 |
 | Splat | GSL 原生 WebGPU，当前世界生命周期内保留四个独立视图 renderer/排序状态（非当前布局的 renderer 隐藏但不销毁），引用计数共享解码源；世界卸载时统一释放；源 URL 纳入资源代次；失败重试有限次 |
-| collider GLB | 与 Splat 共用 `worldTransform` 的 flipY/scale/offset；线框在 Splat 后绘制、不写深度、不参与拾取；不释放 loader 缓存共享几何 |
+| collider GLB | 与 Splat 共用 `worldTransform` 的 flipY/scale/offset；**100% 透明——挂载但不绘制**（`WorldColliderMesh` 的 `COLLIDER_VISIBLE = false`，走 three `_projectObject` 的 `visible === false` 子树早退，零绘制提交）、不参与拾取；不释放 loader 缓存共享几何 |
 | 多视图与控件 | WebGPU 顶部起点的 viewport/scissor；1/2/4 视图；TSL 网格；主视口和预览坐标轴不依赖 WebGL capabilities |
 | 共享核心场景 | 单份 SceneContents、模型实例、动画更新、SplatMesh 和 collider；视图只保留相机、拾取代理、Gizmo/HUD 与独立高斯排序器；布局切换不重建核心资产 |
 | 统一调度 | ProjectRenderRuntime 统一执行各视图 scene→HUD；CaptureQueue 跨 renderer 串行调度截图批次，检查图优先、交互短暂让行、1.5 秒老化防饥饿、16 个待处理上限、取消与一次结算 |
@@ -26,7 +26,7 @@
 | 四视角自检 | 四个相机在同一 JS 任务内提交，随后并行等待读回，避免中途动画/编辑变化；保留 PNG/base64 协议和标签 |
 | 许可证 | GSL LICENSE、NOTICE、THIRD_PARTY_LICENSES.md 原样随静态构建发布 |
 
-collider 在原产品中是地形参照线框，**不是已接入的角色物理碰撞系统**。此次迁移没有新增 Rapier 或 GPU 碰撞求解，也没有改变项目文件语义。WebGPU-only 指统一 3D 渲染后端，不代表 React、加载解码或业务计算都在 GPU 上执行。
+collider 只是地形参照（最初渲染成线框 → 半透明实体 → 现按用户口径 **100% 透明**：挂载但不绘制），**不是已接入的角色物理碰撞系统**。此次迁移没有新增 Rapier 或 GPU 碰撞求解，也没有改变项目文件语义。WebGPU-only 指统一 3D 渲染后端，不代表 React、加载解码或业务计算都在 GPU 上执行。
 
 ### 技术选择与执行顺序的调整
 
