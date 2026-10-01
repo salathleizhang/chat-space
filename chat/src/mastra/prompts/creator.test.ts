@@ -10,6 +10,16 @@ describe("creator 回复协议", () => {
   });
 
   /**
+   * 语言跟随用户：提示词原先硬编码"回复使用简体中文"，英文用户会收到中文回答。
+   * 这条把口径钉住，避免被改回固定语言；付费同意卡片的按钮文字也是用户可见文字。
+   */
+  test("回复语言跟随用户最近一条消息，不固定中文", () => {
+    expect(CREATOR_INSTRUCTIONS).not.toContain("回复使用简体中文");
+    expect(CREATOR_INSTRUCTIONS).toContain("回复语言跟随用户最近一条消息");
+    expect(CREATOR_INSTRUCTIONS).toContain("Approve / Stop");
+  });
+
+  /**
    * 自检的触发口径是产品决策，写在提示词里就容易被后人"顺手"改回"生成完就查"。
    * 这几条把口径钉住：单模型不查、用户点名才查、整场景检查是唯一的自动例外。
    */
