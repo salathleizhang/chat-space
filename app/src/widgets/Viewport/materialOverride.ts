@@ -6,6 +6,7 @@ import {
   type MaterialTextureSlot,
 } from "../../shared/lib/libraryApi";
 import { isDefaultMaterial, normalizeMaterial } from "../../shared/lib/materialOverrides";
+import { applyWireframe, restoreWireframe } from "./wireframeMaterial";
 
 /**
  * 把右侧栏的贴图替换真正套到模型上。覆盖只做一件事：**克隆原材质、只改用户动过的槽位**。
@@ -19,6 +20,9 @@ import { isDefaultMaterial, normalizeMaterial } from "../../shared/lib/materialO
  *    保留，用户换的只是某几个通道的图。`Material.clone()` 正好是这个语义。
  * ③ **加载中不套用**。贴图是异步的，等不到就先让原材质继续渲染——把模型藏起来等一张图，
  *    比多显示一帧旧材质糟得多。
+ *
+ * 本模块另外持有视口**唯一**的材质写入点 `useAssemblyMaterials`，因为线框着色模式与贴图覆盖
+ * 写的是同一批 `mesh.material`：见那个 hook 的说明。
  */
 
 /**
@@ -238,27 +242,49 @@ function useOverrideTextures(
 }
 
 /**
- * 把贴图替换套到已克隆的模型上。没被改过材质的资产（绝大多数）整段跳过，不走遍历。
+ * 把贴图覆盖**或**线框着色套到已克隆的模型上。没被改过材质、也没开线框的资产（绝大多数）
+ * 整段跳过，不走遍历。
+ *
+ * 为什么两种情况合成**一个** effect：它们写的是同一批 `mesh.material`，各自一个 effect 会互相
+ * 拆台——① React 对同一个组件的 cleanup 按声明顺序跑，先还原的那一个会把自己之后那层剥掉，
+ * 后还原的再把一个**已经被剥掉的对家材质**装回去（顺带指向即将 dispose 的实例）；
+ * ② 贴图是异步的，线框模式下若贴图晚一步解析到，覆盖 effect 会重跑并把线框顶掉，用户看到的是
+ * "开着线框，某个模型却突然变回实体"。合成一次 effect 之后，谁生效在同一处决定，顺序无关。
+ *
+ * 线框**优先于**贴图覆盖，而且此时**不解析贴图**（spec 置空）：看不见的贴图不该解码、上传。
+ * 切回实体模式时 `rawTextureCache` 里的解码结果还在，恢复是快的。
  *
  * `invalidate` 是**必填**的：本应用所有 Canvas 都跑 `frameloop="demand"`，直接改
  * `mesh.material` 只是改了内存里的对象，没有任何东西会因此要一帧；不显式要帧的话，
- * 用户换了贴图会看到画面纹丝不动，直到下次转视角才突然变。调用方传 R3F 的
+ * 用户换了贴图或切了线框会看到画面纹丝不动，直到下次转视角才突然变。调用方传 R3F 的
  * `invalidate`（见 ModelMesh 的 ClonedAssembly）；做成参数而不是在 hook 里调 `useThree`，
  * 是为了让这个模块不依赖 Canvas 上下文，可以直接用普通 three 对象单测。
  */
-export function useMaterialOverride(
+export function useAssemblyMaterials(
   root: THREE.Object3D | null,
   material: AssetMaterial | undefined,
+  /** 线框着色模式（视口工具栏的开关）；开时忽略 `material` 的贴图覆盖 */
+  wireframe: boolean,
   invalidate: () => void,
 ): void {
   const spec = useMemo(
-    () => (isDefaultMaterial(material) ? null : normalizeMaterial(material)),
-    [material],
+    () => (wireframe || isDefaultMaterial(material) ? null : normalizeMaterial(material)),
+    [wireframe, material],
   );
   const textures = useOverrideTextures(spec);
 
   useEffect(() => {
-    if (!root || !spec || textures === null) return;
+    if (!root) return;
+    if (wireframe) {
+      const applied = applyWireframe(root);
+      invalidate();
+      return () => {
+        restoreWireframe(applied);
+        // 换回实体材质同样是一次静默的内存改动，也要补一帧
+        invalidate();
+      };
+    }
+    if (!spec || textures === null) return;
     const applied = applyOverride(root, textures);
     invalidate();
     return () => {
@@ -266,5 +292,5 @@ export function useMaterialOverride(
       // 换回原贴图同样是一次静默的内存改动，也要补一帧
       invalidate();
     };
-  }, [root, spec, textures, invalidate]);
+  }, [root, spec, textures, wireframe, invalidate]);
 }

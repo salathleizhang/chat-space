@@ -5,6 +5,7 @@ import { ArrowsOutCardinalIcon } from "@phosphor-icons/react/ArrowsOutCardinal";
 import { ArrowsOutIcon } from "@phosphor-icons/react/ArrowsOut";
 import { BoundingBoxIcon } from "@phosphor-icons/react/BoundingBox";
 import { CubeIcon } from "@phosphor-icons/react/Cube";
+import { CubeTransparentIcon } from "@phosphor-icons/react/CubeTransparent";
 import { GlobeSimpleIcon } from "@phosphor-icons/react/GlobeSimple";
 import { GridFourIcon } from "@phosphor-icons/react/GridFour";
 import { MountainsIcon } from "@phosphor-icons/react/Mountains";
@@ -214,6 +215,8 @@ interface SceneContentsProps {
   live: LiveTransforms;
   objects: Map<string, THREE.Object3D>;
   hoveredByLayer: Record<number, string>;
+  /** 线框着色模式：只作用于**模型资产**，泼溅世界/天空盒/网格/HUD 一律照旧（见 wireframeMaterial.ts） */
+  wireframe: boolean;
 }
 
 /** One project-owned model instance; per-view proxies handle picking. */
@@ -225,6 +228,7 @@ const PlacedAsset = memo(function PlacedAsset({
   highlight,
   highlightMask,
   objects,
+  wireframe,
 }: {
   asset: LibraryAsset;
   /** 网格默认位，或用户 gizmo 调过后落在 scene.json 里的摆放（见 scenePlacement.ts） */
@@ -236,6 +240,7 @@ const PlacedAsset = memo(function PlacedAsset({
   highlight: "none" | "hover" | "selected";
   highlightMask: number;
   objects: Map<string, THREE.Object3D>;
+  wireframe: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const register = useCallback((group: THREE.Group | null) => {
@@ -269,7 +274,7 @@ const PlacedAsset = memo(function PlacedAsset({
       scale={placement.scale}
 
     >
-      <ModelMesh asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} />
+      <ModelMesh asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} />
     </group>
   );
 });
@@ -288,6 +293,7 @@ function SceneContents({
   live,
   objects,
   hoveredByLayer,
+  wireframe,
 }: SceneContentsProps) {
   return (
     <>
@@ -362,6 +368,7 @@ function SceneContents({
               }
               highlightMask={selectedIds.has(asset.id) ? 1 : hoverMask}
               objects={objects}
+              wireframe={wireframe}
             />
           </Suspense>
         );
@@ -397,6 +404,16 @@ export const Viewport = memo(function Viewport({
 }: ViewportProps) {
   const [mode, setMode] = useState<ViewMode>("orbit");
   const [showGrid, setShowGrid] = useState(true);
+  /**
+   * 线框着色模式（对齐 Blender 的 wireframe viewport shading）：**只作用于模型资产**。
+   * 泼溅世界、天空盒、地面网格、HUD/gizmo 都是观察辅助，不跟着变线框——见 wireframeMaterial.ts
+   * 与 `SceneContents` 里 `wireframe` 只传给 `PlacedAsset` 这一件事。
+   * 它是**视图状态**，不进 scene.json、不过撤销栈，也不影响缩略图/预览小窗。
+   * 唯一一处"跨出去"的影响是**整场景检查图**（agent 的 `inspect`，见 SceneInspectionCapturer）：
+   * 它拍的就是当前这份场景，所以开着线框时拍到的也是线框——**所见即所得**，agent 看到的是
+   * 用户此刻看到的画面。
+   */
+  const [wireframe, setWireframe] = useState(false);
   /**
    * world 的地形参照层：默认开（GLB 照旧加载、挂进场景），但该层当前 **100% 透明、不画**，
    * 所以这个开关现在只决定"要不要把 collider 挂进场景"，画面不会变（见 WorldColliderMesh）。
@@ -590,6 +607,28 @@ export const Viewport = memo(function Viewport({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [firstPerson, gizmoMembers.length]);
 
+  /**
+   * 线框着色模式的快捷键：**Shift+Z**（Blender 里就是它切换 wireframe）。
+   *
+   * 与 G/R/S 分开一条 effect，因为闸门不同：G/R/S 是"变换工具"，没有选中就没有意义；而线框是
+   * **看的方式**，空场景、第一人称漫游里也一样能用。共同保留的三道闸门：输入框/contentEditable
+   * 不抢键、带 meta/ctrl/alt 不管（Cmd+Shift+Z 是重做，必须让路）、不按 Shift 的 Z 不管。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key.toLowerCase() !== "z") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable || /^(input|textarea|select)$/i.test(target?.tagName ?? "")) {
+        return;
+      }
+      event.preventDefault();
+      setWireframe((on) => !on);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   /** 单窗格布局下唯一的那个窗格，用于右下角全局透视/正交切换按钮 */
   const singlePane = panes.length === 1 ? panes[0] : undefined;
 
@@ -647,6 +686,7 @@ export const Viewport = memo(function Viewport({
             live={live}
             objects={objects}
             hoveredByLayer={hoveredByLayer}
+            wireframe={wireframe}
           />
           {!firstPerson && panes.map((pane) => (
             <WebGPUView key={pane.id} id={pane.id} layer={VIEW_LAYERS[pane.id]!} track={paneRefs[pane.id] as RefObject<HTMLElement>}>
@@ -802,6 +842,18 @@ export const Viewport = memo(function Viewport({
               />
             </Tooltip>
           )}
+          {/*
+            线框着色模式：第一人称里也留着（看的是同一条场景，没有理由只在轨道模式下可用）。
+            它只改模型的画法，泼溅世界/天空盒/网格/HUD 都不动——见 wireframeMaterial.ts。
+          */}
+          <Tooltip content={wireframe ? "Solid shading (Shift+Z)" : "Wireframe shading (Shift+Z)"} side="top">
+            <ToolbarButton
+              selected={wireframe}
+              icon={CubeTransparentIcon}
+              aria-label={wireframe ? "Solid shading (Shift+Z)" : "Wireframe shading (Shift+Z)"}
+              onClick={() => setWireframe((on) => !on)}
+            />
+          </Tooltip>
           {!firstPerson && worldAsset?.modelPath && worldAsset.worldSemantics && (
             <Tooltip
               content={
@@ -856,6 +908,7 @@ export const Viewport = memo(function Viewport({
           <div className="pointer-events-none absolute bottom-24 left-1/2 flex -translate-x-1/2 items-center gap-2">
             <Badge>{placedAssets.length} objects</Badge>
             {selectedIds.size > 0 && <Badge>Selected: {selectedIds.size}</Badge>}
+            {wireframe && <Badge>Wireframe</Badge>}
             {worldAsset && <Badge>Gaussian splat background</Badge>}
           </div>
         </>

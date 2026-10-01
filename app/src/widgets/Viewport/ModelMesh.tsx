@@ -19,7 +19,7 @@ import type { Object3D } from "three";
 import type { LibraryAsset, AssetMaterial } from "../../shared/lib/libraryApi";
 import { libraryUrl } from "../../shared/lib/libraryApi";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
-import { useMaterialOverride } from "./materialOverride";
+import { useAssemblyMaterials } from "./materialOverride";
 import { needsAnimationFrame } from "./animationLoop";
 import { mergeLoadedModel, type LoadedModel } from "./modelAssembly";
 import { MTLLoader, OBJLoader } from "./modelLoaders";
@@ -330,12 +330,15 @@ function ClonedAssembly({
   highlight,
   highlightMask,
   material,
+  wireframe,
 }: {
   models: LoadedModel[];
   highlight: Highlight;
   highlightMask: number;
   /** 右侧栏的材质覆盖；语义默认值（保持原材质）时 hook 内部整段跳过 */
   material?: AssetMaterial;
+  /** 线框着色模式；开时忽略贴图覆盖（见 useAssemblyMaterials） */
+  wireframe: boolean;
 }) {
   const clonedModels = useMemo(
     () =>
@@ -347,12 +350,13 @@ function ClonedAssembly({
   );
   const [root, setRoot] = useState<THREE.Group | null>(null);
   /*
-    覆盖套在**克隆体**上：这里才是真正挂进场景的那一份，原件留在 loader 缓存里给悬浮卡、
+    材质写在**克隆体**上：这里才是真正挂进场景的那一份，原件留在 loader 缓存里给悬浮卡、
     预览小窗和缩略图读（见 materialOverride.ts 的纪律 ①）。invalidate 由这里提供，因为
     Canvas 跑的是 frameloop="demand"——换材质后不主动要一帧，画面会停在旧材质上。
+    线框与贴图覆盖共用这一个写入点，理由见 useAssemblyMaterials 的说明。
   */
   const invalidate = useThree((state) => state.invalidate);
-  useMaterialOverride(root, material, invalidate);
+  useAssemblyMaterials(root, material, wireframe, invalidate);
   return (
     // 所有部件先保持供应商文件里的共同坐标系，再对整个集合只 Center 一次；逐部件
     // Center 会把每块都搬到原点，直接破坏分段模型的装配关系。
@@ -397,11 +401,13 @@ function ModelAssembly({
   highlight,
   highlightMask,
   material,
+  wireframe,
 }: {
   asset: LibraryAsset;
   highlight: Highlight;
   highlightMask: number;
   material?: AssetMaterial;
+  wireframe: boolean;
 }) {
   const paths = renderableModelPaths(asset);
   const [loaded, setLoaded] = useState<Array<LoadedModel | null>>(() => paths.map(() => null));
@@ -448,7 +454,7 @@ function ModelAssembly({
         </Suspense>
       ))}
       {settled && loadedModels.length > 0 && (
-        <ClonedAssembly models={loadedModels} highlight={highlight} highlightMask={highlightMask} material={material} />
+        <ClonedAssembly models={loadedModels} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} />
       )}
     </>
   );
@@ -459,6 +465,7 @@ export function ModelMesh({
   highlight = "none",
   highlightMask = 1,
   material,
+  wireframe = false,
 }: {
   asset: LibraryAsset;
   /** 视口里的选中/悬浮态；预览小窗与缩略图渲染不传，保持无高亮 */
@@ -466,7 +473,12 @@ export function ModelMesh({
   highlightMask?: number;
   /** 右侧栏的材质覆盖（scene.json 的 materials 条目）；不传即渲染供应商原材质 */
   material?: AssetMaterial;
+  /**
+   * 线框着色模式，只由视口（Viewport）打开。预览小窗、缩略图、资产贴图抽取都不传，
+   * 所以它们永远渲染实体材质——线框是**视口的观察方式**，不是资产的状态。
+   */
+  wireframe?: boolean;
 }) {
   const assemblyKey = `${renderableModelPaths(asset).join("|")}|${asset.mtlPath ?? ""}|${asset.resourceRevision ?? 0}`;
-  return <ModelAssembly key={assemblyKey} asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} />;
+  return <ModelAssembly key={assemblyKey} asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} />;
 }
