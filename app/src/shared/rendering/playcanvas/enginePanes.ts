@@ -14,8 +14,31 @@ import type { CameraApplyOptions, CameraEntityHandle, PaneRegistryOptions } from
  *  - **相机只认自己的 `layers`**：`CameraComponent.layers` 的 setter 会走
  *    `dirtyLayerCompositionCameras()` 正确增删。three 侧那套"两层 mask 都要给"在这里不存在。
  *
- * ⚠️ 本文件里对引擎 API 的调用**只在真实浏览器里才算验证过**。单测覆盖的是它上游的纯逻辑。
+ * ⚠️ 本文件里对引擎 API 的调用**只在真实浏览器里才算验证过**。单测覆盖的是它上游的纯逻辑，
+ * 外加下面这条**每格都必须看的场景级层**（用注入的假引擎钉住接线）。
  */
+
+/**
+ * 每格相机都要看的**场景级**层：引擎的 **Skybox 层**（`LAYERID_SKYBOX === 2`，天空盒画在这里）。
+ *
+ * 为什么必须显式列出来：`PaneRegistry.sync()` 每次都用 `cameraLayers(...)` **重写** `camera.layers`，
+ * 没被列进来的层就被过滤掉。真机症状（2026-10-02，用户报"看不见当前天空"）：
+ * 引擎状态里 `hasSkybox: true`、Sky 层有 1 个 mesh、`envAtlas` 也建好了，**画面背景却是纯黑**——
+ * 因为相机 layers 是 `[0, 5, 6, 7]`，**缺 2**：天空被层过滤挡在画面外。
+ * 这一条以前只写在 `paneRegistry.ts` 的注释里、**没有任何调用方接线**（产品与探针都没有），
+ * 所以现在把它放在绑定工厂里，两条路一起拿到。
+ */
+export const PANE_SHARED_LAYER_IDS: readonly number[] = [2 /* LAYERID_SKYBOX */];
+
+/** 绑定工厂用到的引擎 API。抽出来是为了能在**没有 GPU** 的单测里注入假实现、钉住接线。 */
+export interface PaneEngineApi {
+  Entity: new (name: string) => unknown;
+  Layer: new (options: { name: string }) => unknown;
+  Vec4: new (x: number, y: number, z: number, w: number) => unknown;
+  Color: new (r: number, g: number, b: number) => unknown;
+  PROJECTION_PERSPECTIVE: number;
+  PROJECTION_ORTHOGRAPHIC: number;
+}
 
 export interface EnginePaneBindings extends PaneRegistryOptions {
   /** 供相机机位逻辑（轨道/聚焦）取到某个窗格的相机实体。 */
@@ -30,11 +53,17 @@ export interface EnginePaneOptions {
   background?: [number, number, number];
 }
 
-export async function createEnginePaneBindings(canvas: HTMLCanvasElement, app: unknown, options: EnginePaneOptions = {}): Promise<EnginePaneBindings> {
+/** 纯装配：只用传进来的引擎 API，不 import 任何东西（所以能单测）。 */
+export function buildPaneBindings(
+  engine: PaneEngineApi,
+  canvas: HTMLCanvasElement,
+  app: unknown,
+  options: EnginePaneOptions = {},
+): EnginePaneBindings {
   const {
     Entity, Layer, Vec4, Color,
     PROJECTION_PERSPECTIVE, PROJECTION_ORTHOGRAPHIC,
-  } = await import("playcanvas");
+  } = engine;
 
   const application = app as {
     root: { addChild(child: unknown): void };
@@ -44,20 +73,27 @@ export async function createEnginePaneBindings(canvas: HTMLCanvasElement, app: u
   const root: { addChild(child: unknown): void } = (options.root as { addChild(child: unknown): void } | undefined) ?? application.root;
   const background = new Color(options.background?.[0] ?? 0.05, options.background?.[1] ?? 0.05, options.background?.[2] ?? 0.06);
 
-  const entities = new Map<string, InstanceType<typeof Entity>>();
-  const layers = new Map<number, InstanceType<typeof Layer>>();
+  const entities = new Map<string, InstanceType<PaneEngineApi["Entity"]>>();
+  const layers = new Map<number, InstanceType<PaneEngineApi["Layer"]>>();
 
   const bindings: EnginePaneBindings = {
     // 用**画布 CSS 尺寸**做分母：归一化之后 DPR 自然抵消（见 paneCamera.ts ③）。
     canvasSize: () => ({ width: canvas.clientWidth, height: canvas.clientHeight }),
 
+    // 天空盒在引擎的 Skybox 层里——不放进来就是"设了天空、画面全黑"（见上面的常量注释）。
+    sharedLayerIds: PANE_SHARED_LAYER_IDS,
+
     createCamera(paneId: string): CameraEntityHandle {
       const entity = new Entity(`pane-camera:${paneId}`);
-      entity.addComponent("camera", { fov: 60, clearColor: background, priority: 0 });
+      (entity as { addComponent(type: string, data: unknown): unknown }).addComponent("camera", { fov: 60, clearColor: background, priority: 0 });
       root.addChild(entity);
       entities.set(paneId, entity);
       // 只读一次并守住：`entity.camera` 在类型上可选，每帧重复判空会把热路径写脏。
-      const camera = entity.camera;
+      const camera = (entity as { camera?: {
+        rect: unknown; layers: number[]; priority: number;
+        clearColorBuffer: boolean; clearDepthBuffer: boolean; projection: number;
+        orthoHeight: number; fov: number;
+      } }).camera;
       if (!camera) throw new Error(`camera component was not created for pane ${paneId}`);
       return {
         applyCamera(o: CameraApplyOptions) {
@@ -73,15 +109,15 @@ export async function createEnginePaneBindings(canvas: HTMLCanvasElement, app: u
         },
         destroy() {
           entities.delete(paneId);
-          entity.destroy();
+          (entity as { destroy(): void }).destroy();
         },
       };
     },
 
     createPaneLayer(paneId: string): number {
       // 不传 id：让引擎的 layerCounter 分配一个空闲 id，避免与默认层 0–4 撞号。
-      const layer = new Layer({ name: `pane-hud:${paneId}` });
-      layers.set(layer.id, layer);
+      const layer = new Layer({ name: `pane-hud:${paneId}` }) as { id: number };
+      layers.set(layer.id, layer as InstanceType<PaneEngineApi["Layer"]>);
       application.scene.layers.push(layer);
       return layer.id;
     },
@@ -98,11 +134,16 @@ export async function createEnginePaneBindings(canvas: HTMLCanvasElement, app: u
     },
 
     dispose() {
-      for (const entity of entities.values()) entity.destroy();
+      for (const entity of entities.values()) (entity as { destroy(): void }).destroy();
       entities.clear();
       for (const layer of layers.values()) application.scene.layers.remove(layer);
       layers.clear();
     },
   };
   return bindings;
+}
+
+export async function createEnginePaneBindings(canvas: HTMLCanvasElement, app: unknown, options: EnginePaneOptions = {}): Promise<EnginePaneBindings> {
+  const engine = await import("playcanvas");
+  return buildPaneBindings(engine as unknown as PaneEngineApi, canvas, app, options);
 }

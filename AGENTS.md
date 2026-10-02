@@ -466,8 +466,15 @@ bun run check                        # typecheck + test + build
 **两条纪律**：① **诊断读引擎状态，不要读自己的记账**（`applied:true` 是自述）；
 ② **A/B 先确认被改的字段就是驱动该现象的字段**（可见天空是 `Sky` 网格用 `texture_envAtlas` 画的，
 `playcanvas.mjs:37328-37342`；只清 `skybox` 会得到"逐位相同"的假结论）。
-另：每格相机的 `layers` 需要含 Skybox 层 2（`PaneRegistryOptions.sharedLayerIds`）。
-③ 🔴 **仍未解**：EXR 天空盒产物在引擎侧仍然不可用（现在靠默认 `/env/sky.jpg` 顶着，不是项目那张）；
+③ **天空盒画在引擎的 Skybox 层（id 2），而 `PaneRegistry.sync()` 每次都用 `cameraLayers(...)`
+重写 `camera.layers`** —— 不把这一层放进 `PaneRegistryOptions.sharedLayerIds`，天空就被层过滤挡掉。
+真机症状（2026-10-02，用户报"看不见当前天空"）：引擎状态里 `hasSkybox: true`、Sky 层有 1 个 mesh、
+`envAtlas` 也建好了，**画面背景却是纯黑**，相机 layers 是 `[0,5,6,7]`（缺 2）。
+这一条以前只写在注释里、**两个调用方都没接线**，所以现在放在绑定工厂 `PANE_SHARED_LAYER_IDS`
+（`enginePanes.ts`）里，产品与探针一起拿；回归测试 `enginePanes.test.ts` 钉住"常量 = 引擎的
+`LAYERID_SKYBOX`" + "绑定对象确实把它交出去" + "它真的进得了 camera.layers"。
+**教训同 SPZ：注释里的约束没人接线就等于没有**——凡"必须有这一项"的，都要有一条会失败的测试。
+④ 🔴 **仍未解**：EXR 天空盒产物在引擎侧仍然不可用（现在靠默认 `/env/sky.jpg` 顶着，不是项目那张）；
 要可用得换产物格式（`.hdr` / equirect 图 / cubemap）。
 
 ### 第一人称（组件里）

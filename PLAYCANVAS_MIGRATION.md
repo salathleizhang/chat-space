@@ -1574,6 +1574,37 @@ HUD/gizmo/线框层；以前"每格都看得见坐标轴"是因为部件在 Worl
    `chat/src/common/spz.test.ts` **11 条**（头判定、降级四态、**真工具往返**：现造 v3 夹具 → 转 v4 点数不变）、
    `chat/src/mastra/tools/assetRepair.test.ts` **1 条**（下载 legacy → 落盘 v4，端到端接线）。
 
+26. ✅ **增量 20：天空盒被层过滤挡掉**（2026-10-02，用户报"看不见当前天空"，补一句"是黑色的"）。
+
+   **根因**：天空盒画在引擎的 **Skybox 层（id 2）**，而 `PaneRegistry.sync()` 每次都用
+   `cameraLayers(...)` **重写** `camera.layers`。`PaneRegistryOptions.sharedLayerIds` 这个口子
+   早就存在、注释里也写着"不放进来天空会被层过滤挡掉"——**但产品与探针都没有传**：
+   相机最终是 `[0, 5, 6, 7]`，**缺 2**。于是引擎状态看起来完全正常
+   （`hasSkybox: true`、`envAtlas: true`、Sky 层 1 个 mesh），**画面背景却是纯黑**。
+
+   **修法**：把这一层放进**绑定工厂**（`enginePanes.ts` 的 `PANE_SHARED_LAYER_IDS = [LAYERID_SKYBOX]`），
+   `createEnginePaneBindings` 返回它，产品（`PlayCanvasViewport`）与探针（`panes.browser.ts`）
+   都是 `new PaneRegistry({ ...bindings })`，一处接线两条路一起修。
+
+   **真机读数**（`.tmp/pc-panes/inspect-lighting.mjs`，无世界的项目 `p-muqj6jvo`，背景本该全是天）：
+
+   | 断言 | 修前 | 修后 |
+   | --- | --- | --- |
+   | 相机 `layers` | `[0, 5, 6, 7]`（缺 Skybox） | **`[0, 2, 5, 6, 7]`** |
+   | `hasSkybox` / Sky 层 mesh | `true` / 1（但看不见） | `true` / 1 |
+   | 背景 | **纯黑**（亮像素 14825，全是网格与家具） | 蓝天白云（亮像素 **1052520**） |
+   | 截图 | `.tmp/pc-panes/demo1-pc.png`（黑背景） | `.tmp/pc-panes/sky-visible-p-muqj6jvo.png` |
+
+   另一个项目 `p-mu5l6om3`（自己带 jpg 天空盒）复验：相机 layers 同样补上 2、`hasSkybox: true`、
+   控制台**没有**兜底告警（用的仍是项目那张天空图）。
+
+   单测：`enginePanes.test.ts` **4 条**——常量等于引擎的 `LAYERID_SKYBOX`、绑定对象确实把它交出去、
+   它真的进得了 `camera.layers`（不是只挂在选项上）、以及相机/逐格 HUD 层的既有行为没被这次重构动到
+   （`buildPaneBindings` 因此抽成"注入引擎 API"的纯装配，能用假引擎在无 GPU 环境测）。
+
+   **教训（与增量 19 的 SPZ 解析器同一条）**：**注释里的"必须有这一项"如果没人接线，就等于没有**。
+   本仓库已经有两处同型缺陷（SPZ 解析器、Skybox 层），所以凡这类约束都要配一条**会失败的测试**。
+
 3. 接 `live` + `onTransformCommit`（`selectionTransform` 的回调已就位）+ history 按钮；
    选中/悬浮接 `selectionWireframe`；G/R/S 接 `transformKeys`。
 4. 之后再补：skybox / world splat / 材质覆盖 / 检查图（`inspectionCapture`）/ 第一人称。
