@@ -232,7 +232,12 @@ export function startSeed3d3dBatch(
               fileFormat: options.fileFormat,
               model: options.model,
             },
-            { apiKey: options.seed3dApiKey },
+            {
+              apiKey: options.seed3dApiKey,
+              // 每次轮询都刷一次任务记录：看板进度可见，卡死看门狗也才分得清
+              // 「在动」和「没动」（与 ark3dOps 同款，见那边的注释）。
+              onStatus: () => task.setPhase("generating"),
+            },
             options.sessionStartedAt,
           ),
         ),

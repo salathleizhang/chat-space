@@ -25,6 +25,16 @@ export interface Ark3dGenOptions {
   model?: string;
   fetchFn?: typeof fetch;
   pollIntervalMs?: number;
+  /**
+   * 每次轮询到状态回调一次。批量生成会把它接到任务记录上（刷新 updatedAt），
+   * 否则 60 分钟看门狗分不清「在动」和「没动」，会把还在轮询的任务误判成卡死。
+   */
+  onStatus?: (status: string) => void | Promise<void>;
+}
+
+/** 报错文案的主语：两家共用方舟协议，但名字必须分得开。 */
+function arkProviderLabel(provider: Ark3dProvider): string {
+  return provider === "hi3d-volc" ? "Hi3D" : "Hyper3D";
 }
 
 /** Seedream 的临时供应商 URL 可喂给数美；本地文件始终是资产库里的正式副本。 */
@@ -79,6 +89,7 @@ export async function runArk3dImageTo3d(
   const sidecarPath = `${dir}/${formatRequestSidecarName(index, assetSlug)}`;
   const model = options.model ??
     (provider === "hi3d-volc" ? config.ark3d.hi3dModel : config.ark3d.hyper3dModel);
+  const label = arkProviderLabel(provider);
   const command = provider === "hi3d-volc"
     ? hi3dCommand(options)
     : hyper3dCommand(options);
@@ -110,6 +121,7 @@ export async function runArk3dImageTo3d(
         images: [image],
         command,
         requirePublicImageUrl: provider === "hi3d-volc",
+        label,
       },
       options,
     );
@@ -120,6 +132,8 @@ export async function runArk3dImageTo3d(
       apiKey: options.apiKey,
       fetchFn: options.fetchFn,
       pollIntervalMs: options.pollIntervalMs,
+      label,
+      ...(options.onStatus ? { onStatus: options.onStatus } : {}),
     };
     const result = await waitForSeed3dTask(taskId, pollOptions);
     const files = await downloadSeed3dOutputs(storage, result, {
@@ -146,7 +160,7 @@ export function startArk3dBatch(
   objects: GenerationObject[],
   options: Ark3dGenOptions,
 ) {
-  const label = provider === "hi3d-volc" ? "Hi3D" : "Hyper3D";
+  const label = arkProviderLabel(provider);
   return objects.map((object) =>
     startCustomTask("3d", projectSlug, `3D 生成（火山 ${label}）：${object.name}`, (task) =>
       runAndPublishGeneratedModel(
@@ -157,7 +171,17 @@ export function startArk3dBatch(
           projectSlug,
           object.slug,
           () => runArk3dImageTo3d(
-            storage, provider, projectSlug, object.slug, object.sourceImages[0], options,
+            storage, provider, projectSlug, object.slug, object.sourceImages[0],
+            {
+              ...options,
+              // 每次轮询都刷一次任务记录：看板进度可见，卡死看门狗也才分得清
+              // 「在动」和「没动」——否则一条跑了 20 分钟的合法轮询会被 60 分钟
+              // 看门狗误判成卡死（2026-10-02 的实际事故）。
+              onStatus: async (status) => {
+                await options.onStatus?.(status);
+                await task.setPhase("generating");
+              },
+            },
           ),
         ),
       ), {

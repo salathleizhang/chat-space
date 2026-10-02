@@ -2,10 +2,21 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assetDir, projectSourceDir } from "../../common/libraryPaths";
+import {
+  assetDir,
+  projectSourceDir,
+  projectTaskFile,
+} from "../../common/libraryPaths";
 import { RequestSidecarSchema } from "../../dto/library";
-import { LocalFileStorage, readJson, writeJson } from "../../services/assetStorage";
-import { runArk3dImageTo3d } from "./ark3dOps";
+import { GenerationTaskSchema } from "../../dto/tasks";
+import {
+  LocalFileStorage,
+  readJson,
+  setAssetStorage,
+  writeJson,
+} from "../../services/assetStorage";
+import { clearTasks } from "../../services/tasks";
+import { runArk3dImageTo3d, startArk3dBatch } from "./ark3dOps";
 import { createProject } from "./projectTools";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-ark3d-test-"));
@@ -18,7 +29,21 @@ beforeAll(async () => {
   await createProject(storage, { name: "方舟模型", slug: "ark-models" });
   await storage.writeBytes(source, new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 });
-afterAll(() => rm(root, { recursive: true, force: true }));
+afterAll(async () => {
+  setAssetStorage(undefined);
+  clearTasks();
+  await rm(root, { recursive: true, force: true });
+});
+
+/** 轮询到条件成立；超时就抛，避免测试挂死。 */
+async function waitFor(check: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await check()) return;
+    if (Date.now() > deadline) throw new Error("waitFor 超时");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 function fakeArk() {
   const bodies: Record<string, unknown>[] = [];
@@ -98,4 +123,115 @@ test("火山 Hi3D 使用 Seedream URL，上传原图不可直接提交", async (
   });
   expect(result.files).toEqual([`${assetDir("ark-models", "chair")}/0-chair.glb`]);
   expect((await readJson(storage, result.sidecar, RequestSidecarSchema)).provider).toBe("ark-hitem3d");
+});
+
+test("轮询状态回调一路传到等待器（看板进度与卡死看门狗都靠它）", async () => {
+  const statuses: string[] = [];
+  let finished = false;
+  const fetchFn = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith("/contents/generations/tasks")) return Response.json({ id: "cgt-live" });
+    if (url.endsWith("/contents/generations/tasks/cgt-live")) {
+      return Response.json(
+        finished
+          ? { status: "succeeded", content: { file_url: "https://cdn.fake/model.glb" } }
+          : { status: "running" },
+      );
+    }
+    if (url === "https://cdn.fake/model.glb") return new Response(glb);
+    return Response.json({}, { status: 404 });
+  }) as typeof fetch;
+
+  const pending = runArk3dImageTo3d(
+    storage, "hyper3d-volc", "ark-models", "robot-live", source,
+    {
+      apiKey: "test-volc",
+      fetchFn,
+      pollIntervalMs: 5,
+      onStatus: (status) => {
+        statuses.push(status);
+      },
+    },
+  );
+  await waitFor(async () => statuses.includes("running"));
+  finished = true;
+  await pending;
+  expect(statuses.at(-1)).toBe("succeeded");
+});
+
+test("轮询失败报自己渠道的名字，不再串台成 Seed3D", async () => {
+  const fetchFn = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith("/contents/generations/tasks")) return Response.json({ id: "cgt-bad" });
+    return Response.json({ error: "boom" }, { status: 500 });
+  }) as typeof fetch;
+  await expect(
+    runArk3dImageTo3d(
+      storage, "hyper3d-volc", "ark-models", "robot-label", source,
+      { apiKey: "test-volc", fetchFn, pollIntervalMs: 1 },
+    ),
+  ).rejects.toThrow("Hyper3D 任务查询 请求失败（500）");
+});
+
+test("提交失败同样用渠道自己的名字", async () => {
+  const fetchFn = (async (_input: string | URL | Request, _init?: RequestInit) =>
+    Response.json({ error: "boom" }, { status: 500 })) as typeof fetch;
+  await expect(
+    runArk3dImageTo3d(
+      storage, "hyper3d-volc", "ark-models", "robot-submit", source,
+      { apiKey: "test-volc", fetchFn, pollIntervalMs: 1 },
+    ),
+  ).rejects.toThrow("Hyper3D 任务提交失败（500）");
+});
+
+test("批量生成：轮询期间任务记录持续刷新，长任务不会被 60 分钟看门狗误杀", async () => {
+  setAssetStorage(storage);
+  await createProject(storage, { name: "看门狗", slug: "watchdog" });
+  const watchdogSource = `${projectSourceDir("watchdog")}/0-photo.png`;
+  await storage.writeBytes(watchdogSource, new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+
+  let finished = false;
+  const fetchFn = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith("/contents/generations/tasks")) return Response.json({ id: "cgt-watch" });
+    if (url.endsWith("/contents/generations/tasks/cgt-watch")) {
+      return Response.json(
+        finished
+          ? { status: "succeeded", content: { file_url: "https://cdn.fake/model.glb" } }
+          : { status: "running" },
+      );
+    }
+    if (url === "https://cdn.fake/model.glb") return new Response(glb);
+    return Response.json({}, { status: 404 });
+  }) as typeof fetch;
+
+  const [task] = startArk3dBatch(
+    "hyper3d-volc",
+    "watchdog",
+    [{ slug: "chair", name: "椅子", intent: "一张椅子", sourceImages: [watchdogSource] }],
+    { apiKey: "test-volc", fetchFn, pollIntervalMs: 10 },
+  );
+  expect(task).toBeDefined();
+  const taskPath = projectTaskFile("watchdog", task!.id);
+  const readUpdatedAt = async () =>
+    (await readJson(storage, taskPath, GenerationTaskSchema)).updatedAt;
+
+  // 轮询还在跑的时候，记录必须一直在动（看门狗判据就是 updatedAt）。
+  // 首次落盘是异步的，等文件出现再取基准值。
+  await waitFor(async () => {
+    try {
+      await readUpdatedAt();
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const first = await readUpdatedAt();
+  await waitFor(async () => (await readUpdatedAt()) !== first);
+  const second = await readUpdatedAt();
+  await waitFor(async () => (await readUpdatedAt()) !== second);
+
+  finished = true;
+  await waitFor(async () =>
+    (await readJson(storage, taskPath, GenerationTaskSchema)).status === "succeeded");
 });

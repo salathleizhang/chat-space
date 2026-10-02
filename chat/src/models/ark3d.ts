@@ -14,6 +14,8 @@ export interface Ark3dSubmitInput {
   command?: string;
   /** 数美 Hitem3D 的方舟接口只接受可公开访问的图片 URL。 */
   requirePublicImageUrl?: boolean;
+  /** 报错文案里的主语：Hyper3D / Hi3D（缺省「火山 3D」） */
+  label?: string;
 }
 
 /** 影眸与数美共享方舟异步 3D 任务提交协议，模型参数放在 text 命令中。 */
@@ -49,18 +51,22 @@ export async function submitArk3dTask(
       }),
     },
     API_REQUEST_TIMEOUT_MS,
-    "火山 3D 任务提交",
+    `${input.label ?? "火山 3D"} 任务提交`,
   );
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new ChatServiceError(
-      `火山 3D 任务提交失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
+      `${input.label ?? "火山 3D"} 任务提交失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
       502,
       "ark3d_submit_failed",
     );
   }
   if (typeof body.id !== "string" || !body.id) {
-    throw new ChatServiceError("火山 3D 任务响应缺少 id", 502, "ark3d_submit_failed");
+    throw new ChatServiceError(
+      `${input.label ?? "火山 3D"} 任务响应缺少 id`,
+      502,
+      "ark3d_submit_failed",
+    );
   }
   return body.id;
 }

@@ -2,7 +2,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
+import {
+  assetDir,
+  assetIdentityFile,
+  projectSourceDir,
+  projectTaskWorkDir,
+} from "../../common/libraryPaths";
 import {
   AssetIdentitySchema,
   RequestSidecarSchema,
@@ -399,6 +404,31 @@ describe("repairProjectAssets", () => {
     expect(report.resumable).not.toContain(`${sourceDir}/.1-plate-request.json`);
 
     await storage.remove(pending);
+  });
+
+  test("中途死掉的任务（侧写在 tasks/<id>/work 里）也要归入 resumable", async () => {
+    const workDir = projectTaskWorkDir("demo", "task-dead");
+    const crashed = `${workDir}/.0-dead-chair-request.json`;
+    await writeJson(storage, crashed, RequestSidecarSchema, {
+      schemaVersion: 1,
+      index: 0,
+      slug: "dead-chair",
+      provider: "ark-hyper3d",
+      model: "hyper3d-gen2-260112",
+      providerTaskId: "cgt-dead",
+      params: {},
+      status: "failed",
+      outputs: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const report = await repairProjectAssets(storage, "demo", {
+      fetchFn: makeFakeFetch(),
+    });
+    expect(report.resumable).toContain(crashed);
+
+    await storage.remove(workDir);
   });
 });
 

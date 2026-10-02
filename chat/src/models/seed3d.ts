@@ -23,6 +23,11 @@ import { pollProviderTask } from "../common/polling";
  * （文档点名的字段，不管埋多深），再退到按扩展名认 URL 兜底——真实形状以
  * `bun run smoke` 验证为准。同目录 tripo.ts / hunyuan.ts / blockadelabs.ts
  * 头注同款先例。
+ *
+ * **影眸 Hyper3D 与数美 Hi3D 共用这套提交/查询协议**（见 mastra/tools/ark3dOps.ts），
+ * 所以文案必须能换名字：`label` 缺省是 Seed3D，另两家传 "Hyper3D" / "Hi3D"。
+ * 不传的话超时与失败都会写成「Seed3D 任务超时」，把排查带进沟里（2026-10-02 踩过）。
+ * 错误码保持 `seed3d_*` 不动——那是给调用方（app / agent）看的稳定契约。
  */
 
 const ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3";
@@ -40,6 +45,8 @@ export interface Seed3dCallOptions {
   timeoutMs?: number;
   /** 单次查询的超时预算（默认 API_REQUEST_TIMEOUT_MS） */
   requestTimeoutMs?: number;
+  /** 报错文案里的主语；共用这套协议的三家各自传自己的名字（缺省 Seed3D） */
+  label?: string;
   onStatus?: (status: string) => void | Promise<void>;
 }
 
@@ -59,7 +66,7 @@ async function callArk(
   override: { signal?: AbortSignal; requestTimeoutMs?: number; label?: string } = {},
 ): Promise<Record<string, unknown>> {
   const fetchFn = options.fetchFn ?? fetch;
-  const label = override.label ?? "Seed3D";
+  const label = override.label ?? options.label ?? "Seed3D";
   const requestTimeoutMs =
     override.requestTimeoutMs ?? options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS;
   const response = await fetchWithTimeout(
@@ -84,7 +91,7 @@ async function callArk(
   );
   if (!response.ok) {
     throw new ChatServiceError(
-      `Seed3D 请求失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
+      `${label} 请求失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
       502,
       "seed3d_request_failed",
     );
@@ -125,7 +132,11 @@ export async function submitSeed3dTask(
   );
   const id = body.id;
   if (typeof id !== "string" || !id) {
-    throw new ChatServiceError("Seed3D 提交响应缺少任务 id", 502, "seed3d_request_failed");
+    throw new ChatServiceError(
+      `${options.label ?? "Seed3D"} 提交响应缺少任务 id`,
+      502,
+      "seed3d_request_failed",
+    );
   }
   return id;
 }
@@ -140,7 +151,7 @@ export async function pollSeed3dTask(
     `/contents/generations/tasks/${encodeURIComponent(taskId)}`,
     {},
     options,
-    { label: "Seed3D 任务查询", ...override },
+    { label: `${options.label ?? "Seed3D"} 任务查询`, ...override },
   );
 }
 
@@ -152,15 +163,16 @@ export async function waitForSeed3dTask(
   taskId: string,
   options: Seed3dCallOptions,
 ): Promise<Record<string, unknown>> {
+  const label = options.label ?? "Seed3D";
   const timeoutError = () =>
     new ChatServiceError(
-      `Seed3D 任务超时（id=${taskId}，可凭侧写续查）`,
+      `${label} 任务超时（id=${taskId}，可凭侧写续查）`,
       504,
       "seed3d_timeout",
     );
 
   return pollProviderTask<Record<string, unknown>>({
-    label: "Seed3D 任务查询",
+    label: `${label} 任务查询`,
     timeoutMs: options.timeoutMs ?? 15 * 60_000,
     requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
     pollIntervalMs: options.pollIntervalMs ?? 10_000,
@@ -175,7 +187,7 @@ export async function waitForSeed3dTask(
       if (!TERMINAL_FAIL.has(status)) return undefined;
       const error = result.error as { message?: string } | undefined;
       return new ChatServiceError(
-        `Seed3D 任务失败：${error?.message ?? status}`,
+        `${label} 任务失败：${error?.message ?? status}`,
         502,
         "seed3d_task_failed",
       );

@@ -6,6 +6,8 @@ import {
   assetDir,
   projectAssetsDir,
   projectSourceDir,
+  projectTaskWorkDir,
+  projectTasksDir,
 } from "../../common/libraryPaths";
 import { RequestSidecarSchema, SlugSchema, isResumableSidecar } from "../../dto/library";
 import {
@@ -141,6 +143,13 @@ export async function repairProjectAssets(
   await repairDir(storage, projectSourceDir(projectSlug), report, options);
   for (const assetSlug of await storage.list(projectAssetsDir(projectSlug))) {
     await repairDir(storage, assetDir(projectSlug, assetSlug), report, options);
+  }
+  // 中途死掉的任务：侧写留在工作目录里、资产还没发布（assets/ 下没有它）。
+  // 不扫这一段，最需要「先续跑、别重新提交」的那类侧写反而不会出现在 resumable 里
+  // ——2026-10-02 三个已生成成功的火山 3D 任务就是这么被漏掉的。
+  for (const name of await storage.list(projectTasksDir(projectSlug))) {
+    if (name.endsWith(".json")) continue;
+    await repairDir(storage, projectTaskWorkDir(projectSlug, name), report, options);
   }
   return report;
 }

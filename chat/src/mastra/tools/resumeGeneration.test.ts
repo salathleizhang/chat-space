@@ -3,14 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import JSZip from "jszip";
-import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
+import { assetDir, assetIdentityFile, projectSourceDir, projectTaskWorkDir } from "../../common/libraryPaths";
 import { AssetIdentitySchema, RequestSidecarSchema } from "../../dto/library";
 import {
   LocalFileStorage,
   readJson,
   writeJson,
 } from "../../services/assetStorage";
-import { createProject, requireProject } from "./projectTools";
+import { mutateCandidates, readCandidates } from "../../services/candidateRegistry";
+import { createProject, getProjectState, requireProject } from "./projectTools";
 import { listResumableSidecars, resumeGeneration } from "./resumeGeneration";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-resume-test-"));
@@ -165,5 +166,88 @@ describe("resumeGeneration · 新渠道", () => {
     expect(
       resumeGeneration(storage, `${dir}/.0-no-key-request.json`, {}),
     ).rejects.toThrow("Tripo3D API key");
+  });
+});
+
+/**
+ * 任务中途死掉（进程没了 / 轮询链断掉）留下的侧写在 `tasks/<id>/work/` 里，
+ * 而不是 `assets/<slug>/`——那是 2026-10-02 三个火山 3D 任务的真实形态：
+ * 供应商早就成功，本机却「既列不出可续跑、续跑了也看不见资产」。
+ */
+describe("任务工作目录里的侧写", () => {
+  const taskWorkDir = projectTaskWorkDir("rz", "task-crashed");
+  const sidecarPath = `${taskWorkDir}/.0-ark-chair-request.json`;
+  const crashedGlb = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
+
+  const arkFetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith("/contents/generations/tasks/cgt-crashed")) {
+      return jsonResponse({
+        status: "succeeded",
+        content: { file_url: "https://cdn.fake/crashed.glb" },
+      });
+    }
+    if (url === "https://cdn.fake/crashed.glb") {
+      return new Response(crashedGlb.buffer.slice(0), { status: 200 });
+    }
+    return jsonResponse({}, 404);
+  }) as typeof fetch;
+
+  test("可续跑清单覆盖 tasks/<id>/work 里的侧写（否则界面上找不到入口）", async () => {
+    await writeJson(storage, sidecarPath, RequestSidecarSchema, {
+      schemaVersion: 1,
+      index: 0,
+      slug: "ark-chair",
+      provider: "ark-hyper3d",
+      model: "hyper3d-gen2-260112",
+      providerTaskId: "cgt-crashed",
+      params: { image: `${projectSourceDir("rz")}/0-photo.png` },
+      status: "failed",
+      error: "Hyper3D 任务超时（id=cgt-crashed，可凭侧写续查）",
+      outputs: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    const resumable = await listResumableSidecars(storage, "rz");
+    expect(resumable.some((entry) => entry.sidecarPath === sidecarPath)).toBe(true);
+  });
+
+  test("续跑即发布：产物落进 assets/<slug>/，asset.json 就位、候选摘掉", async () => {
+    await mutateCandidates(storage, "rz", (current) => ({
+      ...current,
+      objects: [
+        ...current.objects,
+        {
+          slug: "ark-chair",
+          name: "方舟椅子",
+          description: "由请求侧写续跑恢复的椅子",
+          sourceImages: [`${projectSourceDir("rz")}/0-photo.png`],
+        },
+      ],
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const result = await resumeGeneration(storage, sidecarPath, {
+      seed3dApiKey: "sk-volc",
+      fetchFn: arkFetch,
+      pollIntervalMs: 1,
+    });
+
+    const dir = assetDir("rz", "ark-chair");
+    // 返回的产物流向资产目录（不是工作目录）：与正常生成任务的收尾一致
+    expect(result.files).toEqual([`${dir}/0-ark-chair.glb`]);
+    const identity = await readJson(storage, assetIdentityFile("rz", "ark-chair"), AssetIdentitySchema);
+    expect(identity.kind).toBe("model");
+    expect(identity.name).toBe("方舟椅子");
+    const sidecar = await readJson(storage, `${dir}/.0-ark-chair-request.json`, RequestSidecarSchema);
+    expect(sidecar.status).toBe("succeeded");
+    expect(sidecar.outputs[0]?.path).toBe(`${dir}/0-ark-chair.glb`);
+    // 旧的失败原因不能跟着成功状态一起留下
+    expect(sidecar.error).toBeUndefined();
+    expect((await readCandidates(storage, "rz")).objects.map((object) => object.slug))
+      .not.toContain("ark-chair");
+    // 应用是扫 assets/<slug>/ 得出项目状态的——资产真的出现在列表里才算恢复
+    expect((await getProjectState(storage, "rz")).assets.map((asset) => asset.slug))
+      .toContain("ark-chair");
   });
 });

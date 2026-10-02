@@ -4,6 +4,7 @@ import { ChatServiceError, toErrorMessage } from "../../common/errors";
 import { extractFileUrls } from "../../common/fileUrls";
 import {
   formatIndexedName,
+  formatRequestSidecarName,
   parseRequestSidecarName,
 } from "../../common/indexedFiles";
 import {
@@ -11,6 +12,8 @@ import {
   assetIdentityFile,
   projectAssetsDir,
   projectSourceDir,
+  projectTaskWorkDir,
+  projectTasksDir,
 } from "../../common/libraryPaths";
 import {
   AssetIdentitySchema,
@@ -35,6 +38,8 @@ import {
   writeJson,
   type AssetStorage,
 } from "../../services/assetStorage";
+import { mutateCandidates, readCandidates } from "../../services/candidateRegistry";
+import { publishGeneratedModel } from "../../services/modelPublishing";
 import { downloadToLibrary } from "./assetRepair";
 import { setCurrentSkybox, setCurrentWorld } from "./projectTools";
 import {
@@ -148,6 +153,79 @@ async function registerResumedSkybox(
   await setCurrentSkybox(storage, projectSlug, sidecar.slug);
 }
 
+/** 会产出模型产物、需要「续跑即发布」的渠道。 */
+const MODEL_PROVIDERS = new Set(["seed3d", "ark-hyper3d", "ark-hitem3d", "tripo", "hunyuan"]);
+
+/**
+ * 模型续跑成功后的发布收尾——与 `runAndPublishGeneratedModel` 的尾部等价。
+ *
+ * 为什么必须有这一步：任务中途死掉时侧写还在 `tasks/<id>/work/` 里（生产流程原本会
+ * 在成功后把整个工作目录 `move` 到 `assets/<slug>/`），而 `asset.json` 是资产在界面里
+ * 存在的唯一依据。只把字节下回来而不发布，用户看到的就是「任务失败、资产列表里什么
+ * 也没有」——2026-10-02 三个已经生成成功的火山 3D 任务正是卡在这里。
+ *
+ * 已发布资产（侧写本来就在 `assets/<slug>/` 下）原样跳过：那是在补齐旧文件，
+ * 不该重写已存在的身份，更不该动用户当前的模型代次。
+ */
+async function publishResumedModel(
+  storage: AssetStorage,
+  projectSlug: string,
+  sidecarPath: string,
+  sidecar: RequestSidecar,
+  files: string[],
+  outputs: RequestSidecar["outputs"],
+): Promise<void> {
+  if (!sidecarPath.startsWith(`${projectTasksDir(projectSlug)}/`)) return;
+  if (files.length === 0) return;
+  if (await storage.exists(assetIdentityFile(projectSlug, sidecar.slug))) return;
+
+  const finalDir = assetDir(projectSlug, sidecar.slug);
+  const renamed = new Map<string, string>();
+  for (const [index, file] of files.entries()) {
+    // 工作目录里的文件名本来就是按资产规范生成的（StagedAssetStorage 的映射），
+    // 所以只搬位置、不改名字。
+    const target = `${finalDir}/${file.split("/").pop()}`;
+    await storage.writeBytes(target, await storage.readBytes(file));
+    renamed.set(file, target);
+    files[index] = target;
+  }
+  for (const output of outputs) {
+    const target = renamed.get(output.path);
+    if (target) output.path = target;
+  }
+
+  // 侧写副本进资产目录：latestModelOperation 与 repair-assets 都从那里读。
+  // 写成 succeeded——它马上就会是（调用方随后落盘同一状态），写成 running 会让
+  // 应用把这一代读成"还在跑"；`error` 同理不能带着上一次的失败原因。
+  await writeJson(
+    storage,
+    `${finalDir}/${formatRequestSidecarName(sidecar.index, sidecar.slug)}`,
+    RequestSidecarSchema,
+    { ...sidecar, outputs, status: "succeeded", error: undefined },
+  );
+
+  const candidate = (await readCandidates(storage, projectSlug)).objects.find(
+    (object) => object.slug === sidecar.slug,
+  );
+  const image = typeof sidecar.params.image === "string" ? sidecar.params.image : undefined;
+  await publishGeneratedModel(
+    storage,
+    projectSlug,
+    {
+      slug: sidecar.slug,
+      name: candidate?.name ?? sidecar.slug,
+      intent: candidate?.description ?? "由请求侧写续跑恢复的 3D 模型",
+      sourceImages: candidate?.sourceImages ?? (image ? [image] : []),
+    },
+    { files },
+  );
+  await mutateCandidates(storage, projectSlug, (current) => {
+    const objects = current.objects.filter((object) => object.slug !== sidecar.slug);
+    if (objects.length === current.objects.length) return undefined;
+    return { ...current, objects, updatedAt: new Date().toISOString() };
+  });
+}
+
 async function scanDir(
   storage: AssetStorage,
   dirPath: string,
@@ -185,6 +263,13 @@ export async function listResumableSidecars(
   await scanDir(storage, projectSourceDir(projectSlug), found);
   for (const assetSlug of await storage.list(projectAssetsDir(projectSlug))) {
     await scanDir(storage, assetDir(projectSlug, assetSlug), found);
+  }
+  // 中途死掉的任务：侧写还留在工作目录里（资产没发布，assets/ 下根本没有它）。
+  // 漏了这一段，「凭侧写续跑（不重复付费）」就只是句空话——错误文案让用户去续跑，
+  // 清单里却找不到（2026-10-02 三个火山 3D 任务的实际事故）。
+  for (const name of await storage.list(projectTasksDir(projectSlug))) {
+    if (name.endsWith(".json")) continue;
+    await scanDir(storage, projectTaskWorkDir(projectSlug, name), found);
   }
   return found;
 }
@@ -479,10 +564,23 @@ export async function resumeGeneration(
       await registerResumedWorld(storage, projectSlugOf(sidecarPath), sidecar);
     } else if (sidecar.provider === "blockade-labs" && sidecar.model === "skybox/export") {
       await registerResumedSkybox(storage, projectSlugOf(sidecarPath), sidecar);
+    } else if (MODEL_PROVIDERS.has(sidecar.provider)) {
+      // 模型类同理：中途死掉的任务侧写在 tasks/<id>/work 里，只落文件等于什么都没恢复。
+      await publishResumedModel(
+        storage,
+        projectSlugOf(sidecarPath),
+        sidecarPath,
+        sidecar,
+        files,
+        outputs,
+      );
     }
 
     sidecar.outputs = outputs;
     sidecar.status = "succeeded";
+    // 上一次失败留下的原因不能跟着一个成功的状态走：`error` 是"这次为什么失败"，
+    // 不是历史。清掉它，看板和 repair 的输出才不会被旧文案误导。
+    sidecar.error = undefined;
     await save({});
     return { files, sidecar: sidecarPath };
   } catch (err) {
