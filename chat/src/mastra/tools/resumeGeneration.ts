@@ -40,7 +40,7 @@ import {
 } from "../../services/assetStorage";
 import { mutateCandidates, readCandidates } from "../../services/candidateRegistry";
 import { publishGeneratedModel } from "../../services/modelPublishing";
-import { downloadToLibrary } from "./assetRepair";
+import { downloadSpzToLibrary, downloadToLibrary } from "./assetRepair";
 import { setCurrentSkybox, setCurrentWorld } from "./projectTools";
 import {
   optionalContextString,
@@ -444,14 +444,15 @@ export async function resumeGeneration(
           ),
         );
       for (const [key, url] of Object.entries(urls.spz)) {
-        await download(
-          url,
-          formatIndexedName(
-            sidecar.index,
-            `${sidecar.slug}-${key.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-            "spz",
-          ),
-        );
+        // 与首次生成同一条口径：legacy SPZ 落盘前转 v4（见 common/spz.ts）
+        const path = `${dir}/${formatIndexedName(
+          sidecar.index,
+          `${sidecar.slug}-${key.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          "spz",
+        )}`;
+        await downloadSpzToLibrary(storage, url, path, { fetchFn: keys.fetchFn });
+        files.push(path);
+        outputs.push({ path, providerUrl: url });
       }
     } else if (sidecar.provider === "tripo") {
       if (!keys.tripo3dApiKey) {

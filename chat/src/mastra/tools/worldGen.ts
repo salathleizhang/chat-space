@@ -36,7 +36,7 @@ import {
   writeJson,
   type AssetStorage,
 } from "../../services/assetStorage";
-import { downloadToLibrary } from "./assetRepair";
+import { downloadSpzToLibrary, downloadToLibrary } from "./assetRepair";
 import {
   requireProject,
   setCurrentWorld,
@@ -179,14 +179,15 @@ export async function runWorldGeneration(
         ),
       );
     for (const [key, url] of Object.entries(urls.spz)) {
-      await download(
-        url,
-        formatIndexedName(
-          index,
-          `${params.worldSlug}-${key.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-          "spz",
-        ),
-      );
+      // splat 单独一条路：上游给的是 legacy SPZ，**落盘前转成引擎认的 v4**（见 common/spz.ts）
+      const path = `${dir}/${formatIndexedName(
+        index,
+        `${params.worldSlug}-${key.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        "spz",
+      )}`;
+      await downloadSpzToLibrary(storage, url, path, { fetchFn: callOptions.fetchFn });
+      files.push(path);
+      sidecar.outputs.push({ path, providerUrl: url });
     }
 
     sidecar.status = "succeeded";

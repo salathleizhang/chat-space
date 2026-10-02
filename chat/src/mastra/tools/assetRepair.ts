@@ -1,6 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { downloadBytesWithRetry } from "../../common/download";
+import { ensureSpzV4, type SpzConversion } from "../../common/spz";
 import { parseRequestSidecarName } from "../../common/indexedFiles";
 import {
   assetDir,
@@ -43,6 +44,33 @@ export async function downloadToLibrary(
   options: DownloadOptions = {},
 ): Promise<void> {
   await storage.writeBytes(targetPath, await downloadBytesWithRetry(url, options));
+}
+
+/**
+ * 下载一件 **splat 产物**（`.spz`）并按需转成引擎认的 **v4** 再落盘。
+ *
+ * 上游（World Labs）下发的是 legacy v2/v3（整段 gzip），而 PlayCanvas 引擎的解析器**只认 v4**
+ * ——不转的话 PC 分支稳定报 `No parser found for resource`，房间/背景整块不渲染。
+ * three 侧两种都能读，所以统一存 v4 对两边都合法（见 `common/spz.ts` 文件头）。
+ *
+ * **转不了就保留原样**（没装工具 / 转换抛错 / 产物不合法都会走这条），资产不因为缺工具而丢；
+ * 调用方拿返回值知道发生了什么，不必自己再嗅一遍魔数。
+ */
+export async function downloadSpzToLibrary(
+  storage: AssetStorage,
+  url: string,
+  targetPath: string,
+  options: DownloadOptions = {},
+): Promise<SpzConversion> {
+  const bytes = await downloadBytesWithRetry(url, options);
+  const conversion = await ensureSpzV4(bytes);
+  await storage.writeBytes(targetPath, conversion.bytes);
+  if (conversion.reason) {
+    console.warn(`[spz] ${targetPath} 保持原样（${conversion.reason}）`);
+  } else if (conversion.converted) {
+    console.info(`[spz] ${targetPath} 已转为 v4（${bytes.byteLength} → ${conversion.bytes.byteLength} 字节）`);
+  }
+  return conversion;
 }
 
 export interface RepairReport {
@@ -99,6 +127,9 @@ async function repairDir(
             fallbackExtension: "glb",
             fetchFn: options.fetchFn,
           });
+        } else if (path.toLowerCase().endsWith(".spz")) {
+          // 补下来的也是上游的 legacy SPZ：与首次生成同一条口径（见 common/spz.ts）
+          await downloadSpzToLibrary(storage, output.providerUrl, path, options);
         } else {
           await downloadToLibrary(storage, output.providerUrl, path, options);
         }

@@ -108,7 +108,60 @@ describe("ensureSpzV4", () => {
 
 describe("loadSpzConverter", () => {
   test("包（或给定路径）不存在时返回 null，不抛", async () => {
-    // 真实场景：平台侧还没 `bun install` 这个可选依赖
+    // 真实场景：平台侧还没 `bun install` 这个依赖
     await expect(loadSpzConverter("__definitely_missing_splat_transform__")).resolves.toBeNull();
+  });
+});
+
+/**
+ * 拿**真工具**跑一遍：现造一个小到能进单测的 legacy v3 文件（`writeSpz` 的 `version: 3`），
+ * 再让 `ensureSpzV4` 把它转成 v4。这条覆盖的正是入库那条路（`downloadSpzToLibrary`）。
+ *
+ * 这里的断言是**硬**的：`@playcanvas/splat-transform` 已经是 chat 的正式依赖，拿不到转换器就是环境坏了，
+ * 不该静默跳过（跳过 = 入库路径没被测过）。
+ */
+describe("真转换器：legacy v3 → v4", () => {
+  async function makeLegacySpz(): Promise<Uint8Array> {
+    const { Column, DataTable, MemoryFileSystem, writeSpz } = await import("@playcanvas/splat-transform");
+    const table = new DataTable([
+      new Column("x", new Float32Array([0, 1])),
+      new Column("y", new Float32Array([0, 0.5])),
+      new Column("z", new Float32Array([0, -1])),
+      new Column("scale_0", new Float32Array([-2, -1.5])),
+      new Column("scale_1", new Float32Array([-1, -1.2])),
+      new Column("scale_2", new Float32Array([-3, -2.5])),
+      new Column("rot_0", new Float32Array([1, 1])),
+      new Column("rot_1", new Float32Array([0, 0])),
+      new Column("rot_2", new Float32Array([0, 0])),
+      new Column("rot_3", new Float32Array([0, 0])),
+      new Column("f_dc_0", new Float32Array([0.5, 0.2])),
+      new Column("f_dc_1", new Float32Array([0.1, 0.3])),
+      new Column("f_dc_2", new Float32Array([0.9, 0.4])),
+      new Column("opacity", new Float32Array([2, 1])),
+    ]);
+    const fs = new MemoryFileSystem();
+    await writeSpz({ filename: "tiny.spz", dataTable: table, version: 3 }, fs);
+    const bytes = fs.results.get("tiny.spz");
+    if (!bytes) throw new Error("测试夹具没写出来");
+    return bytes;
+  }
+
+  function pointCount(bytes: Uint8Array): number {
+    return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(8, true);
+  }
+
+  test("造出来的夹具确实是 legacy gzip，且转换后是 v4、点数不变", async () => {
+    const converter = await loadSpzConverter();
+    expect(converter).not.toBeNull();
+
+    const legacy = await makeLegacySpz();
+    expect(isLegacyGzipSpz(legacy)).toBe(true);
+    expect(isSpzV4(legacy)).toBe(false);
+
+    const result = await ensureSpzV4(legacy, converter);
+    expect(result.reason).toBeNull();
+    expect(result.converted).toBe(true);
+    expect(isSpzV4(result.bytes)).toBe(true);
+    expect(pointCount(result.bytes)).toBe(2);
   });
 });
