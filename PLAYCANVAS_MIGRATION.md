@@ -1337,6 +1337,56 @@ HUD 的逐格隔离失败、gizmo 的"本格变了"失败，而**每个模式单
    那是应用外壳的事，现在 `?pcViewport=1` 这条分支**没有工具栏**）、**逐格的机位预设**
    （`CameraKind` 的 top/front/right 正交机位：现在所有格都是同一份透视默认机位）、
    skybox / world 背景 splat、材质覆盖、检查图、第一人称——**"能渲染"不等于"已迁移"**。
+24. ✅ **增量 18：默认光照 + 环境贴图兜底**（2026-10-02，用户报"`?pcViewport=1` 打开项目场景是黑的、
+   贴图也显示不出来"）。
+
+   **根因是"没有光"，不是"贴图没加载"**——读引擎事实（`.tmp/pc-panes/inspect-lighting.mjs`，
+   真实业务页面 `/app/p-muo3u17c?pcViewport=1`）：
+
+   - `app.root.findComponents("light")` = **`[]`**；`scene.ambientLight` = **`(0,0,0)`**
+     （引擎默认就是黑：`scene.js:29`、d.ts 原话 "Defaults to black (0,0,0)"）；
+   - `scene.envAtlas` / `scene.skybox` 都是 **false**（连 IBL 都没有）；
+   - 而模型材质是 `useLighting: true` + **`diffuseMap: true`** + `metalness: 1`
+     ——**贴图早就挂上了**，只是所有受光项乘 0，所以"贴图显示不出来"与"场景黑"是同一个根因。
+
+   **为什么探针一直没抓到**：探针台架自己加了一盏平行光（`panes.browser.ts:480-484`），
+   而且探针用的天空盒是 `.jpg`；真实页面上这两样都没有。
+
+   **两处缺口（都补了）**
+
+   - **光源**：three 侧一直有 `ambientLight 0.6` + 两盏 `directionalLight`（1.4 / 0.4，
+     `index.tsx:265-267`），PC 侧一行都没有。新增 `playcanvas/sceneLighting.ts` 的
+     `createSceneLighting()`：写 `scene.ambientLight` + 逐盏建平行光实体挂到 `app.root`，
+     **方向用 `setPosition` + `lookAt(0,0,0)` 表达**（引擎的平行光是实体 −Z；不要手写欧拉角——
+     引擎欧拉是角度 + ZYX，与 three 的弧度 + XYZ 不是一套）。在 `PlayCanvasViewport` 的装配
+     effect 里建、清理时 `dispose()`（`Entity.destroy()` 会摘组件 + 摘父节点，`entity.js:157-170`）。
+   - **环境贴图兜底**：原代码是 `if (!path) return;`——"项目没选天空盒 / 列表里那个占位资产的
+     `hdrPath` 是 null"时**连 IBL 都没有**；three 侧有 `/env/sky.exr` 兜底，而那份引擎**不认**
+     （解析器只有 img / dds / basis / hdr）。改成候选表：项目产物 → **`/env/sky.jpg`**
+     （引擎认的 equirect，2048×1024，与 `sky.exr` 同目录），按顺序试、第一个成功的生效；
+     项目产物是 EXR 时自然落到默认那张。
+
+   **真机读数**（同一条取样脚本；两次会话，只作定性对照）：
+
+   | 断言 | 修前 | 修后 |
+   | --- | --- | --- |
+   | `findComponents("light")` | `[]` | `[{directional,1.4},{directional,0.4}]`（都 `enabled`） |
+   | `scene.ambientLight` | `(0,0,0)` | `(0.6,0.6,0.6)` |
+   | `envAtlas` / `skybox` / Sky 层 mesh | `false` / `false` / 0 | **`true` / `true` / 1**（`p-muo3u17c` 没选天空盒 → 走 `/env/sky.jpg` 兜底） |
+   | 亮像素 | **7104**（全是黑剪影） | **15888** |
+   | 画面 | 家具全黑、只剩轮廓 | `.tmp/pc-panes/lighting-fixed-p-muo3u17c.png`（家具与贴图都在） |
+   | JS 错误 | 0 | 0 |
+
+   另一个项目 `p-mu5l6om3`（**自己就有 jpg 天空盒**）复验：`envAtlas: true`、亮像素 8228 → **10366**、
+   控制台**没有**兜底告警（说明项目产物优先、兜底没被误用）。
+
+   单测：`playcanvas/sceneLighting.test.ts` **9 条**——与 three 侧的数值契约（0.6 / 1.4 / 0.4 与两个位置）、
+   注入假实体后的建灯参数与方向、`dispose` 逐盏销毁且幂等、候选表的优先级/去重/空表。
+
+   **仍未解（不是视口侧）**：两个项目的 world 产物都是 **legacy SPZ**（头部 `1f8b` = gzip），
+   引擎只认 v4 → 控制台稳定报 `No parser found for resource`，房间/背景仍不渲染；
+   要修得换产物格式（`@playcanvas/splat-transform`）。
+
 3. 接 `live` + `onTransformCommit`（`selectionTransform` 的回调已就位）+ history 按钮；
    选中/悬浮接 `selectionWireframe`；G/R/S 接 `transformKeys`。
 4. 之后再补：skybox / world splat / 材质覆盖 / 检查图（`inspectionCapture`）/ 第一人称。

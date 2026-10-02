@@ -22,6 +22,11 @@ import { useRendererSession } from "../../shared/rendering/playcanvas/useRendere
 import { createEngineSceneLoaders, createSceneAssets, type SceneAssetsHandle } from "../../shared/rendering/playcanvas/assetScene";
 import { viewportSceneSpecs } from "../../shared/rendering/playcanvas/viewportSceneSpecs";
 import { captureInspectionSheet } from "../../shared/rendering/playcanvas/inspectionCapture";
+import {
+  createSceneLighting,
+  environmentCandidates,
+  type SceneLightingHandle,
+} from "../../shared/rendering/playcanvas/sceneLighting";
 import { libraryUrl } from "../../shared/lib/libraryApi";
 import {
   createWalkState, EYE_HEIGHT, MAX_FRAME_DELTA, walkForward, walkInputFromKeys, walkStep, lookStep, type WalkState,
@@ -77,6 +82,12 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
   const bindingsRef = useRef<EnginePaneBindings | null>(null);
   const registryRef = useRef<PaneRegistry | null>(null);
   const gridRef = useRef<EditorGridHandle | null>(null);
+  /**
+   * 默认光照（环境光 + 两盏平行光）。**不接它整个场景就是黑的**：引擎 `scene.ambientLight`
+   * 默认 `(0,0,0)`，而 GLB 不带灯——症状是"挂载成功、贴图也挂上了、画面上只有黑色剪影"。
+   * 数值与 three 侧同一份契约，见 `sceneLighting.ts` 文件头。
+   */
+  const lightingRef = useRef<SceneLightingHandle | null>(null);
   const hudRef = useRef<PaneAxisHudHandle | null>(null);
   const inputRef = useRef<PanePointerInputHandle | null>(null);
   const pickerRef = useRef<PanePickerHandle | null>(null);
@@ -216,6 +227,15 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         if (cancelled) { grid.dispose(); bindings.dispose(); return; }
         gridRef.current = grid;
 
+        /*
+          **默认光照必须在 `app.start()` 之前就位**（引擎对灯的数量没有"首帧之后再收"的限制，
+          但放在这里能让"第一帧就是亮的"成为确定性行为，而不是看 rAF 与这段异步谁先跑完）。
+          漏了它的症状是整场景黑剪影、零报错——`scene.ambientLight` 默认 `(0,0,0)` 且 GLB 不带灯。
+        */
+        const lighting = await createSceneLighting(app as never);
+        if (cancelled) { lighting.dispose(); grid.dispose(); bindings.dispose(); return; }
+        lightingRef.current = lighting;
+
         const hud = await createPaneAxisHud(app, {
           createLayer: (id) => {
             const layer = pc.Gizmo.createLayer(app as never, `viewport-hud:${id}`);
@@ -257,6 +277,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       assetsRef.current?.dispose();
       hudRef.current?.dispose();
       gridRef.current?.dispose();
+      lightingRef.current?.dispose();
       bindingsRef.current?.dispose();
       inputRef.current = null;
       pickerRef.current = null;
@@ -267,6 +288,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       assetsRef.current = null;
       hudRef.current = null;
       gridRef.current = null;
+      lightingRef.current = null;
       bindingsRef.current = null;
       registryRef.current = null;
       setReady(false);
@@ -786,10 +808,9 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
 
   /*
     2j) skybox / 环境贴图（`props.currentSkybox` 是资产 slug）。
-    ⚠️ **引擎不认 `.exr`**（2.22.6 的贴图解析器只有 img / dds / basis / **hdr**），而本项目的天空盒资产
-    是 EXR（`/env/sky.exr` 是 three 侧的硬编码回退）——所以真实项目里这一条会**加载失败**（会经 onError 报出来）。
-    接线本身照 `scene.envAtlas`（IBL）+ `scene.skybox`（可见天空）写，换一个引擎认的格式（`.hdr` / equirect 图）
-    就能直接用。
+    ⚠️ **引擎不认 `.exr`**（2.22.6 的贴图解析器只有 img / dds / basis / **hdr**），而 three 侧的硬编码
+    回退就是 `/env/sky.exr`——所以 PC 侧**必须有自己的、引擎认得的兜底**，见下面那条候选表。
+    接线本身照 `scene.envAtlas`（IBL）+ `scene.skybox`（可见天空）写。
   */
   useLayoutEffect(() => {
     const app = session.app as unknown as {
@@ -803,37 +824,59 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         ?? props.assets.find((asset) => asset.assetSlug === props.currentSkybox)
       : undefined;
     const path = (skyAsset as { hdrPath?: string | null } | undefined)?.hdrPath ?? null;
-    if (!path) return;
-    const url = /^(https?:)?\//.test(path) ? path : libraryUrl(path);
+    /*
+      **必须有兜底**（2026-10-02 修）：此前是 `if (!path) return;`，于是"项目没选天空盒 / 列表里那个
+      占位资产的 hdrPath 是 null"时**连 IBL 都没有**——而引擎 `scene.ambientLight` 默认是黑，
+      这批 Tripo 产物又是 `metalness: 1`（几乎没有漫反射，颜色全靠环境反射），
+      合起来就是"整场景黑剪影、贴图看不见"。three 侧一直在兜底（`/env/sky.exr`），只是那份引擎不认。
+      候选表按顺序试：项目产物 → `/env/sky.jpg`（引擎认的 equirect），项目产物是 EXR 时自然落到后者。
+    */
+    const candidates = environmentCandidates(
+      path ? (/^(https?:)?\//.test(path) ? path : libraryUrl(path)) : null,
+    );
+    if (candidates.length === 0) return;
     void (async () => {
-      try {
-        const texture = await createOverrideTextureLoader(app)(url);
-        if (cancelled) return;
-        /*
-          **不能把 equirect 的 2D 贴图直接喂 `envAtlas`/`skybox`**：引擎会**静默丢弃**（本机实测：
-          赋值后 `scene.envAtlas` 仍是 null、Sky 层 0 个 mesh、开/关天空盒像素逐位相同）。
-          正确路径是引擎自己的 `EnvLighting`：
-          - `generateSkyboxCubemap(equirect)` → **cubemap**，这才被 `scene.skybox` 收下（可见天空）；
-          - `generateLightingSource` → `generateAtlas` → 预过滤的反射/环境光照（`scene.envAtlas`）。
-        */
-        const pc = await import("playcanvas");
-        const skybox = pc.EnvLighting.generateSkyboxCubemap(texture as never);
-        const atlas = pc.EnvLighting.generateAtlas(
-          pc.EnvLighting.generateLightingSource(texture as never, { size: 128 }),
-          { size: 256, numReflectionSamples: 256, numAmbientSamples: 512 },
-        );
-        if (cancelled) return;
-        scene.skybox = skybox;
-        scene.envAtlas = atlas;
-        // **读引擎事实**，不是读自己的意图：赋值被忽略时这里要如实报出来
-        const applied = !!scene.skybox && !!scene.envAtlas;
-        skyboxInfoRef.current = {
-          url, applied, error: applied ? null : "赋值被引擎忽略（scene.skybox/envAtlas 仍为空）",
-        };
-      } catch (error) {
-        skyboxInfoRef.current = { url, applied: false, error: error instanceof Error ? error.message : String(error) };
-        console.warn(`[pcViewport] skybox 加载失败（引擎不认 .exr，只认 img/dds/basis/hdr）`, error);
+      const loadTexture = createOverrideTextureLoader(app);
+      let lastError: unknown = null;
+      for (const url of candidates) {
+        try {
+          const texture = await loadTexture(url);
+          if (cancelled) return;
+          /*
+            **不能把 equirect 的 2D 贴图直接喂 `envAtlas`/`skybox`**：引擎会**静默丢弃**（本机实测：
+            赋值后 `scene.envAtlas` 仍是 null、Sky 层 0 个 mesh、开/关天空盒像素逐位相同）。
+            正确路径是引擎自己的 `EnvLighting`：
+            - `generateSkyboxCubemap(equirect)` → **cubemap**，这才被 `scene.skybox` 收下（可见天空）；
+            - `generateLightingSource` → `generateAtlas` → 预过滤的反射/环境光照（`scene.envAtlas`）。
+          */
+          const pc = await import("playcanvas");
+          const skybox = pc.EnvLighting.generateSkyboxCubemap(texture as never);
+          const atlas = pc.EnvLighting.generateAtlas(
+            pc.EnvLighting.generateLightingSource(texture as never, { size: 128 }),
+            { size: 256, numReflectionSamples: 256, numAmbientSamples: 512 },
+          );
+          if (cancelled) return;
+          scene.skybox = skybox;
+          scene.envAtlas = atlas;
+          // **读引擎事实**，不是读自己的意图：赋值被忽略时这里要如实报出来
+          const applied = !!scene.skybox && !!scene.envAtlas;
+          skyboxInfoRef.current = {
+            url, applied, error: applied ? null : "赋值被引擎忽略（scene.skybox/envAtlas 仍为空）",
+          };
+          // 这一张成功了就收手（候选表是"按顺序试"，不是"全部都要"）
+          if (applied) return;
+          lastError = new Error("赋值被引擎忽略（scene.skybox/envAtlas 仍为空）");
+        } catch (error) {
+          lastError = error;
+          console.warn(`[pcViewport] 环境贴图加载失败：${url}（引擎只认 img/dds/basis/hdr，不认 .exr）`, error);
+        }
       }
+      // 走到这里 = 所有候选都失败，如实记下最后一条错（别把"没有环境贴图"留成沉默状态）
+      skyboxInfoRef.current = {
+        url: candidates[candidates.length - 1]!,
+        applied: false,
+        error: lastError instanceof Error ? lastError.message : String(lastError ?? "没有可用的候选"),
+      };
     })();
     return () => { cancelled = true; };
   }, [ready, session.app, props.currentSkybox, props.assets, sceneKey]);

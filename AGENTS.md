@@ -405,11 +405,26 @@ bun run check                        # typecheck + test + build
   真实页面 `--interact` 里 `membersAfterClick` 必须 ≥ 1，**有选中之后**再验 `r/s/g` 换模式
   （没选中时"不抢键"是契约要求，判据要相应放宽）。
 
+### 默认光照（`sceneLighting.ts`）
+
+- **PC 视口必须自己接光**：引擎 `scene.ambientLight` 默认就是 `(0,0,0)`（`scene.js:29`），
+  而 Tripo 的 GLB **不带灯** → 所有受光项为 0，症状是"挂载成功、贴图也挂上了、画面上只有黑色剪影"
+  （真机读数：`findComponents("light") = []`、亮像素 7104）。`createSceneLighting()` 按 three 侧
+  **同一份数值**（ambient 0.6 + 两盏 directional 1.4 / 0.4）建，方向用 `setPosition` + `lookAt(0,0,0)`
+  表达（引擎平行光是实体 −Z，**不要**手写欧拉角）。
+- **这条探针测不出来**：`panes.browser.ts` 的台架自己加了一盏平行光——改光照相关代码必须**在真实业务
+  页面**上验（`.tmp/pc-panes/inspect-lighting.mjs` 读的是引擎事实，不是组件自述）。
+- **环境贴图必须有无条件兜底**：本项目产物 `metalness: 1`，金属几乎没有漫反射项——没有 `envAtlas`
+  时贴图只剩高光，看着就像"贴图没显示"。兜底是 **`/env/sky.jpg`**（引擎认的 equirect）；
+  **不要用 three 侧的 `/env/sky.exr`**（引擎只认 img/dds/basis/hdr）。候选表按"项目产物 → 兜底"
+  顺序试，第一个成功的生效。
+
 ### skybox / 环境贴图
 
 `scene.envAtlas`（IBL）+ `scene.skybox`（可见天空）都收 `Texture`。**两条已知阻塞**：
-① 🔴 **引擎 2.22.6 不认 `.exr`**（贴图解析器只有 `img`/`dds`/`basis`/**`hdr`**，全仓库无 `exr`），
-而本项目天空盒资产是 EXR → 真实项目里加载必失败；要可用得换产物格式。
+① ⚠️ **引擎 2.22.6 不认 `.exr`**（贴图解析器只有 `img`/`dds`/`basis`/**`hdr`**，全仓库无 `exr`）。
+天空盒产物是 EXR 时**那一条候选必然失败**，视口会落到默认 `/env/sky.jpg`——所以画面不会黑，
+但**项目自己的天空盒用不上**；要真正用上得换产物格式。
 ② ✅ **修复方式（已真机验证）**：**不能把 equirect 的 2D 贴图直接喂 `envAtlas`/`skybox`**——引擎**静默丢弃**
 （赋值后 `scene.envAtlas` 仍是 null、Sky 层 0 个 mesh、开/关天空盒像素逐位相同）。要走引擎自带管线：
 `EnvLighting.generateSkyboxCubemap(equirect)` → **cubemap** 给 `scene.skybox`；
@@ -419,8 +434,8 @@ bun run check                        # typecheck + test + build
 ② **A/B 先确认被改的字段就是驱动该现象的字段**（可见天空是 `Sky` 网格用 `texture_envAtlas` 画的，
 `playcanvas.mjs:37328-37342`；只清 `skybox` 会得到"逐位相同"的假结论）。
 另：每格相机的 `layers` 需要含 Skybox 层 2（`PaneRegistryOptions.sharedLayerIds`）。
-③ 🔴 **仍未解**：引擎 2.22.6 **不认 `.exr`**（解析器只有 `img`/`dds`/`basis`/`hdr`），
-本项目天空盒资产是 EXR → 真实项目里加载必失败；要可用得换产物格式（`.hdr` 或 cubemap）。
+③ 🔴 **仍未解**：EXR 天空盒产物在引擎侧仍然不可用（现在靠默认 `/env/sky.jpg` 顶着，不是项目那张）；
+要可用得换产物格式（`.hdr` / equirect 图 / cubemap）。
 
 ### 第一人称（组件里）
 
