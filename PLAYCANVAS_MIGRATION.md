@@ -1629,8 +1629,11 @@ HUD/gizmo/线框层；以前"每格都看得见坐标轴"是因为部件在 Worl
    **残留差异（不假装相同）**：① IBL 来源编码——three 默认 `/env/sky.exr`（真 HDR），PC 兜底
    `/env/sky.jpg`（8-bit，太阳截到 1.0）；项目自带 jpg/png 天空盒时两边读同一张，最接近。
    ② 着色实现不同（`MeshStandardMaterial` vs `StandardMaterial`，含 gloss/roughness 取反映射），
-   逐像素不可能相同。③ 两边**默认机位本来就不同**（PC 是"看得全"的总览机位、three 是 `ORBIT_CAMERA`），
-   所以这一轮没有做"逐像素一致"的验收——要做得先把相机摆到同一机位。
+   逐像素不可能相同。③ 这一轮**顺手把默认机位也对齐了**（它同样是"参数"）：PC 的透视预设改成
+   由 three 的 `ORBIT_CAMERA`（`[5,4.5,5]` / `fov 45` / 看原点）反解出来的台架
+   （`paneRigPresets.ts` 的 `rigFromOrbit()`），于是同一项目两边构图落在同一位置；
+   实测截图对比见 `.tmp/pc-panes/three-p-mupq6eua.png` 与 `.tmp/pc-panes/pc-parity2-p-mupq6eua.png`
+   （模型屏幕位置一致，剩下的差别是天空/IBL 与材质实现）。
 
    单测：`sceneLighting.test.ts` +3（可逆传输函数、环境光反解回 0.6、光强 ≥1 / <1 两条路）、
    `enginePanes.test.ts` +1（相机拿到 `TONEMAP_ACES`）。

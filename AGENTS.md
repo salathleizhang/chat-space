@@ -469,8 +469,14 @@ bun run check                        # typecheck + test + build
   最大 28），远大于色空间补偿那 1.9 万像素。
 - **残留差异（不要假装相同）**：① IBL 的来源编码——three 默认 `/env/sky.exr`（真 HDR，太阳 >1），
   PC 兜底 `/env/sky.jpg`（8-bit，太阳被截到 1.0；项目自带 jpg/png 天空盒时两边读同一张，最接近）；
-  ② 着色实现本身不同（`MeshStandardMaterial` vs `StandardMaterial`，含 gloss/roughness 取反映射）；
-  ③ 两边的**默认机位本来就不同**（PC 是"看得全"的总览机位），所以没做"逐像素一致"的验收。
+  ② 着色实现本身不同（`MeshStandardMaterial` vs `StandardMaterial`，含 gloss/roughness 取反映射）——
+  所以是"等效"，不是"逐像素一致"。
+- **透视格的默认机位也必须与 three 同源**（2026-10-02 对齐）：three 是 `ORBIT_CAMERA = { position: [5,4.5,5], fov: 45 }`
+  + `lookAt [0,0,0]`（`index.tsx:104`）；PC 之前是自己那套"看得全"的机位（azimuth 0.22π / polar 1.15 /
+  distance 12 / fov 60 / target `[0,0.8,0]`），构图明显不同。现在 `paneRigPresets.ts` 用它反解台架
+  （`rigFromOrbit()`：`azimuth = atan2(dx,dz)`、`polar = acos(dy/distance)`，与 `rigDirection` 同一套约定），
+  单测钉住"`rigPosition(rigForPaneCamera('perspective')) === [5,4.5,5]` 且 fov = 45"。
+  正交格（top/front/right）仍是 PC 自己的轴测预设——three 侧没有对应物。
 
 ### skybox / 环境贴图
 

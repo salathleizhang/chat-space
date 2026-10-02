@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { rigDirection } from "../../../shared/lib/cameraRig";
-import { rigForPaneCamera, TOP_POLAR_EPSILON } from "./paneRigPresets";
+import { rigDirection, rigPosition } from "../../../shared/lib/cameraRig";
+import { rigForPaneCamera, rigFromOrbit, THREE_ORBIT_CAMERA, TOP_POLAR_EPSILON } from "./paneRigPresets";
 
 describe("窗格机位预设的轴向", () => {
   test("top：相机在正上方（方向 ≈ +Y）", () => {
@@ -29,6 +29,22 @@ describe("窗格机位预设的轴向", () => {
     expect(rigForPaneCamera("front").projection).toBe("orthographic");
     expect(rigForPaneCamera("right").projection).toBe("orthographic");
     expect(rigForPaneCamera("perspective").projection).toBe("perspective");
+  });
+
+  test("透视格与 three 的 ORBIT_CAMERA **同一机位**（位置 / 朝向 / fov）", () => {
+    // three 侧 `widgets/Viewport/index.tsx`：position [5,4.5,5]、fov 45、lookAt [0,0,0]
+    const rig = rigForPaneCamera("perspective");
+    expect(rig.fov).toBe(THREE_ORBIT_CAMERA.fov);
+    expect([...rig.target]).toEqual([...THREE_ORBIT_CAMERA.target]);
+    const position = rigPosition(rig);
+    expect(position[0]).toBeCloseTo(5, 6);
+    expect(position[1]).toBeCloseTo(4.5, 6);
+    expect(position[2]).toBeCloseTo(5, 6);
+    // 反解函数本身可逆：换个机位也对得上
+    const other = rigFromOrbit([2, 3, -4], [1, 1, 1], 60);
+    expect(rigPosition(other)[0]).toBeCloseTo(2, 6);
+    expect(rigPosition(other)[1]).toBeCloseTo(3, 6);
+    expect(rigPosition(other)[2]).toBeCloseTo(-4, 6);
   });
 
   test("三个轴测格方向两两不同（顶视图不能等于前视图）", () => {
