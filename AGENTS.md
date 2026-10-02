@@ -341,6 +341,8 @@ bun run check                        # typecheck + test + build
   （没有选中 / 不是单窗格 / 渲染层还没有这条路径），不许留点了没反应的按钮。真机 A/B 判据是
   两版的 `aria-label` 顺序与按钮盒子逐项一致（PC 现少一个"地形参照层"按钮＝那条渲染路径 PC 还没有，
   以及"点云背景"徽章——PC 还没画世界泼溅，见 §四之二）。
+  **控制簇的 z-index 必须高于外壳那排输入框的 `z-10`**（实测：两者同为 10 且外壳在 DOM 里更靠后时，
+  窄窗口下 `Undo/Redo/Move/Rotate` 的按钮中心被外壳接住、**点不动**；现在 `z-20`，回归测试钉住）。
 - **PlayCanvas 的线框不是材质标志位**：`StandardMaterial` 上**没有** `wireframe`；正确做法是
   `meshInstance.renderStyle = RENDERSTYLE_WIREFRAME`（引擎为每个 mesh 备了线框索引缓冲，
   setter 里 `mesh.prepareRenderState()` 会挑对那份）。**已真机验证**：27/27 个 mesh instance 切过去、

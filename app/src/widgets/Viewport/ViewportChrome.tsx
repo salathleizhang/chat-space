@@ -108,9 +108,19 @@ export function ViewportChrome(props: ViewportChromeProps) {
 
   return (
     <>
-      {/* 右下角悬浮控件：撤销/重做、变换工具与视图控制是三件事，各自一个面板并排（变换那组只在有选中时出现） */}
+      {/*
+        右下角悬浮控件：撤销/重做、变换工具与视图控制是三件事，各自一个面板并排（变换那组只在有选中时出现）。
+
+        **`z-20` 不是随手写的大数**（2026-10-02 实测）：应用外壳那排输入框的容器也是 `z-10`
+        （`AgentDock` 的 `pointer-events-none absolute inset-x-0 bottom-5 z-10`），而它在 DOM 里
+        排在视口**之后**——平级 z-index 下后来者赢，于是窄窗口（实测 1500×950）里输入框盖住控制簇
+        左半截：`document.elementFromPoint()` 在 `Undo/Redo/Move/Rotate/Scale` 的按钮中心返回的是
+        外壳的 DIV，**这几个按钮点不动**（右半截在外面，正常）。抬到 20 之后它们全部可点；代价是
+        重叠的那 ~11 px 从输入框的"发送"按钮底边换成控制簇（发送按钮中心仍在原位，仍可点）。
+        上限不能被下面这层压住、也不能压住浮层：下拉/气泡是 `z-40/z-50`，预览小窗在右上角的 `z-20`。
+      */}
       <div
-        className="absolute bottom-4 right-4 z-10 flex items-center gap-2"
+        className="absolute bottom-4 right-4 z-20 flex items-center gap-2"
         {...(props["data-pc-toolbar"] ? { "data-pc-toolbar": props["data-pc-toolbar"] } : {})}
       >
         {/*

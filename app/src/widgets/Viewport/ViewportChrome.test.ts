@@ -212,4 +212,19 @@ describe("ViewportChrome", () => {
     const badges = [...container.querySelectorAll("div")].find((d) => d.className.includes("bottom-24"))!;
     expect(badges.className).toContain("pointer-events-none");
   });
+
+  test("控制簇的层级要**高于外壳的 z-10**，否则窄窗口里左半截点不动", async () => {
+    /*
+      实测（2026-10-02，真实页面 1500×950）：外壳输入框那排的容器是
+      `pointer-events-none absolute inset-x-0 bottom-5 z-10`，而它在 DOM 里排在视口之后——
+      平级 z-index 下后来者赢：`document.elementFromPoint()` 在 `Undo/Redo/Move/Rotate`
+      的按钮中心返回的是外壳的 DIV，那几个按钮**点不动**。抬到 z-20 才修好，这条钉住它。
+    */
+    const container = await render({});
+    const cluster = container.querySelector("div.absolute") as HTMLElement;
+    const z = /(?:^|\s)z-(\d+)(?:\s|$)/.exec(cluster.className);
+    expect(z).toBeTruthy();
+    expect(Number(z![1])).toBeGreaterThan(10); // 压过外壳那排输入框
+    expect(Number(z![1])).toBeLessThan(40); // 但不能压过浮层（下拉/气泡是 z-40 / z-50）
+  });
 });

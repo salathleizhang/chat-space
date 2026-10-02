@@ -1464,13 +1464,16 @@ HUD/gizmo/线框层；以前"每格都看得见坐标轴"是因为部件在 Worl
    - 🔴 **`Gaussian splat background` 徽章**：PC 还没画世界泼溅（真实项目的世界是 legacy SPZ，
      引擎只认 v4——见 §Splat）。徽章只在**真的挂上了点云**时才出现，不描述不存在的背景。
 
-   **验证时发现的既有问题（与本次改动无关，两版同病）**：1500 px 宽的窗口下，
-   应用外壳的 AgentDock（`flex items-center justify-between gap-2`）与 chat 面板
-   **压在视口 chrome 左半截之上**——`document.elementFromPoint()` 在
-   `Move (G)`/`Rotate (R)`/`Scale (S)`/`Undo`/`Redo` 的按钮中心返回的是外壳的 DIV，
-   **这几个按钮点不动**（`Space` 参考系、布局、网格、线框、第一人称都在外壳之外，正常）。
-   两版位置同源，所以 three 分支同样点不动——不是这次引入的。修法要么给 chrome 抬 z-index
-   （会把工具栏画到 chat 面板之上，属视觉决策），要么让视口不要伸到 chat 面板下面（`pages/` 是冻结集）。
+   **验证时发现的既有问题（已修；与本次改动无关，两版同病）**：1500 px 宽的窗口下，
+   应用外壳输入框那排的容器（`pointer-events-none absolute inset-x-0 bottom-5 z-10`）与视口控制簇
+   **同为 `z-10`**，而它在 DOM 里排在视口**之后**——平级 z-index 后来者赢，于是
+   `document.elementFromPoint()` 在 `Move (G)`/`Rotate (R)`/`Scale (S)`/`Undo`/`Redo` 的按钮中心
+   返回的是外壳的 DIV，**这几个按钮点不动**（参考系/布局/网格/线框/第一人称在外壳之外，一直正常；
+   两版位置同源，所以 three 分支当时同样点不动）。
+   修法：把控制簇抬到 **`z-20`**（`ViewportChrome.tsx`，回归测试钉住"高于 10、低于 40"）。
+   真机复验：同一批按钮的 `topIsButton` 从 `Move/Rotate = False` 变成**全 True**，
+   可信点击 `Rotate (R)` 之后引擎 `mode` 由 `translate` 变成 **`rotate`**（修之前纹丝不动）；
+   代价是重叠的那 ~11 px 从"发送"按钮底边换成控制簇，发送按钮**中心**仍是它自己（可点）。
 24. ✅ **增量 18：默认光照 + 环境贴图兜底**（2026-10-02，用户报"`?pcViewport=1` 打开项目场景是黑的、
    贴图也显示不出来"）。
 
