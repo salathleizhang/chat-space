@@ -4,7 +4,10 @@
 
 仓库有 1000+ 行 WebGPU 文档，其中**只有 `WEBGPU_FINDINGS.md` 第 1 节的 16 条是当前可信的性能结论**。不要从别处推断性能数字。
 
-核对基准：2026-09-30，`bun run check` 退出码 0（app **542** pass / chat **365** pass）。增量来历：363 → 377 是 `VIEWPORT_REVIEW.md` §〇.1–0.3 那批回归测试（`animationLoop.test.ts` 6 条、`drawableContent.test.ts` 7 条、`WebGPUView.test.ts` 1 条）；377 → 382 是 §〇.9 的 ArrayCamera 那批（`paneViewports.test.ts` 5 条）；382 → **458** 是 PlayCanvas 迁移层带来的（边界守卫 4 条、设备/会话 18 条、窗格 19 条、材质与模型描述 20 条、截图与准入 15 条，见 §四之二）；**458 → 511** 里有 **39 条是窗格指针输入**（`playcanvas/paneInput.test.ts` 37 条 + `shared/lib/cameraRig.test.ts` 新增 2 条），**511 → 542** 是拾取与变换 gizmo（`panePicking.test.ts` 15 条、`paneGizmo.test.ts` 9 条、`paneRegistry` 的 `extraLayerIds` 2 条、`paneInput` 的点击/让手势/聚焦口径 5 条），见 §四之二；其余 14 条来自工作区里**本节之前就存在的未提交改动**。**chat 341 → 365** 是按参考图摆放那一步带来的（`imageSize.test.ts` 6 条、`scenePlacement.test.ts` 8 条、`groundSampler.test.ts` 8 条、`scenePlacementRun.test.ts` 2 条端到端），另有 `sceneJobs.test.ts` 的既有断言随 `placement` 节点改写而不是新增。**app 542 → 561** 里 **13 条**是 loader 身份（资源修订号）那批（`shared/lib/resourceRevisions.test.ts` 8 条、`pages/AppDashboard/useProjectState.test.ts` 4 条、`libraryApi.test.ts` 1 条），其余 6 条同样来自工作区里本节之前就有的未提交改动。**文档里其余"app 363 / 377 / 382"的旧措辞按旧基准读。**
+核对基准：2026-10-01，`bun run check` 退出码 0（app **675** pass / chat **371** pass）。增量来历：363 → 377 是 `VIEWPORT_REVIEW.md` §〇.1–0.3 那批回归测试（`animationLoop.test.ts` 6 条、`drawableContent.test.ts` 7 条、`WebGPUView.test.ts` 1 条）；377 → 382 是 §〇.9 的 ArrayCamera 那批（`paneViewports.test.ts` 5 条）；382 → **458** 是 PlayCanvas 迁移层带来的（边界守卫 4 条、设备/会话 18 条、窗格 19 条、材质与模型描述 20 条、截图与准入 15 条，见 §四之二）；**458 → 511** 里有 **39 条是窗格指针输入**（`playcanvas/paneInput.test.ts` 37 条 + `shared/lib/cameraRig.test.ts` 新增 2 条）；**511 → 542** 是拾取与变换 gizmo（`panePicking.test.ts` 15 条、`paneGizmo.test.ts` 9 条、`paneRegistry` 的 `extraLayerIds` 2 条、`paneInput` 的点击/让手势/聚焦口径 5 条）；**542 → 561** 里 **13 条**是 loader 身份（资源修订号）那批（`shared/lib/resourceRevisions.test.ts` 8 条、`pages/AppDashboard/useProjectState.test.ts` 4 条、`libraryApi.test.ts` 1 条）；**561 → 579** 里 **14 条**是地面网格（`paneGrid.test.ts`）；**579 → 594** 里 **13 条**是坐标轴球 HUD（`paneAxisHud.test.ts`）、**2 条**是输入层的被认领点击（`paneInput.test.ts`）；**594 → 615** 里 **10 条**是第一人称漫游（`walkRig.test.ts`）、**10 条**是相机飞行（`rigFlight.test.ts`）、**1 条**是 `animateFocus` 钩子（`paneInput.test.ts`）；**615 → 635** 里 **17 条**是多选整体变换（`selectionTransform.test.ts`，含**用 three 当真值**钉欧拉约定）、**3 条**是实体↔摆放适配（`panePlacement.test.ts`）；**635 → 653** 里 **7 条**是选中线框几何（`selectionBounds.test.ts`）、
+**5 条**是线框引擎绑定（`selectionWireframe.test.ts`）、**5 条**是 G/R/S 契约（`transformKeys.test.ts`）、
+**1 条**是 `entityWorldBounds` 的回归（引擎 `Vec3` 只有 x/y/z）；**653 → 659** 里 **6 条**是资产挂载器（`assetScene.test.ts`，§五.5 第一块）；**659 → 666** 里 **7 条**是"资产 → 场景规格"解析（`viewportSceneSpecs.test.ts`）；**666 → 675** 的 **9 条**
+是**工作区里并行写入者**的线框材质那批（`widgets/Viewport/wireframeMaterial.test.ts`），不是本节这批改动。**chat 341 → 365** 是按参考图摆放那一步带来的（`imageSize.test.ts` 6 条、`scenePlacement.test.ts` 8 条、`groundSampler.test.ts` 8 条、`scenePlacementRun.test.ts` 2 条端到端），**365 → 371** 来自并行工作。除各条自己点名的模块外，其余零头都来自工作区里并行的未提交改动（app 与 chat 两侧都有）——**引用数字时以本节点名的模块为准**。**文档里其余 363 / 377 / 382 的旧措辞按旧基准读。**
 
 ---
 
@@ -169,13 +172,180 @@ bun run check                        # typecheck + test + build
   （`widgets/Viewport/index.tsx:113-114,453-469`），**不是**包围球。`focusRigWithTarget()` 两种都支持
   （`{center, radius}` / `{center, offset}`）；正交窗格两种都只挪目标点。
 
+### 网格与 HUD（`paneGrid.ts`）
+
+- **`plane` 图元默认就在 XZ 平面、法线 +Y**（`plane-geometry.d.ts:35-41`；宽度沿 X、长度沿 Z）。
+  three 的 `planeGeometry` 在 XY 平面，所以从 three 照搬来的 `rotation-x={-Math.PI/2}` 会把地面**立起来**：
+  症状是"网格变成屏幕中间一条横带 + 整片均匀灰"，**零报错**。本机踩过。
+- **网格必须 `pick = false`**：`MeshInstance.pick` 默认 `true`（`mesh-instance.js:100`），
+  而这是一张 400×400 的平面——不关掉，每次点击都先命中地面（three 侧对应写法是 `raycast={() => {}}`）。
+- **淡出圆心用逐相机的 `view_position`**（view uniform buffer 的标准 uniform，
+  `UniformFormat("view_position", UNIFORMTYPE_VEC3)`）。它是**按相机**填的，所以每格各自淡出；
+  换成材质参数或常量就变成"所有窗格共用一个圆心"。
+- 网格间距/半径是**编译期常量**（按参数拼 `uniqueName`，改参数 = 换着色器变体）。**没做**的路线是
+  把它们做成材质 uniform：引擎把非 view 集合的 uniform 塞进 `ub_mesh_ub`
+  （`webgpu-shader-processor-wgsl.js` 的 `processUniforms`），那条上传路径本仓库**没验证过**，不要依赖。
+- 网格挂在共享核心层、**整场景一份**就够（所有窗格都看见）。实测它**不增加 pass**：
+  网格 + 变换手柄同时挂着，`startRenderPass` 仍是 240/240（每帧 1 个）。
+
+### 坐标轴球 HUD（`paneAxisHud.ts`）
+
+- **不要为 HUD 再开相机**：把部件放在**相机前方固定深度**、按 `worldPerPixel` 缩放就得到屏幕等大
+  （透视 `2·depth·tan(fov/2)/窗格高`，正交 `2·orthoHeight/窗格高`）。多开 4 台 HUD 相机会把
+  "每帧 1 个 pass" 的验收线重新搅乱。
+- **`GraphNode.forward` 是看向的方向**（世界 -Z，`graph-node.js:96-101`），"相机前方"是
+  `+forward×depth`；写成 `-forward` 会把部件放到相机背后（不报错、就是看不见）。
+- HUD 层同样要 `clearDepthBuffer: true` 且**进 `PaneSpec.extraLayerIds`**（同 gizmo：`sync()` 会重写
+  `camera.layers`）。
+- **`isPointerClaimed` 会连 `onClick` 一起吞掉**：被认领的按下既不开轨道手势、也不发点击。
+  所以"点一下要做事"的部件（坐标轴球）必须走 **`onClaimedClick`**；而**DOM 层要为被认领的按下
+  也挂上 window 的 move/up**，否则那次 `pointerup` 收不到、回调永远不触发。
+  点 gizmo 手柄**不该**选中物体，点轴球**该**吸附机位——这两件事因此是两个回调。
+
+### 第一人称与相机飞行（`walkRig.ts` / `rigFlight.ts`）
+
+- **请求指针锁定要挂在 `pointerdown` 上，不能挂 `mousedown`**：本层在 `pointerdown` 上
+  `preventDefault()`，浏览器就不再派发兼容的 `mousedown`（§三之六实测）——挂 `mousedown` 等于**永不触发**。
+  页面内合成事件抓不到这个缺陷（合成指针本来就拿不到锁定），只有可信事件那一轮能抓到。
+- **本沙箱里"指针锁定权限"无法验证**：Chrome 直接拒绝，`WrongDocumentError: The root document of this
+  element is not valid for pointer lock.`——自动化窗口没有 OS 级焦点，`Emulation.setFocusEmulationEnabled`
+  也不够。所以真机判据只能写到"**handler 确实被触达**"（错误码就是证据），锁定之后的按键/鼠标路径
+  用探针的 `forceLock` 配合**真实按键事件**与**真实鼠标移动**来验。
+- **第一人称是另一份状态，不要往 `CameraRig` 里塞**：台架是 turntable（只有方位角/极角/距离），
+  表达不了"站着转头再走出去"。`walkRig` 用"眼睛位置 + 偏航/俯仰"，**高度锁在 1.6**、Shift 加速（3→7）、
+  单帧 `delta` 钳 0.1 s、俯仰钳 ±(π/2−0.01)；灵敏度沿用 three `PointerLockControls` 的 **0.002 rad/px**。
+- **飞行是渲染循环的事**：`rigFlight` 只回答"下一帧在哪、到了没有"，由 `app.on("update")`/rAF 驱动；
+  它是**可取消**的（用户一有输入就 `cancel()`），并且每帧**重新读当前台架**——所以"飞行途中再聚焦"
+  会从半路重新瞄准（这是正确语义，别拿过期目标去比）。
+- **探针里任何"自己摆已知机位"的自检，先 `flight.cancel()`**：飞行器每帧都会 `apply`，
+  不取消就会把后面自检摆的机位拉回插值轨迹（实测让 picking/grid/hud 的像素与台架判据全挂）。
+
+### 多选整体变换与摆放约定（`selectionTransform.ts` / `panePlacement.ts`）
+
+- **引擎的欧拉 API 与 three 不是同一套约定，两个维度都不同**（本机实测，`selectionTransform.test.ts`
+  里用 three 当真值钉住）：**单位**是角度（`quat.js:88`、`mat4.js:596` 的 DEG_TO_RAD），
+  **顺序**是 **ZYX**（与 three 的 `Euler(x,y,z,'ZYX')` 差 2.7e-8，与 `'XYZ'` 差 0.43–1.73）。
+  摆放（`scene.json`）是 three 的**弧度 + XYZ**。**直接互喂 `setFromEulerAngles`/`setEulerAngles`/
+  `getEulerAngles` 会静默转错朝向**——不报错、只是模型转错。所以：欧拉↔四元数自己写
+  （`quatFromEulerXyz` / `eulerXyzFromQuat`），实体读写**只走四元数**（`panePlacement.ts`），
+  其余（乘/逆/TRS/分解）用引擎 `Mat4`。跨引擎等价性由单测钉住（同一位姿两套引擎同矩阵）。
+- **引擎的 `Mat4.data` 是 `Float32Array`**（`mat4.js:11`）：往返误差 **1e-7 量级**，
+  判等阈值别写 1e-9（会得到假的失败）。
+- **轴心口径与 three 侧逐项一致**：单选 = 该成员自身摆放（gizmo 落在物体原点上）；
+  多选 = 各成员**位置**包围盒中心 + 姿态归零 + 缩放归一（`selectionPivot`）。
+- **`begin()` 冻结的是"控制器当前轴心"的相对矩阵**：摆放变了之后不先 `reset(members)` 就 `begin()`，
+  冻结出来的相对矩阵对应旧轴心，成员会被摆到错的位置。
+- 绕 Y 轴转 90° 的判据用解析式 **(x,y,z)→(z,y,−x)**；不要用"三维夹角≈90°"（偏移带 Y 分量时不是 90°）。
+- **多选拖动必须显式接到 `PaneGizmoOptions.onDragStart/onDragEnd` 上**：引擎会拖**轴心实体**，
+  但它**不会**通知你的控制器——`begin()`（冻结相对矩阵）与 `end()`（提交一次）都得自己挂。
+  曾因为一次文本替换**静默没匹配上**（锚点过期 = 空操作、我又没断言），得出过"引擎拖不动实体、
+  根因未定位"的错误结论；真凶是接线没生效。**探针里的接线改动要用断言过的替换，跑之前确认落地。**
+- **诊断要读"实体"，不要读控制器内部状态**：`selection.pivot()` 只由 `reset/update` 写，
+  拿它判断"实体动了没有"必然读到旧值（要读 `readEntityPlacement(pivotEntity)`，探针里有
+  `multiPivotEntity()` 这个活口）。
+- **第一人称：不要把"点画布"默认当成"进入漫游"**。探针里漫游模式一直开着，而它的 `pointerdown`
+  监听**无条件**请求指针锁定——可信驱动点的第一下就是用户手势，锁定一旦成功，`pointerlockchange`
+  就把 `walkLocked` 置真，**漫游 tick 从此每帧改写相机**，其它一切交互（拖动/拾取/轴球/逐格隔离）
+  全部静默失效；而且**时有时无**（取决于那一下锁定批没批）。改成**显式备好**才请求
+  （`__PC_WALK__.armLock(true)`），产品里第一人称本就是显式进入的模式。
+- **相机实体与台架必须一致**：第一人称的 `applyWalk()` 是**直接写实体**、不走台架，于是
+  "实体位置 vs `rigs`"会不一致，后面的相位建在这个不一致上就会大片假失败。驱动/自检开局要
+  `resetCameraState()` 并**反复重写直到 `camera == rigPosition(rig)`**（最多 5 次）+ 断言。
+- **漫游 tick 是"每帧改写相机实体"的全局写入者**：探针里跑别的交互（拖动/拾取/轴球/逐格隔离）前必须
+  `__PC_WALK__.suspend()`（停 tick + 解锁 + 清键），第一人称那一段再 `resume()`。产品里这两种模式
+  本就互斥，所以挂起是正常语义。
+- **合成按键必须成对 `keydown`/`keyup`**：只发 `keydown` 会把按键留在集合里污染后面的自检
+  （实测高亮自检的 's' 让第一人称的 `forward = w − s = 0`，"漫游一步都不走"，`steps 0`）。
+  自检里最好把"按住期间/若干帧后的按键集合 + tick 步数"记进报告，症状一眼可见。
+
+### 选中线框（`selectionBounds.ts` / `selectionWireframe.ts`）与 G/R/S（`transformKeys.ts`）
+
+- **引擎的 `Vec3` 只有 `.x/.y/.z`，没有数字下标**。`aabb.center[0]` 会静默得到 `undefined` → 一路 NaN
+  （`entityWorldBounds()` 就这么错过，选中线框完全不显示）。类型上要**如实建模**（`EngineVec3Like`），
+  否则 `center[0]` 能通过编译。**测试假数据也必须用引擎形状**——两处一起错时测试照样绿
+  （本机踩过：假数据写成元组 `[1,2,3]`，实现读 `center[0]`，谁都没发现）。
+- **线框绝不能参与命中**（`meshInstance.pick = false`）：由指针状态产生的视觉反馈反过来参与命中，
+  状态与命中区就互为因果（三侧那段长注释解释了 LineSegments 阈值撑出的隐形命中壳）。自检直接断言= 0。
+- 线框用**持久 line 网格**（`Mesh.setPositions` + `PRIMITIVE_LINES`，WebGPU 后端映射到 `line-list`），
+  不要用引擎的 `app.drawWireAlignedBox()`：那是立即模式，每帧都要重新提交（静止场景也跑）。
+  层用 `clearDepthBuffer: true` ⇒ 等价 three 的 `material-depthTest=false`，且同样要进 `extraLayerIds`。
+- **G/R/S 有四道闸门**（对齐 three 侧 `index.tsx:570-586`）：输入框/contentEditable 不抢键、
+  带 meta/ctrl/alt 不管、没有选中不管、第一人称不管。世界/局部是**工具栏按钮**不是快捷键。
+
+### 资产 → 实体（`assetScene.ts`，§五.5 的第一块）
+
+- **GLB 用 `assets.loadFromUrlAndFilename(url, "model.glb", "container", cb)`**（引擎示例
+  `viewer.example.mjs:450` 的写法）。`new Asset(name,"container",{url})` + `AssetListLoader` 拿到的
+  `instantiateRenderEntity()` 是**空树**（`hasRender:false`）；而且**失败在回调的 `err` 参数里**，
+  只监听 `error` 事件会漏掉真正的失败。
+- **`sync(specs)` 必须幂等**：React 每次渲染都给新数组，逐项比 `id`；同一个 id 只在 **URL 变了**
+  时重建（换代），否则只更新摆放与材质——否则每帧重建整个场景。
+- 摆放写回仍然**只走四元数**（`panePlacement`）；splat 资产必须 SPZ v4。
+- **`ViewportProps` → 场景规格**走 `viewportSceneSpecs.ts`（纯函数）：修订号**按资产发**（`resourceRevisions`），
+  摆放按**稳定 id** 取（`computeSceneLayout`），**已带 query 的 URL 要用 `&revision=`**（写死 `?` 会静默 404）。
+  现实里 splat 资产一律 `kind:"world"`（背景，第一切片不渲染），所以走布局那条路的只有模型；
+  `skipped` 里要显式列出被跳过的资产与原因，否则"模型没出现"无从判断。
+
+### 视口接入（`widgets/Viewport/PlayCanvasViewport.tsx`，§五.5）
+
+- **`?pcViewport=1` 才分流**到 PlayCanvas 视口，**默认仍是 three**；`ViewportProps` 一个字段都没改
+  （只把接口加了 `export`）。`pages/` 是冻结集，所以开关只能开在非冻结的 `widgets/Viewport/index.tsx` 里。
+- 装配顺序：`useRendererSession`（设备/app）→ `createEnginePaneBindings` → `new PaneRegistry({...bindings})`
+  → `registry.sync(specs)` → `applyRig(entity, rig, {perspective, orthographic})` → 网格/HUD/输入/拾取。
+  **HUD/gizmo/线框的层必须在 `sync` 之前进 `PaneSpec.extraLayerIds`**（`sync` 每次都重写 `camera.layers`）。
+- **检查图（agent 的 `inspect`）**：`inspection` 请求一来就调 `captureInspectionSheet(app, {center, radius})`
+  拍四视角 PNG → `onInspectionCaptured(id, png)`；失败回 `null`（别让 agent 干等），且**同一个 id 只拍一次**
+  （否则每次渲染重拍）。取景时注意形状：`entityWorldBounds()` 给**引擎 `Vec3`**，`Bounds3` 是 `{min,max}`
+  元组，取中心/尺寸要用 `boundsCenter`/`boundsSize`。真机读数：60 528 字节 PNG、零错误。
+- **两个静默全黑的坑**（真机踩过，都是"挂载成功、零报错、画布全黑"）：
+  ① 画布/宿主的**尺寸不能只靠 Tailwind 类**——探针页没样式表时画布停在元素默认 300×150，用内联样式兜底；
+  ② **`RendererSession` 不启动渲染循环**，必须调用方 `app.start()`（它只提供 `stopLoop()` 取消 rAF）。
+- **gizmo/控制器的接线顺序**：`members()` 依赖**已挂上**的资产实体，而资产是**异步**挂的、
+  gizmo 那个 effect 是同步跑的 → 必须在**资产就绪后再复位一次**轴心与线框（否则轴心恒为 null、拖不动）。
+- **没选中时必须 `attach(null)`**：引擎的 `enabled` 只看 `nodes.length > 0 && 距离>eps`，
+  "挂着但没选中"的手柄照样画、照样**抢点击**（点空白既不清空选中也不触发拾取）。
+  推论：**有选中时点击被手柄认领才是对的**，判据要与"点空白清空选中"分开。
+- 验证级别：**真机已跑**（`app/pc-viewport.html` + `.tmp/pc-panes/drive-viewport.mjs`）：
+  空场景亮像素 7 175 / 真实 GLB 24 141；`--select` 那轮 hover 命中 +X 手柄、
+  **`onTransformCommit` 收到 3 条 `{ids:["probe-model"],mode:"translate"}`**、零错误。
+  驱动取样要**轮询到非黑**再抓（睡固定时长会抓到全黑 → 假失败）。
+- **G/R/S 走 `transformKeys` 的契约**（输入框/meta/ctrl/alt/无选中/第一人称四道闸门），并且
+  **键位表外的按键不要 `preventDefault`**（否则吃掉别的快捷键）。真机判据用**可信按键**：
+  `r→s→g` 的模式序列 + 聚焦 `<input>` 后按 `r` 模式不动。
+- **多窗格的逐格像素视口**：1 = 整块 / 2 = 左右各半 / 4 = 2×2 象限，**必须与 `LAYOUTS` 的 DOM 顺序
+  一致**（`index % 2` 是列、`index / 2` 是行）；`camera.rect` 是按**画布 CSS 尺寸**归一化的。
+  层 id（HUD/gizmo/线框）要**逐格**进 `extraLayerIds`。判据用**快照的四象限亮像素**：
+  4 格实测 `[7895, 7895, 7894, 7894]`（"只画一格"或"rect 全一样"都会明显不齐）。
+  未接的部分见 §三之十四。
+- **正交格的 `camera.orthoHeight` 是"世界单位半高"**，真源只有 `cameraRig.ORTHO_VIEW_WORLD_HEIGHT`
+  （=15，半高 7.5）。`paneRegistry` 以前默认写成**像素半高**（`pane.viewport.height`）→ 正交格
+  "看得极远"、画面里只剩一个小方块（实测俯视格只剩 94 个亮像素）。已改 + 回归测试。
+- **工具栏按钮按 `aria-label` 找**（与 three 侧同一套文案：`Single view` / `Two views` /
+  `Four views (Blender layout)` / `Hide grid` / `Show grid` / `Undo` / `Redo`），
+  探针用 CDP 可信点击驱动它。**按钮样式必须内联**——探针页没有样式表，Tailwind 类会全失效。
+- **PlayCanvas 的线框不是材质标志位**：`StandardMaterial` 上**没有** `wireframe`；正确做法是
+  `meshInstance.renderStyle = RENDERSTYLE_WIREFRAME`（引擎为每个 mesh 备了线框索引缓冲，
+  setter 里 `mesh.prepareRenderState()` 会挑对那份）。**已真机验证**：27/27 个 mesh instance 切过去、
+  亮像素 28 452 → 13 010、`Shift+Z` 关掉后**一模一样地回到 28 452**。记账表**不能覆盖原值**
+  （否则第二次 apply 会把线框记成原值、关掉后永远回不去）。**判据要盯引擎事实**（状态 +
+  切了几个 + 能否复原），别猜"亮像素会往哪边走"。
+- **切换投影要同时改三处**：台架 `rig.projection`、相机 `applyRig`（正交还要配对 up）、
+  以及 `registry.sync` 的 `projection`——**只改前两处会被 `sync` 盖回透视**（`sync` 每次都重写
+  `camera.projection`）。真机判据：相机 `projection` 从 0 变 1，且切换后画面仍非空。
+- **俯视格的 up 必须传 `ORTHO_UP.top = [0,0,-1]`**：正上方时视线与默认 up `(0,1,0)` 共线，
+  `lookAt` 退化 → 那一格几乎全空（症状与上一条很像，但根因不同：一个是朝向垃圾、一个是看得极远）。
+
 ### Splat
 
 - engine GSplat 用默认的 **`unified = true`**（WebGPU 上 = GPU compute radix sort，每帧每相机、
   **无 CPU 回读也无同步等待**）。**不要设 `false`**：legacy 路径 `gsplat-instance.js:137` 硬编码
   `cameras[0]`，多视图排序**是错的**（不是慢，是错）。2.22.6 的默认值也已核实是 `true`。
 - **资产必须是 SPZ v4**。解析器只认 version 4；本项目原有的四份 `.spz` 全是 legacy（头部 `1f8b` = gzip），
-  必须用 `@playcanvas/splat-transform` 转（实测 1.92M 约 2.5 s）。
+  必须用 `@playcanvas/splat-transform` 转（实测 1.92M 约 2.5 s）。已转好的在 `.tmp/pc-assets/`
+  （`world-150k-v4.spz` / `world-full-res-v4.spz`），探针用 `asset=/@fs/<绝对路径>` 加载。
+- **splat 拾取的判据要写成负对照**："开着 `enableIds` 能选中、关掉选不中"（同一投影点）。
+  只测"能选中"的话，把 `enableIds` 写成恒真也能过。实测两个真实资产：默认 **false**、
+  开着命中 `kind:"gsplat"`、关掉 `null`。
 - **ZSTD 解码器要自己 vendor**：它在引擎仓库的 `examples/assets/wasm/zstd/` 下、
   **不在 npm 包的 `files` 白名单里**。胶水是 IIFE（靠 `window.ZstdDecoderModule` 注册），
   不能当模块打进来——用 Vite 的 `?url`。见 `playcanvas/vendor/` 与 `splat.ts`。
@@ -208,6 +378,65 @@ bun run check                        # typecheck + test + build
 - 渲染层要告诉编辑层"这个模型有哪些通道"时，走 **`shared/lib/modelDescription.ts`**（按稳定 id `asset.id`
   索引的模块级 store），**不要**让编辑层自己挂载模型加载器去遍历引擎对象——那正是已经消除掉的越界。
 
+### 真实业务页面怎么验（PlayCanvas 分流）
+
+`node .tmp/pc-panes/drive-app.mjs <baseUrl> <slug>` → 打开 `/app/<slug>?pcViewport=1`。
+**门禁必须开局就调**（`gpu-probe.mjs` 的配方），而且它会 `location.reload()`：重载后第一次 evaluate
+必然失败，要**吞掉再轮询**。（踩过：写成"只有读不到状态时才解锁"，而门禁页读得到状态 → 永远不解锁。）
+项目数据在 `~/ChatSpace/projects/*`、chat 服务在 `127.0.0.1:3901`。
+**真实页面上抓到过、探针掩盖掉的三条**（前两条已修）：① 资产 URL 必须过应用的 `libraryUrl()`
+（逻辑路径直接 fetch 会拿到 `index.html`，引擎报 `found 0x6f64213c`＝`<!do`）；
+② 资产 effect 不能依赖每次渲染换身份的 `props.assets`（否则反复重建、永远挂不上）；
+③ ✅ **加载器必须带超时**（引擎 container 加载在某些响应下既不回调也不报错 → `await sync` 悬死；
+`assetScene.withTimeout` 就是这条，超时按 `onError` 报、原错误照原样透传）。
+另外真实项目的 world 是 **legacy SPZ**，引擎只认 v4 → 世界要显示得先转产物（资产产物侧的事）。
+**判据取样时机**：资产 sync 是异步的（失败资产还要等超时），驱动必须**轮询到规格列表出现**再判，
+否则会把"还没加载完"读成"资产没挂上"（本机踩过：读成 `0`，修好后是**挂上 10 件**）。
+实测：视口挂载、画布 1470×715、**挂上 10 件真实模型资产**、PC 工具栏在页面上、零 JS 错误
+（§三之十四 第 14 条）。
+
+### 拾取 → 选中（`PlayCanvasViewport` 的 `onClick`）
+
+- **命中的实体要按"身份"解析，不要按"名字"比**：`Picker` 给的是引擎实体（`container` 实例化出来的
+  根名可能是文件名/"model.glb"），拿它去比 `asset.id`/`assetSlug` 比不中 → 把"点中模型"当成
+  "点空白"而**清空选中**，症状是**怎么点都选不中**（真机扫 28 个点全落空，本机踩过）。
+  正确做法：从命中实体沿**已挂载树**往上找（`assets.entry(id).entity` 是同一棵树，`isDescendantOf` 两边都试）。
+- 真机判据：探针页点击回调应该是 `["select:probe-model"]`（不是 `["clear"]`）；
+  真实页面 `--interact` 里 `membersAfterClick` 必须 ≥ 1，**有选中之后**再验 `r/s/g` 换模式
+  （没选中时"不抢键"是契约要求，判据要相应放宽）。
+
+### skybox / 环境贴图
+
+`scene.envAtlas`（IBL）+ `scene.skybox`（可见天空）都收 `Texture`。**两条已知阻塞**：
+① 🔴 **引擎 2.22.6 不认 `.exr`**（贴图解析器只有 `img`/`dds`/`basis`/**`hdr`**，全仓库无 `exr`），
+而本项目天空盒资产是 EXR → 真实项目里加载必失败；要可用得换产物格式。
+② ✅ **修复方式（已真机验证）**：**不能把 equirect 的 2D 贴图直接喂 `envAtlas`/`skybox`**——引擎**静默丢弃**
+（赋值后 `scene.envAtlas` 仍是 null、Sky 层 0 个 mesh、开/关天空盒像素逐位相同）。要走引擎自带管线：
+`EnvLighting.generateSkyboxCubemap(equirect)` → **cubemap** 给 `scene.skybox`；
+`EnvLighting.generateLightingSource` → `EnvLighting.generateAtlas` → 给 `scene.envAtlas`。
+真机：清掉前读引擎状态 `{skyLayerInstances:1, hasSkybox:true, hasEnvAtlas:true}`、A/B 均值 **62.174 → 19.951**。
+**两条纪律**：① **诊断读引擎状态，不要读自己的记账**（`applied:true` 是自述）；
+② **A/B 先确认被改的字段就是驱动该现象的字段**（可见天空是 `Sky` 网格用 `texture_envAtlas` 画的，
+`playcanvas.mjs:37328-37342`；只清 `skybox` 会得到"逐位相同"的假结论）。
+另：每格相机的 `layers` 需要含 Skybox 层 2（`PaneRegistryOptions.sharedLayerIds`）。
+③ 🔴 **仍未解**：引擎 2.22.6 **不认 `.exr`**（解析器只有 `img`/`dds`/`basis`/`hdr`），
+本项目天空盒资产是 EXR → 真实项目里加载必失败；要可用得换产物格式（`.hdr` 或 cubemap）。
+
+### 第一人称（组件里）
+
+`PlayCanvasViewport` 的「第一人称」按钮：进入即 `setLayoutMode(1)`、从当前台架派生眼位（**高度锁 1.6**）
+与朝向；**指针锁定挂在 `pointerdown` 上**；每帧 `app.on("update")` 从 `walkRig` 算下一步并**直接写相机实体**；
+退出时 `applyRig` 把相机还给台架并**清空按键**。真机验过：真实 `W` → `steps 90`、z 9.67→5.18、高度 1.6；
+可信鼠标 → 偏航 0.058→0.850。沙箱拿不到真锁，判据走 `__PC_VIEWPORT_FORCE_LOCK__` + 真实键鼠。
+
+### 诊断口（`viewportDebug.ts`）
+
+10 个 `window.__PC_VIEWPORT_*` 活口**只在开发构建 + `?pcDebug=1` 时**才装（原先无条件装、
+真实业务页面也被装上 ✗）。探针/驱动的 URL 都显式带 `pcDebug=1`（`PC_DEBUG=0` 可关，用来验开关本身）。
+**纪律**：① 组件内部要用这些能力，必须走**本地 ref**（`transformApiRef`），**绝不能绕 `window` 上那个钩子
+回调自己**——一加开关，生产路径就读不到它、静默失效（本机踩过：`syncSelection()` 不跑 → gizmo 拖不动）；
+② 新增诊断口要加进 `VIEWPORT_DEBUG_NAMES`（卸载时按名单清）。
+
 ### 探针怎么跑
 
 `bun run dev:web` 起 dev server（注意别和用户已有的 5173 抢），然后
@@ -218,12 +447,25 @@ bun run check                        # typecheck + test + build
 2. **解锁只写 localStorage，已渲染的门禁页不会因此重渲染**——必须**解锁后重载页面**；
    重载又会销毁执行上下文，所以要带重试。
 
-`pc-panes.html` 这个渲染层探针没有门禁，另有两条入口（**指针输入必须走真机，单测证明不了**）：
+`pc-panes.html` 这个渲染层探针没有门禁。**像素判据必须先怀疑采集时机，再怀疑状态**：
+在 rAF 之外读 WebGPU 画布会读到**全黑**（尤其在某次帧外 pass 例如 `Picker.prepare()` 之后），
+于是"挂上/摘掉"的像素签名比较会假阴性——探针现在统一 `settle()` 等若干帧、**在 rAF 回调里**抓快照，
+各像素辅助函数只读快照。踩到过的症状：每个模式单独跑都过，组合起来 grid 的 `mean` 全是 0。
+
+另有这些入口（**指针输入必须走真机，单测证明不了**）：
 
 | 命令 | 覆盖 |
 | --- | --- |
 | `drive.mjs <baseUrl> <panes> "input=1&picking=1&gizmo=1"` | 页面内**合成事件**自检：轨道/滚轮/平移/双击 + 多窗格隔离 + 画布外松手不粘住 + 投影点拾取/空白对照 + gizmo 逐格像素隔离 |
-| `node .tmp/pc-panes/drive-input.mjs <baseUrl> <panes>` | CDP **可信**事件复测（24 条断言，**≥2 窗格**）：真实 `pointerId`（`setPointerCapture` 真的成功）、真实 wheel、浏览器自己生成的 click/dblclick、可信点击拾取、**可信拖动手柄**（物体动而相机不动） |
+| `drive.mjs <baseUrl> <panes> "grid=1"` | 地面网格自检：**每一格**都看见、两级都真的在画（俯视机位下比"网格线像素数"）、淡出生效、**逐相机**淡出、不可拾取、pass/帧 |
+| `drive.mjs <baseUrl> <panes> "grid=1&gridLook=1"` | 同上，但**结束时停在俯视机位**（诊断截图用） |
+| `drive.mjs <baseUrl> <panes> "hud=1"` | 坐标轴球 HUD 自检：逐格隔离、**屏幕等大**（已知机位下 ±X/±Y 间距应为 80 px，退远 3 倍不变）、轴球随相机转、命中与吸附、pass/帧 |
+| `drive.mjs <baseUrl> <panes> "input=1&picking=1&gizmo=1&grid=1&hud=1"` | 五套自检一起跑（1/2/4 窗格都过）——**改探针后先跑这个** |
+| `drive.mjs <baseUrl> <panes> "input=1&picking=1&gizmo=1&grid=1&hud=1&flight=1&walk=1"` | 七套一起跑（1/2/4 窗格都过）：另加**聚焦飞行**（逐帧收敛/到位/输入即取消）与**第一人称**（WASD/Shift/高度锁定/转头/解锁即停） |
+| `drive.mjs <baseUrl> <panes> "asset=<spz>&picking=1"` | **真实 splat 拾取**：`asset` 用 `/@fs/<绝对路径>.spz`（真实 SPZ v4）；判据是**负对照**——开着 `enableIds` 必须命中 `gsplat`、关掉必须选不中，两个资产实测（150k / 1.92M，默认 false） |
+| `drive.mjs <baseUrl> <panes> "...&highlight=1"` | 选中线框自检：盒=实体世界盒外扩 2%、**可拾取=0**、像素变化、悬浮 0.35/选中 1、G/R/S 换模式、输入框里不抢键 |
+| `node .tmp/pc-panes/drive-multi.mjs <baseUrl> <panes>` | 多选整体变换的可信复测（**9 条断言全过**）：三个成员**同位移** Δ=3.620、一次提交带三个成员、相机不动 |
+| `node .tmp/pc-panes/drive-input.mjs <baseUrl> <panes>` | CDP **可信**事件复测（**35 条断言，连续三轮 35/35、退出码 0**）；≥2 窗格）：真实 `pointerId`（`setPointerCapture` 真的成功）、真实 wheel、浏览器自己生成的 click/dblclick、可信点击拾取、**可信拖动手柄**、**可信点轴球**（吸附且不选中）、**可信双击触发飞行并逐帧收敛**、**真实按键 WASD/Shift + 真实鼠标转头** |
 
 ---
 
