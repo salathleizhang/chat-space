@@ -551,14 +551,9 @@ export const ModelList = memo(function ModelList({
           }
         }}
       >
-        {section !== "tasks" &&
-          (section === "scenes"
-            ? worldAssets.length === 0
-            : skyboxAssets.length + regularAssets.length + worldAssets.length === 0) && (
+        {section === "scenes" && worldAssets.length === 0 && (
           <span className="px-3 py-2 text-xs text-ink-subtle">
-            {section === "scenes"
-              ? "No scenes yet. Upload an image and generate a clean base to create an explorable world."
-              : "No model assets yet. Upload an image or describe the model you want to create."}
+            No scenes yet. Upload an image and generate a clean base to create an explorable world.
           </span>
         )}
 
