@@ -53,9 +53,20 @@ export interface PickerLike {
 }
 
 /** 引擎返回的 `MeshInstance | GSplatComponent` 里我们真正要的那点信息。 */
+/**
+ * 引擎 `Vec3` 的**实际**形状：只有 `.x/.y/.z`，**没有数字下标**。
+ * 这里必须如实建模——把它写成我们的元组 `Vec3` 会让 `center[0]` 通过类型检查，
+ * 而那正是本机踩过的静默 NaN（见 `meshBounds`）。
+ */
+interface EngineVec3Like {
+  x: number;
+  y: number;
+  z: number;
+}
+
 interface MeshInstanceLike {
   node?: { name?: string; render?: { meshInstances?: unknown[] } };
-  aabb?: { center: Vec3; halfExtents: Vec3 };
+  aabb?: { center: EngineVec3Like; halfExtents: EngineVec3Like };
 }
 interface GSplatComponentLike {
   entity?: { name?: string };
@@ -107,10 +118,19 @@ export function firstPickResult(selection: readonly unknown[]): PanePickResult |
 }
 
 /** `MeshInstance.aabb` 是**世界空间** AABB（`mesh-instance.js:218` 用 world transform 变换过）。 */
+/**
+ * 取实例的世界 AABB。
+ * ⚠️ 引擎的 `aabb.center` / `aabb.halfExtents` 是 **`Vec3` 实例，只有 `.x/.y/.z`，没有数字下标**——
+ * 写成 `center[0]` 会静默得到 `undefined`（再往下一路变 NaN）。本机踩过：`entityWorldBounds()`
+ * 一直没被调用过，直到选中线框要用它才暴露。
+ */
 function meshBounds(instance: MeshInstanceLike): PanePickResult["bounds"] {
-  const aabb = instance.aabb;
+  const aabb = instance.aabb as { center?: { x: number; y: number; z: number }; halfExtents?: { x: number; y: number; z: number } } | undefined;
   if (!aabb?.center || !aabb.halfExtents) return undefined;
-  return { center: [aabb.center[0], aabb.center[1], aabb.center[2]], halfExtents: [aabb.halfExtents[0], aabb.halfExtents[1], aabb.halfExtents[2]] };
+  return {
+    center: [aabb.center.x, aabb.center.y, aabb.center.z],
+    halfExtents: [aabb.halfExtents.x, aabb.halfExtents.y, aabb.halfExtents.z],
+  };
 }
 
 /** 实体所有 mesh instance 的世界 AABB 并集。没有可算的（splat / 空实体）返回 undefined。 */

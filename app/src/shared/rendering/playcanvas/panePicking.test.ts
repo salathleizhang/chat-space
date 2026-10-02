@@ -36,7 +36,7 @@ describe("拾取结果归一化", () => {
     const node = { name: "box-a" };
     const result = describePickTarget({
       node,
-      aabb: { center: [1, 2, 3], halfExtents: [0.5, 0.5, 0.5] },
+      aabb: { center: { x: 1, y: 2, z: 3 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
     });
     expect(result).toEqual({
       entity: node, kind: "mesh", name: "box-a",
@@ -62,17 +62,33 @@ describe("拾取结果归一化", () => {
   });
 
   test("实体世界包围盒取所有 mesh instance 的并集", () => {
+    // ⚠️ 假数据必须用**引擎的真实形状**（`Vec3`：只有 x/y/z，没有数字下标）。第一版这里写的是
+    // 元组 `[0,0,0]`，而实现里读的是 `center[0]`——两边一起错、测试还通过，
+    // 直到选中线框真的用上它才暴露（见 `meshBounds` 的注释）。
     const bounds = entityWorldBounds({
       render: {
         meshInstances: [
-          { aabb: { center: [0, 0, 0], halfExtents: [1, 1, 1] } },
-          { aabb: { center: [4, 0, 0], halfExtents: [1, 1, 1] } },
+          { aabb: { center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } } },
+          { aabb: { center: { x: 4, y: 0, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } } },
         ],
       },
     });
     expect(bounds).toEqual({ center: [2, 0, 0], halfExtents: [3, 1, 1] });
     expect(entityWorldBounds({ render: { meshInstances: [] } })).toBeUndefined();
     expect(entityWorldBounds(undefined)).toBeUndefined();
+  });
+
+  test("世界 AABB 的每个分量都是有限数（NaN 会让选中线框静默消失）", () => {
+    const bounds = entityWorldBounds({
+      render: {
+        meshInstances: [
+          { node: { name: "box" }, aabb: { center: { x: 1, y: 2, z: 3 }, halfExtents: { x: 0.5, y: 1, z: 1.5 } } },
+        ],
+      },
+    })!;
+    expect(bounds.center).toEqual([1, 2, 3]);
+    expect(bounds.halfExtents).toEqual([0.5, 1, 1.5]);
+    for (const value of [...bounds.center, ...bounds.halfExtents]) expect(Number.isFinite(value)).toBe(true);
   });
 });
 

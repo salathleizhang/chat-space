@@ -1,4 +1,5 @@
 import { paneClearFlags, panePriority, toCameraRect, type CameraRect, type PixelViewport, type SizeLike } from "./paneCamera";
+import { orthoHalfHeight } from "../../../shared/lib/cameraRig";
 
 /**
  * 窗格注册表：把"这一帧要哪几个窗格"增量同步成引擎里的相机实体。
@@ -67,6 +68,12 @@ export interface PaneRegistryOptions {
   createPaneLayer: (paneId: string) => number;
   /** 共享核心场景所在的 layer id。默认 `LAYERID_WORLD`（0）。 */
   worldLayerId?: () => number;
+  /**
+   * **每格都要看的场景级层**（引擎 Skybox 层 id 2 是最典型的一个）。
+   * 不把它放进来，`scene.skybox` 会被 `camera.layers` 的层过滤挡掉——症状是"天空设了、画面没变"
+   * （本机实测：开关天空盒的像素统计逐位相同）。
+   */
+  sharedLayerIds?: readonly number[];
   removePaneLayer?: (layerId: number) => void;
   canvasSize: () => SizeLike;
 }
@@ -81,8 +88,14 @@ interface Entry {
  * 相机可见的层：共享核心 + 自己那层 + 额外层（gizmo 等）。**去重**且顺序稳定，便于比较。
  * 相机 `layers` 里出现重复 id 会让同一层被画两遍，所以这里一定去重。
  */
-export function cameraLayers(worldLayerId: number, hudLayerId: number, extraLayerIds: readonly number[] = []): number[] {
-  return [...new Set([worldLayerId, hudLayerId, ...extraLayerIds])].sort((a, b) => a - b);
+export function cameraLayers(
+  worldLayerId: number,
+  hudLayerId: number,
+  extraLayerIds: readonly number[] = [],
+  /** 每格都要看的**场景级**层（例如引擎的 Skybox 层）。不放进来的话天空会被层过滤挡掉。 */
+  sharedLayerIds: readonly number[] = [],
+): number[] {
+  return [...new Set([worldLayerId, hudLayerId, ...extraLayerIds, ...sharedLayerIds])].sort((a, b) => a - b);
 }
 
 export class PaneRegistry {
@@ -120,12 +133,18 @@ export class PaneRegistry {
       const entry = this.ensure(pane);
       entry.handle.applyCamera({
         rect,
-        layers: cameraLayers(this.worldLayerId(), entry.layerId, pane.extraLayerIds),
+        layers: cameraLayers(this.worldLayerId(), entry.layerId, pane.extraLayerIds, this.options.sharedLayerIds ?? []),
         priority: panePriority(index),
         ...paneClearFlags(index, { clearColorPerPane: pane.clearColorPerPane }),
         projection: pane.projection ?? "perspective",
         fov: pane.fov ?? 60,
-        orthoHeight: pane.orthoHeight ?? pane.viewport.height,
+        /*
+          **默认值是"世界单位的半高"，不是像素半高。** PlayCanvas 的 `camera.orthoHeight` 就是世界
+          半高（`cameraRig.ts` 文件头），写像素值会让正交格"看得极远"——15 世界单位的可见高度
+          变成 715，画面里只剩一个很小的方块（本机实测：俯视格只剩 94 个亮像素，看着像"这一格坏了"）。
+          以前这里默认 `pane.viewport.height`（像素），与 `orthoHalfHeight()` 是两套约定。
+        */
+        orthoHeight: pane.orthoHeight ?? orthoHalfHeight(),
       });
       rects.push(rect);
     }

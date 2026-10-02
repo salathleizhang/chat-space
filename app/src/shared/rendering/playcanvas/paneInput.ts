@@ -220,6 +220,12 @@ export interface PaneInputHost {
   setRig(paneId: string, rig: CameraRig): void;
   /** 双击聚焦的目标；返回 null 表示这一格现在没有可聚焦目标。 */
   focusTarget?(paneId: string): FocusTarget | null;
+  /**
+   * 接管这次聚焦（返回 true 表示**宿主自己负责写入**，本层不再 `setRig`）。
+   * 用来把"立即跳过去"换成飞行动画（`rigFlight.ts`）；返回 false/不实现就是立即到位。
+   * 调用时本层已经先发过 `onInteraction`，宿主可以在那里取消上一条动画。
+   */
+  animateFocus?(paneId: string, target: CameraRig): boolean;
   /** 这一格相机的上方向，默认世界 +Y。俯视窗格要给 `(0,0,-1)`。 */
   paneUp?(paneId: string): Vec3 | undefined;
   /**
@@ -228,11 +234,20 @@ export interface PaneInputHost {
    */
   onClick?(paneId: string, point: { x: number; y: number }): void;
   /**
-   * 这一格现在是否把手势让给别人（典型：正在拖**变换 gizmo 手柄**）。返回 true 就不开始
-   * 轨道手势——否则拖手柄的同时相机会跟着转。信号要来自 gizmo 自己的 `transform:start/end`
-   * （`paneGizmo.ts` 的 `dragging()`），**不要**靠"指针离手柄多近"去猜。
+   * **被认领的点击**：按下时 `isPointerClaimed` 返回了 true（坐标轴球 HUD 这种情况），
+   * 于是本层不开轨道手势；但"点一下"这个动作还得有人做——就在抬手且位移没超过
+   * `CLICK_SLOP_PX` 时回调这里。与 `onClick` 分开是刻意的：
+   * 点 gizmo 手柄**不该**变成选中（three 侧 `pickSuppressedRef` 同效），而点轴球**该**吸附机位。
    */
-  isPointerClaimed?(paneId: string): boolean;
+  onClaimedClick?(paneId: string, point: { x: number; y: number }): void;
+  /**
+   * 这一格在**这个位置**是否把手势让给别人。两种用法：
+   *  - **变换 gizmo 手柄**：信号来自引擎自己的 `transform:start/end`（`paneGizmo.ts` 的
+   *    `dragging()`），与指针位置无关，可以忽略第二个参数；
+   *  - **坐标轴球 HUD**：要用 `point`（画布局部 CSS px）做屏幕空间命中，命中就返回 true。
+   * 返回 true 就不开始轨道手势——否则拖手柄/点轴球的同时相机会跟着转。
+   */
+  isPointerClaimed?(paneId: string, point: { x: number; y: number }): boolean;
   /** 任何一次会改变画面的输入（截图队列的"交互让行"要用）。 */
   onInteraction?(): void;
 }
@@ -254,6 +269,19 @@ interface ClickRecord {
   y: number;
 }
 
+/** 被认领的那次按下：本层不开手势，但要在抬手时决定要不要回调 `onClaimedClick`。 */
+interface ClaimedPress {
+  paneId: string;
+  pointerId: number;
+  /** 按下点（回调就用它） */
+  x: number;
+  y: number;
+  /** 上一次移动的位置（累计位移用） */
+  x0Last: number;
+  y0Last: number;
+  moved: number;
+}
+
 const defaultNow = () => (typeof performance === "undefined" ? Date.now() : performance.now());
 
 /**
@@ -266,6 +294,7 @@ const defaultNow = () => (typeof performance === "undefined" ? Date.now() : perf
 export class PaneGestureRouter {
   private gesture: Gesture | null = null;
   private lastClick: ClickRecord | null = null;
+  private claimedPress: ClaimedPress | null = null;
 
   constructor(private readonly host: PaneInputHost, private readonly now: () => number = defaultNow) {}
 
@@ -275,6 +304,15 @@ export class PaneGestureRouter {
     return g ? { paneId: g.paneId, pointerId: g.pointerId, kind: g.kind } : null;
   }
 
+  /**
+   * 有没有"被认领、还没抬手"的按下。**DOM 层必须看这个**：只有被认领的按下时，
+   * 也要把 window 上的 move/up 挂上，否则那次 `pointerup` 收不到、`onClaimedClick` 永远不触发
+   * （本机踩过：点轴球不吸附，但"没有轨道手势"这条又是通过的）。
+   */
+  hasPendingPress(): boolean {
+    return this.claimedPress !== null;
+  }
+
   /** 指针按下。返回受理的窗格 id（null = 不受理，DOM 层就不该 preventDefault / 捕获）。 */
   start(x: number, y: number, pointerId: number, button: number): string | null {
     if (this.gesture) return null;
@@ -282,8 +320,14 @@ export class PaneGestureRouter {
     if (!kind) return null;
     const pane = paneSpecAt(this.host.panes(), x, y);
     if (!pane || !this.host.getRig(pane.id)) return null;
-    // 别人（gizmo 手柄）正在用这个指针：不动相机，也不认这次点击
-    if (this.host.isPointerClaimed?.(pane.id)) return null;
+    // 新的一次按下：上一次"被认领的按下"作废（正常情况下中间已经有一次抬手把它清掉了，
+    // 但合成事件/丢事件时不能让它一直挂着——挂着的话后面的手势会被误当成认领）
+    this.claimedPress = null;
+    // 别人（gizmo 手柄 / 坐标轴球）正在用这个指针：不动相机；抬手时按"被认领的点击"回调
+    if (this.host.isPointerClaimed?.(pane.id, { x, y })) {
+      this.claimedPress = { paneId: pane.id, pointerId, x, y, x0Last: x, y0Last: y, moved: 0 };
+      return null;
+    }
     this.gesture = { paneId: pane.id, pointerId, kind, lastX: x, lastY: y, moved: 0 };
     this.host.onInteraction?.();
     return pane.id;
@@ -292,11 +336,21 @@ export class PaneGestureRouter {
   /** 指针移动。返回是否被这个手势消费。 */
   move(pointerId: number, x: number, y: number): boolean {
     const g = this.gesture;
-    if (!g || g.pointerId !== pointerId) return false;
+    if (!g || g.pointerId !== pointerId) {
+      // 被认领的按下：只记位移，用来区分"点一下"和"拖走"
+      if (this.claimedPress?.pointerId === pointerId) {
+        const press = this.claimedPress;
+        press.moved += Math.hypot(x - press.x0Last, y - press.y0Last);
+        press.x0Last = x;
+        press.y0Last = y;
+        return true;
+      }
+      return false;
+    }
     // 拖动途中别人接管了这个指针（gizmo 手柄）：立刻收手。**不能只看按下时那一刻**——
     // 手柄的 `transform:start` 是不是"先于"我们的 pointerdown 触发，取决于两边监听器的注册顺序，
     // 这里每帧复查就与顺序无关了。
-    if (this.host.isPointerClaimed?.(g.paneId)) {
+    if (this.host.isPointerClaimed?.(g.paneId, { x, y })) {
       this.cancel();
       return true;
     }
@@ -318,8 +372,14 @@ export class PaneGestureRouter {
     return true;
   }
 
-  /** 指针抬起。返回是否是本次手势的收尾（收尾时可能触发双击聚焦）。 */
+  /** 指针抬起。返回是否被本层消费（手势收尾，或被认领的点击）。 */
   end(pointerId: number): boolean {
+    if (this.claimedPress?.pointerId === pointerId) {
+      const press = this.claimedPress;
+      this.claimedPress = null;
+      if (press.moved <= CLICK_SLOP_PX) this.host.onClaimedClick?.(press.paneId, { x: press.x, y: press.y });
+      return true;
+    }
     const g = this.gesture;
     if (!g || g.pointerId !== pointerId) return false;
     this.finish(g);
@@ -328,6 +388,7 @@ export class PaneGestureRouter {
 
   /** 非正常收尾（`pointercancel` / 失焦 / 布局变化）。幂等，**不计入点击**。 */
   cancel(): void {
+    this.claimedPress = null;
     if (!this.gesture) return;
     this.gesture = null;
   }
@@ -350,8 +411,11 @@ export class PaneGestureRouter {
     const rig = this.host.getRig(paneId);
     const target = this.host.focusTarget?.(paneId);
     if (!rig || !target) return false;
-    this.host.setRig(paneId, focusRigWithTarget(rig, target));
+    const next = focusRigWithTarget(rig, target);
+    // 先通知"有用户动作"（宿主在这里取消上一条飞行动画），再决定由谁来写
     this.host.onInteraction?.();
+    if (this.host.animateFocus?.(paneId, next)) return true;
+    this.host.setRig(paneId, next);
     return true;
   }
 
@@ -427,7 +491,7 @@ export function attachPanePointerInput(canvas: HTMLCanvasElement, options: PaneP
     if (!router.move(event.pointerId, point.x, point.y)) return;
     event.preventDefault();
     // 布局被换掉 / 台架没了时 move() 会自己收手，这里把 window 监听也撤掉
-    if (!router.active()) detachWindow();
+    if (!router.active() && !router.hasPendingPress()) detachWindow();
   };
 
   const onPointerUp = (event: PointerEvent) => {
@@ -438,7 +502,7 @@ export function attachPanePointerInput(canvas: HTMLCanvasElement, options: PaneP
   };
 
   const onPointerCancel = () => {
-    if (!router.active()) return;
+    if (!router.active() && !router.hasPendingPress()) return;
     router.cancel();
     detachWindow();
   };
@@ -463,7 +527,9 @@ export function attachPanePointerInput(canvas: HTMLCanvasElement, options: PaneP
 
   const onPointerDown = (event: PointerEvent) => {
     const point = canvasPoint(canvas, event.clientX, event.clientY);
-    if (!router.start(point.x, point.y, event.pointerId, event.button)) return;
+    const paneId = router.start(point.x, point.y, event.pointerId, event.button);
+    // 被认领的按下（点坐标轴球这类）也要收 move/up，否则抬手那一下收不到
+    if (!paneId && !router.hasPendingPress()) return;
     event.preventDefault();
     try {
       target.setPointerCapture?.(event.pointerId);
@@ -488,7 +554,7 @@ export function attachPanePointerInput(canvas: HTMLCanvasElement, options: PaneP
 
   const onLostPointerCapture = () => {
     // 捕获被抢走 / 元素被移除：按抬手处理，否则手势粘住
-    if (router.active()) {
+    if (router.active() || router.hasPendingPress()) {
       router.cancel();
       detachWindow();
     }

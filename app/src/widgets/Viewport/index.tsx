@@ -47,6 +47,7 @@ import { Badge, Panel, ToolbarButton, Tooltip } from "../../shared/ui";
 import type { CameraTarget } from "./CameraRig";
 import { FirstPersonRig } from "./FirstPersonRig";
 import { ModelMesh } from "./ModelMesh";
+import { PlayCanvasViewport } from "./PlayCanvasViewport";
 import { LAYOUTS, gridTemplateFor, type CameraKind, type LayoutMode, type Projection } from "./paneLayouts";
 import { PaneCamera } from "./PaneCamera";
 import { computeSceneLayout, type AssetPlacement } from "./scenePlacement";
@@ -63,7 +64,7 @@ import {
 import { ViewportPane } from "./ViewportPane";
 import WorldColliderMesh from "./WorldColliderMesh";
 
-interface ViewportProps {
+export interface ViewportProps {
   /** 项目全部资产：共享场景一次性渲染，不再按选中切换 */
   assets: LibraryAsset[];
   /** 当前聚焦的资产 id（双击设置），相机飞过去；null/world 资产回默认总览机位 */
@@ -384,8 +385,8 @@ const DEFAULT_SKYBOX_URL = "/env/sky.exr";
 /** 没有材质覆盖时的共用空表，免得每次渲染造新引用戳穿 PlacedAsset 的 memo */
 const NO_MATERIALS: Record<string, AssetMaterial> = {};
 
-export const Viewport = memo(function Viewport({
-  assets,
+export const Viewport = memo(function Viewport(props: ViewportProps) {
+  const {  assets,
   focusedId,
   selectedIds,
   currentSkybox,
@@ -401,7 +402,19 @@ export const Viewport = memo(function Viewport({
   onImportModel,
   inspection,
   onInspectionCaptured,
-}: ViewportProps) {
+} = props;
+
+  /*
+    §五.5：**`?pcViewport=1` 才分流**到 PlayCanvas 实现，**默认仍是 three**。
+    `pages/` 是冻结集，所以开关只能开在非冻结的这里；`ViewportProps` 一个字段都没改。
+  */
+  if (
+    typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("pcViewport") === "1"
+  ) {
+    return <PlayCanvasViewport {...props} />;
+  }
+
   const [mode, setMode] = useState<ViewMode>("orbit");
   const [showGrid, setShowGrid] = useState(true);
   /**

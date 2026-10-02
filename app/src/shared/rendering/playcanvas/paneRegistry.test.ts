@@ -152,3 +152,14 @@ test("rect 用的是当前画布尺寸（换尺寸后同一 DOM 视口得到不�
   registry.sync([pane("a", { viewport: half })]);
   expect(seen.at(-1)!.rect.x).toBe(0.25);
 });
+
+test("正交窗格的 orthoHeight 默认是**世界半高**，不是像素半高", () => {
+  // 曾经默认 `pane.viewport.height`（像素）→ 正交格"看得极远"，15 世界单位变成 715，
+  // 画面里只剩一个小方块（真机实测俯视格只剩 94 个亮像素）。世界半高由 `cameraRig` 约定。
+  const { registry, applied } = harness();
+  registry.sync([{ id: "top", viewport: { left: 0, top: 0, width: 500, height: 400 }, projection: "orthographic" }]);
+  expect(applied.at(-1)!.options.orthoHeight).toBe(7.5);
+  // 显式给了就按给的（探针可以自己指定）
+  registry.sync([{ id: "top", viewport: { left: 0, top: 0, width: 500, height: 400 }, projection: "orthographic", orthoHeight: 3 }]);
+  expect(applied.at(-1)!.options.orthoHeight).toBe(3);
+});

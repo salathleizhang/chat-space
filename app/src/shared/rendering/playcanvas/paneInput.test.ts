@@ -218,6 +218,22 @@ describe("聚焦", () => {
     expect([ortho.azimuth, ortho.polar, ortho.distance]).toEqual([0, Math.PI / 2, 42]);
   });
 
+  test("animateFocus 返回 true 时由宿主写入（本层不再 setRig），false 则立即到位", () => {
+    const f = fixture();
+    const handed: CameraRig[] = [];
+    f.host.animateFocus = (_paneId, target) => { handed.push(target); return true; };
+    click(f.router, 100, 100);
+    click(f.router, 100, 100);
+    expect(handed.length).toBe(1);
+    expect(handed[0]!.target).toEqual([1, 2, 3]); // focusTarget() 给的包围球心
+    expect(f.writes).toEqual([]); // 本层没写
+    // 返回 false：照旧立即到位
+    f.host.animateFocus = () => false;
+    click(f.router, 100, 100);
+    click(f.router, 100, 100);
+    expect(f.writes.length).toBe(1);
+  });
+
   test("radius 口径仍走 fitDistance（两种口径并存）", () => {
     const focused = focusRigWithTarget(rig(), { center: [3, 1, -2], radius: 2 });
     expect(focused.distance).toBeCloseTo(fitDistance(2, 60), 12);
@@ -398,6 +414,34 @@ describe("手势路由", () => {
     expect(f.router.active()).toBeNull(); // 手势已收手
   });
 
+  test("被认领的点击：不开手势，但抬手时回调 onClaimedClick（点轴球要吸附机位）", () => {
+    const f = fixture();
+    let claimed = true;
+    f.host.isPointerClaimed = () => claimed;
+    const claimedClicks: { paneId: string; x: number; y: number }[] = [];
+    f.host.onClaimedClick = (paneId, point) => { claimedClicks.push({ paneId, x: point.x, y: point.y }); };
+    f.router.start(30, 40, 1, 0);
+    f.router.move(1, 31, 40);
+    f.router.end(1);
+    expect(claimedClicks).toEqual([{ paneId: "pane-0", x: 30, y: 40 }]);
+    expect(f.writes).toEqual([]); // 全程没动相机
+    // 拖走超过容差：不算点击
+    f.router.start(30, 40, 1, 0);
+    f.router.move(1, 90, 40);
+    f.router.end(1);
+    expect(claimedClicks.length).toBe(1);
+    // 被 cancel（pointercancel/失焦）也不算
+    f.router.start(30, 40, 1, 0);
+    f.router.cancel();
+    f.router.end(1);
+    expect(claimedClicks.length).toBe(1);
+    // 没被认领时走的是普通 onClick，不是这个回调
+    claimed = false;
+    click(f.router, 30, 40);
+    expect(claimedClicks.length).toBe(1);
+    expect(f.clicks.length).toBe(1);
+  });
+
   test("onInteraction 只在真的会改画面的输入上触发", () => {
     const { router, interactions } = fixture();
     router.start(10, 10, 1, 0);
@@ -525,6 +569,22 @@ describe("DOM 绑定（happy-dom）", () => {
     window.dispatchEvent(pointer("pointerup", 200, 100));
     expect(rigs.get("pane-0")).toEqual(rig());
     expect(handle.active()).toBeNull();
+  });
+
+  test("被认领的按下也会挂上 window 监听：抬手时 onClaimedClick 真的触发（点轴球吸附）", () => {
+    const canvas = makeCanvas();
+    const f = fixture();
+    // 指针永远被认领（模拟"按在坐标轴球上"）
+    f.host.isPointerClaimed = () => true;
+    const claimedClicks: { paneId: string; x: number; y: number }[] = [];
+    f.host.onClaimedClick = (paneId, point) => { claimedClicks.push({ paneId, x: point.x, y: point.y }); };
+    const handle = attachPanePointerInput(canvas, { ...f.host });
+    canvas.dispatchEvent(pointer("pointerdown", 100, 100, { button: 0, buttons: 1 }));
+    expect(handle.active()).toBeNull(); // 没有轨道手势
+    // 抬手事件落在 window 上（指针可能已经离开画布）
+    window.dispatchEvent(pointer("pointerup", 100, 100, { button: 0, buttons: 0 }));
+    expect(claimedClicks).toEqual([{ paneId: "pane-0", x: 100, y: 100 }]);
+    handle.detach();
   });
 
   test("两次真实点击（在画布上）触发聚焦——不依赖被 pointerdown 抑制的 dblclick 事件", () => {

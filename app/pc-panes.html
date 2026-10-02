@@ -22,8 +22,15 @@
   const inputHoldMs = Math.max(0, Number(params.get("inputHoldMs")) || 0);
   const picking = params.get("picking") === "1";
   const gizmo = params.get("gizmo") === "1";
+  const grid = params.get("grid") === "1";
+  const gridLook = params.get("gridLook") === "1";
+  const flight = params.get("flight") === "1";
+  const walk = params.get("walk") === "1";
+  const multi = params.get("multi") === "1";
+  const highlight = params.get("highlight") === "1";
+  const hud = params.get("hud") === "1";
   window.__PANES__ = { ok: false, panes, done: false, errors: [], steps: [] };
-  runPaneHarness(document.getElementById("c"), { panes, asset, motion, glb, capture, inspection, rig, input, inputHoldMs, picking, gizmo })
+  runPaneHarness(document.getElementById("c"), { panes, asset, motion, glb, capture, inspection, rig, input, inputHoldMs, picking, gizmo, grid, gridLook, hud, flight, walk, multi, highlight })
     .then((result) => { window.__PANES__ = { ...result, done: true }; })
     .catch((error) => { window.__PANES__ = { ok: false, panes, done: true, errors: [String(error && error.stack || error)], steps: [] }; });
 </script>
