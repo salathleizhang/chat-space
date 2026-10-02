@@ -7,7 +7,7 @@
 核对基准：2026-10-01，`bun run check` 退出码 0（app **675** pass / chat **371** pass）。增量来历：363 → 377 是 `VIEWPORT_REVIEW.md` §〇.1–0.3 那批回归测试（`animationLoop.test.ts` 6 条、`drawableContent.test.ts` 7 条、`WebGPUView.test.ts` 1 条）；377 → 382 是 §〇.9 的 ArrayCamera 那批（`paneViewports.test.ts` 5 条）；382 → **458** 是 PlayCanvas 迁移层带来的（边界守卫 4 条、设备/会话 18 条、窗格 19 条、材质与模型描述 20 条、截图与准入 15 条，见 §四之二）；**458 → 511** 里有 **39 条是窗格指针输入**（`playcanvas/paneInput.test.ts` 37 条 + `shared/lib/cameraRig.test.ts` 新增 2 条）；**511 → 542** 是拾取与变换 gizmo（`panePicking.test.ts` 15 条、`paneGizmo.test.ts` 9 条、`paneRegistry` 的 `extraLayerIds` 2 条、`paneInput` 的点击/让手势/聚焦口径 5 条）；**542 → 561** 里 **13 条**是 loader 身份（资源修订号）那批（`shared/lib/resourceRevisions.test.ts` 8 条、`pages/AppDashboard/useProjectState.test.ts` 4 条、`libraryApi.test.ts` 1 条）；**561 → 579** 里 **14 条**是地面网格（`paneGrid.test.ts`）；**579 → 594** 里 **13 条**是坐标轴球 HUD（`paneAxisHud.test.ts`）、**2 条**是输入层的被认领点击（`paneInput.test.ts`）；**594 → 615** 里 **10 条**是第一人称漫游（`walkRig.test.ts`）、**10 条**是相机飞行（`rigFlight.test.ts`）、**1 条**是 `animateFocus` 钩子（`paneInput.test.ts`）；**615 → 635** 里 **17 条**是多选整体变换（`selectionTransform.test.ts`，含**用 three 当真值**钉欧拉约定）、**3 条**是实体↔摆放适配（`panePlacement.test.ts`）；**635 → 653** 里 **7 条**是选中线框几何（`selectionBounds.test.ts`）、
 **5 条**是线框引擎绑定（`selectionWireframe.test.ts`）、**5 条**是 G/R/S 契约（`transformKeys.test.ts`）、
 **1 条**是 `entityWorldBounds` 的回归（引擎 `Vec3` 只有 x/y/z）；**653 → 659** 里 **6 条**是资产挂载器（`assetScene.test.ts`，§五.5 第一块）；**659 → 666** 里 **7 条**是"资产 → 场景规格"解析（`viewportSceneSpecs.test.ts`）；**666 → 675** 的 **9 条**
-是**工作区里并行写入者**的线框材质那批（`widgets/Viewport/wireframeMaterial.test.ts`），不是本节这批改动。**chat 341 → 365** 是按参考图摆放那一步带来的（`imageSize.test.ts` 6 条、`scenePlacement.test.ts` 8 条、`groundSampler.test.ts` 8 条、`scenePlacementRun.test.ts` 2 条端到端），**365 → 371** 来自并行工作。除各条自己点名的模块外，其余零头都来自工作区里并行的未提交改动（app 与 chat 两侧都有）——**引用数字时以本节点名的模块为准**。**文档里其余 363 / 377 / 382 的旧措辞按旧基准读。**
+是**工作区里并行写入者**的线框材质那批（`widgets/Viewport/wireframeMaterial.test.ts`），不是本节这批改动。**chat 341 → 365** 是按参考图摆放那一步带来的（`imageSize.test.ts` 6 条、`scenePlacement.test.ts` 8 条、`groundSampler.test.ts` 8 条、`scenePlacementRun.test.ts` 2 条端到端），**365 → 371** 来自并行工作。除各条自己点名的模块外，其余零头都来自工作区里并行的未提交改动（app 与 chat 两侧都有）——**引用数字时以本节点名的模块为准**。**675 → 680 的 5 条**是坐标轴 HUD 那批**「层只能写在 `render` 组件上」**的修正（`paneAxisHud.test.ts` 2 条真实工厂断言 + `engineEntityLayers.test.ts` 3 条引擎事实钉子，见 §四之二 的坐标轴球 HUD 小节）。**文档里其余 363 / 377 / 382 的旧措辞按旧基准读。**
 
 ---
 
@@ -197,6 +197,19 @@ bun run check                        # typecheck + test + build
   `+forward×depth`；写成 `-forward` 会把部件放到相机背后（不报错、就是看不见）。
 - HUD 层同样要 `clearDepthBuffer: true` 且**进 `PaneSpec.extraLayerIds`**（同 gizmo：`sync()` 会重写
   `camera.layers`）。
+- **`entity.layers = [...]` 是静默 no-op —— 层只能写在 `render` 组件上**（2026-10-02 修，用户报的 bug）。
+  `GraphNode`/`Entity` **没有** `layers`（实测 `Object.getOwnPropertyNames(pc.Entity.prototype)` 不含、
+  `pc.RenderComponent.prototype` 含），赋值只是挂了个**没人读**的自有属性，mesh 照样留在默认的
+  **World 层** ⇒ **每格相机都看得见别格的部件**（"4 窗格下从一个视角能看到另一个视角的坐标轴"）。
+  正确写法：`addComponent("render", { type, layers: [id] })`（引擎自己的 `extras/gizmo/mesh-line.js` 就这么写）
+  或组件已建好时 `entity.render.layers = [id]`。**HUD / 线框 / 网格三处都踩过**。
+  两个连带陷阱：① **相机 layers 只能有一次 `sync`**——`for (const id of paneIds) registry.sync(...)`
+  会让后一格把前一格的层抹掉，最终只有最后一格有 HUD/gizmo/线框（以前被上面这个 bug 掩盖）；
+  ② **线框层是懒建的**，句柄建好时 `layerId()` 还是 `null`，必须用 `onLayerCreated` 回调补一次 `sync`。
+  回归：`paneAxisHud.test.ts`（真实工厂断言 12 个组件都带 `layers`、且**没有任何一处写实体 layers**）、
+  `engineEntityLayers.test.ts`（钉住上面那组引擎事实）、探针 `hud=1` 的
+  **结构性判据**（每格 HUD 层的 mesh 数 = 12、World 层不变）+ **负对照**（把别格层塞进本格相机，
+  轴色像素必须明显冒出来 —— 实测 4 窗格 0 → 420；不冒出来就判红，防止判据空转）。
 - **`isPointerClaimed` 会连 `onClick` 一起吞掉**：被认领的按下既不开轨道手势、也不发点击。
   所以"点一下要做事"的部件（坐标轴球）必须走 **`onClaimedClick`**；而**DOM 层要为被认领的按下
   也挂上 window 的 move/up**，否则那次 `pointerup` 收不到、回调永远不触发。

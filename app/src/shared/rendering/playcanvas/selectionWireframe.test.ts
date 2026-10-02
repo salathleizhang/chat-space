@@ -7,6 +7,7 @@ function fixture() {
   const layers: WireframeLayer[] = [];
   const removed: WireframeLayer[] = [];
   const children: unknown[] = [];
+  const created: WireframeLayer[] = [];
   const records: { transforms: { center: number[]; size: number[] }[]; visible: boolean[]; opacity: number[]; destroyed: number }[] = [];
   const handle = createSelectionWireframe({}, {
     createLayer: () => {
@@ -16,6 +17,11 @@ function fixture() {
     },
     removeLayer: (layer) => { removed.push(layer); },
     addChild: (child) => { children.push(child); },
+    /**
+     * 层是懒建的：调用方拿到句柄时 `layerId()` 还是 null，所以"把层 id 补进各格相机 layers"
+     * 只能靠这个回调（不补的话线框永远不画——修掉 `entity.layers` 那个 no-op 之后才会暴露）。
+     */
+    onLayerCreated: (layer) => { created.push(layer); },
     createObject: () => {
       const record = { transforms: [] as { center: number[]; size: number[] }[], visible: [] as boolean[], opacity: [] as number[], destroyed: 0 };
       records.push(record);
@@ -30,7 +36,7 @@ function fixture() {
       return object;
     },
   });
-  return { handlePromise: handle, layers, removed, children, records };
+  return { handlePromise: handle, layers, removed, children, created, records };
 }
 
 describe("选中线框引擎绑定", () => {
@@ -38,6 +44,9 @@ describe("选中线框引擎绑定", () => {
     const f = fixture();
     const handle = await f.handlePromise;
     expect(f.layers.length).toBe(0);
+    // 还没建层时回调**不能**发（发了的话调用方会拿到 null/不存在的层）
+    expect(f.created.length).toBe(0);
+    expect(handle.layerId()).toBeNull();
     handle.set(box([0, 0, 0], [1, 1, 1]), "selected");
     // 建了一层 + 一个部件（`children` 只有**默认** createObject 才会填——
     // 注入 createObject 的一方自己负责把实体挂进场景，契约如此）
@@ -45,6 +54,13 @@ describe("选中线框引擎绑定", () => {
     expect(f.records.length).toBe(1);
     expect(f.records[0]!.visible).toContain(true);
     expect(handle.layerId()).toBe(40);
+    // 层建好的**那一刻**回调一次，带的就是这一层（调用方靠它把层补进各格相机的 layers）
+    expect(f.created).toEqual([{ id: 40, layer: {} }]);
+    // 再 set 几次不会重复回调（层只建一次）
+    handle.set(box([0, 0, 0], [2, 2, 2]), "selected");
+    handle.set(null, "none");
+    handle.set(box([0, 0, 0], [3, 3, 3]), "selected");
+    expect(f.created.length).toBe(1);
     // style = none 且还没建过时不建
     const g = fixture();
     const handle2 = await g.handlePromise;

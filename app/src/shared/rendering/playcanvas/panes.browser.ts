@@ -179,6 +179,10 @@ export interface PaneHarnessResult {
     modeAfterKeys: string[];
     /** 在输入框里打字时**不**抢键 */
     ignoredWhileTyping: boolean;
+    /** 线框**自己那一层**里的 mesh 数（引擎事实；层写错时这里会是 0——部件全留在 World 层） */
+    layerMeshes: number;
+    /** 建线框没有往 World 层里加东西 */
+    worldLayerUnchanged: boolean;
     passesPerFrame: number;
     ok: boolean;
   };
@@ -263,6 +267,25 @@ export interface PaneHarnessResult {
     hitTestOk: boolean;
     /** 吸附后的台架与 rigForAxisSnap 一致（距离不变、朝向按轴） */
     snapOk: boolean;
+    /**
+     * **逐格** HUD 层里的 mesh 数（引擎事实）。每个都应当是 **12**（6 色条 + 6 轴球）。
+     * 层写错（`entity.layers = [...]` 是引擎里的 no-op）时这里是 0——部件全留在 World 层，
+     * 于是每格相机都看得见别格的坐标轴，而默认机位下的像素判据**抓不到**这条（见 `layerMeshCount`）。
+     */
+    hudMeshesPerLayer: number[];
+    /** 建 HUD 没有往 World 层里加东西（加进去就等于"每格都画"） */
+    worldLayerUnchanged: boolean;
+    /** 负对照：层隔离正常时 pane-0 的**轴色像素数**（远机位，别格部件理论上就在它视锥里） */
+    axisPixelsIsolated: number;
+    /** 负对照：临时把别格 HUD 层塞进 pane-0 相机之后（= 层写错时发生的事）的轴色像素数 */
+    axisPixelsLeaked: number;
+    /** 判据可辨：串层那次数值明显更大。为 false 说明这条像素判据是空的（探针要红） */
+    leakDetectable: boolean;
+    /** 诊断：负对照那一刻 pane-0 的相机位置、以及别格部件的世界中心（确认它们真在视野里） */
+    leakDebug?: {
+      pane0Position: number[] | null;
+      otherHudCenters: (number[] | null)[];
+    };
     passesPerFrame: number;
     ok: boolean;
   };
@@ -377,7 +400,7 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
     const handle = await createPlayCanvasApp(canvas, device);
     const app = handle.app as unknown as {
       root: { addChild(child: unknown): void };
-      scene: { layers: { layerList: { id: number; name: string }[] } };
+      scene: { layers: { layerList: { id: number; name: string }[]; getLayerById(id: number): { meshInstances?: unknown[] } | null } };
       stats?: { drawCalls?: { total?: number } };
       assets: unknown;
       start(): void;
@@ -385,10 +408,22 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
       on(event: string, handler: () => void): void;
     };
 
+    /**
+     * 层里的 mesh 数（**引擎事实**，不是自述）。
+     *
+     * 结构性判据用它：坐标轴 HUD / 选中线框 / gizmo 的层归属一旦写错（`entity.layers = [...]`
+     * 是引擎里的 no-op，见 `paneAxisHud.ts` 的 `createAxisHudWidget`），部件就全留在 World 层。
+     * 症状是"4 窗格下从一格能看到别格的坐标轴"，而**像素判据在默认机位下抓不到**——每格的部件
+     * 离自己那台相机只有 1 单位，别格的视锥通常够不着（本机实测：4 窗格默认机位下四格都是
+     * 恰好一个 HUD，看不出串味）。所以这里直接读层内容。
+     */
+    const layerMeshCount = (layerId: number): number =>
+      (app.scene.layers.getLayerById(layerId) as { meshInstances?: unknown[] } | null)?.meshInstances?.length ?? -1;
+
     // 一个能被每个窗格看见的简单场景：几个不同高度的盒子 + 平行光。
     // 给了 asset 时改成加载真实 splat（合成对照在这里**没有意义**——本仓库已实测
     // "合成云 0.26ms vs 真实 SPZ 20.97ms，差 80 倍"）。
-    const { Entity, Color, StandardMaterial, Gizmo, PROJECTION_PERSPECTIVE, PROJECTION_ORTHOGRAPHIC } = await import("playcanvas");
+    const { Entity, Color, StandardMaterial, Gizmo, LAYERID_WORLD, PROJECTION_PERSPECTIVE, PROJECTION_ORTHOGRAPHIC } = await import("playcanvas");
     const applyOptions = { perspective: PROJECTION_PERSPECTIVE, orthographic: PROJECTION_ORTHOGRAPHIC };
 
     let focus = { center: [0, 0.8, 0] as [number, number, number], radius: 5 };
@@ -699,6 +734,16 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
         },
         removeLayer: (entry) => { (app.scene.layers as unknown as { remove(layer: unknown): void }).remove(entry.layer); },
         addChild: (child) => { app.root.addChild(child as never); },
+        /*
+          层是**懒建**的：`createSelectionWireframe` 返回时 `layerId()` 还是 null（第一次 `set()` 才建层）。
+          所以"把层 id 补进各格相机 layers"只能在这个回调里做——否则线框永远不画。
+          （以前靠 World 层的 bug 歪打正着：线框留在 World 层，所有相机都看得见。）
+        */
+        onLayerCreated: (entry) => {
+          for (const pane of specs) pane.extraLayerIds = [...(pane.extraLayerIds ?? []), entry.id];
+          registry.sync(specs);
+          log(`线框层=${entry.id}（懒建，已补进各格 extraLayerIds）`);
+        },
       });
       for (const pane of specs) {
         const layerId = wireframe.layerId();
@@ -716,7 +761,7 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
         event.preventDefault();
         for (const pane of specs) gizmoHost?.setMode(pane.id, mode);
       });
-      log(`线框层=${wireframe.layerId()}（进 extraLayerIds）`);
+      log(`线框层=${wireframe.layerId() ?? "（懒建，第一次 set 时才建；建好后由 onLayerCreated 补）"}`);
     }
 
     /**
@@ -724,7 +769,11 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
      * 层要进 `PaneSpec.extraLayerIds`（`sync()` 会重写 `camera.layers`）。
      */
     let axisHud: PaneAxisHudHandle | null = null;
+    /** 结构性判据（见 `layerMeshCount`）：HUD 的 12 个 mesh 必须落在**各格自己**的 HUD 层里。 */
+    let hudMeshesPerLayer: number[] = [];
+    let worldLayerUnchangedByHud = false;
     if (options.hud) {
+      const worldMeshesBeforeHud = layerMeshCount(LAYERID_WORLD);
       axisHud = await createPaneAxisHud(app, {
         createLayer: (paneId) => {
           const layer = Gizmo.createLayer(app as never, `pane-axis-hud:${paneId}`);
@@ -739,7 +788,9 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
         if (layerId !== null) pane.extraLayerIds = [...(pane.extraLayerIds ?? []), layerId];
       }
       registry.sync(specs);
-      log(`坐标轴 HUD: 层=${specs.map((pane) => axisHud!.layerIdFor(pane.id)).join(",")}`);
+      hudMeshesPerLayer = specs.map((pane) => layerMeshCount(axisHud!.layerIdFor(pane.id) ?? -1));
+      worldLayerUnchangedByHud = layerMeshCount(LAYERID_WORLD) === worldMeshesBeforeHud;
+      log(`坐标轴 HUD: 层=${specs.map((pane) => axisHud!.layerIdFor(pane.id)).join(",")} 层内 mesh=${hudMeshesPerLayer.join(",")} World 层不变=${worldLayerUnchangedByHud}`);
     }
 
     /**
@@ -1476,6 +1527,7 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
       const report: NonNullable<PaneHarnessResult["highlightReport"]> = {
         boundsMatches: false, pickable: -1, pixelsChanged: false,
         hoverOpacity: 0, selectedOpacity: 0, modeAfterKeys: [], ignoredWhileTyping: false,
+        layerMeshes: -1, worldLayerUnchanged: false,
         passesPerFrame: 0, ok: false,
       };
       const state = () => ({
@@ -1486,10 +1538,24 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
       });
       await settle();
       const before = paneSignature(0);
-      applySelection(["member-0"], "selected");
+      /*
+        用**靶子自己的 id**，不要写死 `"member-0"`：那个 id 只在 `multi=1` 时才存在
+        （`memberEntities` 是 multi 建的），写死的话 `highlight=1` 单独跑就会"什么都没选中"，
+        而下面前几条断言（像素变了/盒匹配）会**静默假阴性**——本机踩到过（`像素变了=false`）。
+      */
+      const highlightId = highlightTargets[0]!.id;
+      const worldMeshesBeforeWireframe = layerMeshCount(LAYERID_WORLD);
+      applySelection([highlightId], "selected");
       await settle();
       report.pixelsChanged = before !== paneSignature(0);
       report.pickable = state().pickable;
+      /*
+        ⓪ 结构性判据（与像素无关）：线框的 mesh 必须在**它自己那一层**里，World 层不许涨。
+        线框层是懒建的，所以这两个读数只能在第一次 `set()` **之后**取（第一版在构造句柄时就取，
+        读到 `-1` 和"没涨"，属于假读数）。
+      */
+      report.layerMeshes = layerMeshCount(wireframe.layerId() ?? -1);
+      report.worldLayerUnchanged = layerMeshCount(LAYERID_WORLD) === worldMeshesBeforeWireframe;
       // 盒 = 实体世界包围盒外扩 2%
       const source = entityWorldBounds(highlightTargets[0]!.entity);
       const boxTransform = state().transform;
@@ -1501,10 +1567,10 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
           && Math.abs(boxTransform.size[0]! - (source.halfExtents[0] * 2 + pad * 2)) < 1e-3;
       }
       // 悬浮态更淡
-      applySelection(["member-0"], "hover");
+      applySelection([highlightId], "hover");
       await settle();
       report.hoverOpacity = +(wireframe.style() === "hover" ? 0.35 : 0).toFixed(2);
-      applySelection(["member-0"], "selected");
+      applySelection([highlightId], "selected");
       await settle();
       report.selectedOpacity = wireframe.style() === "selected" ? 1 : 0;
       // G/R/S：先选中（否则闸门③会拦住），再逐个按键
@@ -1532,11 +1598,12 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
       await settle();
       report.passesPerFrame = result.frameCount ? +(result.gpuRenderPasses!.start / result.frameCount).toFixed(3) : 0;
       report.ok = report.boundsMatches && report.pickable === 0 && report.pixelsChanged
+        && report.layerMeshes === 1 && report.worldLayerUnchanged
         && report.hoverOpacity === 0.35 && report.selectedOpacity === 1
         && report.modeAfterKeys.join(",") === "rotate,scale,translate"
         && report.ignoredWhileTyping;
       result.highlightReport = report;
-      log(`高亮自检: 盒匹配=${report.boundsMatches} 可拾取=${report.pickable} 像素变了=${report.pixelsChanged} 悬浮=${report.hoverOpacity}/选中=${report.selectedOpacity} 按键后模式=${report.modeAfterKeys.join(",")} 打字不抢键=${report.ignoredWhileTyping}`);
+      log(`高亮自检: 盒匹配=${report.boundsMatches} 可拾取=${report.pickable} 层内 mesh=${report.layerMeshes}(期望 1) World层不变=${report.worldLayerUnchanged} 像素变了=${report.pixelsChanged} 悬浮=${report.hoverOpacity}/选中=${report.selectedOpacity} 按键后模式=${report.modeAfterKeys.join(",")} 打字不抢键=${report.ignoredWhileTyping}`);
     }
 
     if (options.multi && selection && pivotEntity) {
@@ -1801,7 +1868,9 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
       */
       const report: NonNullable<PaneHarnessResult["hudReport"]> = {
         layersInCameras: false, ownPaneOnly: false, diameterX: 0, diameterY: 0,
-        diameterFar: 0, headShiftAfterOrbit: 0, hitTestOk: false, snapOk: false, passesPerFrame: 0, ok: false,
+        diameterFar: 0, headShiftAfterOrbit: 0, hitTestOk: false, snapOk: false,
+        hudMeshesPerLayer, worldLayerUnchanged: worldLayerUnchangedByHud,
+        axisPixelsIsolated: -1, axisPixelsLeaked: -1, leakDetectable: false, passesPerFrame: 0, ok: false,
       };
       const savedHudRig = rigs.get("pane-0")!;
       const pane0 = bindings.entityFor("pane-0") as unknown as RigEntityLike | null;
@@ -1867,15 +1936,115 @@ export async function runPaneHarness(canvas: HTMLCanvasElement, options: PaneHar
         && Math.abs(snapped.azimuth - Math.PI / 2) < 1e-9
         && Math.abs(snapped.target[0] - canonical.target[0]) < 1e-9;
 
+      /*
+        ⑦ **负对照**（这条才是用户报的那个 bug 的直接判据，同时证明②"逐格隔离"不是空转）。
+
+        为什么②在默认机位下抓不到：每格的部件钉在自己相机前方 1 单位，而**部件的大小**是
+        `worldPerPixel × 40` —— 正交格的 `worldPerPixel = 15/窗格高` 很大，所以正交格的部件**物理上就很大**
+        （半边长 ≈ 1.9 世界单位），而且被推到离自己相机轴 **12 世界单位**远的地方（`(窗格宽/2−64) px × wpp`）。
+        于是它正好落在**别格**（尤其透视格）的视野里、还占几十个像素——这就是用户看到的
+        "从一个视角能看到另一个视角的坐标轴"。反过来，透视格的部件只有 0.15 世界单位大，
+        别格几乎看不见：所以这条串味是**单向**的（正交格 → 透视格），本机实测确认过。
+
+        做法：把 pane-1..n 摆成**正视正交**格（部件大、且落在世界 (12, ~5.6, 11) 附近），
+        pane-0 摆成透视格退到 30 单位外（看得到那些部件）。然后：
+        ① **先把 pane-0 自己的 HUD 摘掉**，量它这一格的轴色像素数 —— 隔离正常时应当≈0
+           （场景是米色盒子、网格是灰的，都不满足"通道差得开"；有 gizmo 时它那点轴色两次都在，做差即可）；
+        ② 再**临时把别格的 HUD 层塞进 pane-0 的相机**（这正是层归属写错时发生的事：部件留在
+           World 层 ⇒ 每格相机都看得见），量第二次——负对照成立时这里会明显冒出来。
+        两次必须差得开（`leakDetectable`）：否则说明这条像素判据是空的，探针要**红**，不许静默通过。
+      */
+      /**
+       * 快照里某一格的**轴色**像素数：某一路通道明显压过第二路（轴色是饱和的红/绿/蓝）。
+       * 判据用"最强通道 > 次强通道 × 1.5"而不是"通道极差"——米色模型 (180,140,80) 与青色成员
+       * (115,199,191) 的极差都很大，极差判据会把它们算进来（本机踩到：隔离时也读出 855 px，
+       * 那 855 px 全是场景几何，不是坐标轴）。
+       */
+      const axisPixels = (index: number): number => {
+        const pixels = panePixelsIn(index);
+        let count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          const r = pixels[i]!, g = pixels[i + 1]!, b = pixels[i + 2]!;
+          const max = Math.max(r, g, b);
+          if (max < 70) continue;
+          const second = r + g + b - max - Math.min(r, g, b);
+          if (max > second * 1.5) count += 1;
+        }
+        return count;
+      };
+      const savedRigs = new Map(specs.map((pane) => [pane.id, rigs.get(pane.id)!]));
+      const savedProjections = specs.map((pane) => pane.projection);
+      const negativeTarget: [number, number, number] = [0, 0.8, 0];
+      // pane-0：透视、退到 30 单位外（那些"大部件"落在它视野里）
+      const pane0Rig: CameraRig = {
+        ...savedHudRig, target: negativeTarget, azimuth: 0, polar: Math.PI / 2, distance: 30, projection: "perspective",
+      };
+      // pane-1..n：正视**正交**（部件物理尺寸大，且被推到离轴 12 单位处）
+      const orthoRig: CameraRig = {
+        ...savedHudRig, target: negativeTarget, azimuth: 0, polar: Math.PI / 2, distance: 12, projection: "orthographic",
+      };
+      for (const [index, pane] of specs.entries()) {
+        const rig = index === 0 ? pane0Rig : orthoRig;
+        pane.projection = rig.projection;
+        rigs.set(pane.id, rig);
+        const entity = bindings.entityFor(pane.id) as unknown as RigEntityLike | null;
+        if (entity) applyRig(entity, rig, applyOptions);
+      }
+      axisHud.setVisible("pane-0", false);
+      await settle();
+      report.axisPixelsIsolated = axisPixels(0);
+      const otherHudLayerIds = specs.slice(1)
+        .map((pane) => axisHud.layerIdFor(pane.id))
+        .filter((id): id is number => id !== null);
+      specs[0]!.extraLayerIds = [...(specs[0]!.extraLayerIds ?? []), ...otherHudLayerIds];
+      registry.sync(specs);
+      await settle();
+      report.axisPixelsLeaked = axisPixels(0);
+      report.leakDebug = {
+        pane0Position: (() => {
+          const position = (bindings.entityFor("pane-0") as unknown as { getPosition(): { x: number; y: number; z: number } } | null)?.getPosition();
+          return position ? [+position.x.toFixed(2), +position.y.toFixed(2), +position.z.toFixed(2)] : null;
+        })(),
+        otherHudCenters: specs.slice(1).map((pane) => axisHud.centerOf(pane.id)?.map((value) => +value.toFixed(2)) ?? null),
+      };
+      specs[0]!.extraLayerIds = (specs[0]!.extraLayerIds ?? []).filter((id) => !otherHudLayerIds.includes(id));
+      registry.sync(specs);
+      axisHud.setVisible("pane-0", true);
+      for (const [index, pane] of specs.entries()) {
+        const rig = savedRigs.get(pane.id)!;
+        pane.projection = savedProjections[index];
+        rigs.set(pane.id, rig);
+        const entity = bindings.entityFor(pane.id) as unknown as RigEntityLike | null;
+        if (entity) applyRig(entity, rig, applyOptions);
+      }
+      await settle();
+      /*
+        **单窗格没有"别格"**：`otherHudLayerIds` 是空的，这条负对照不适用（不是失败）。
+        1 窗格下两个读数相同是必然的，不能因此判红。
+      */
+      report.leakDetectable = otherHudLayerIds.length === 0
+        ? true
+        : report.axisPixelsLeaked > report.axisPixelsIsolated + 100;
+
       await setPane0Rig(savedHudRig);
+      /*
+        ⓪ **结构性判据（与几何无关）**：12 个部件必须真的在**各格自己**的 HUD 层里。
+        这条比像素判据更硬：层写错时部件留在 World 层，默认机位下四格看起来都"正常"
+        （每格只有自己的那一簇），只有等用户把某格相机挪到别格部件附近才会看见串味。
+      */
+      report.hudMeshesPerLayer = specs.map((pane) => layerMeshCount(axisHud.layerIdFor(pane.id) ?? -1));
+      report.worldLayerUnchanged = worldLayerUnchangedByHud;
       report.passesPerFrame = result.frameCount ? +(result.gpuRenderPasses!.start / result.frameCount).toFixed(3) : 0;
       report.ok = report.layersInCameras && report.ownPaneOnly
+        && report.hudMeshesPerLayer.every((count) => count === 12)
+        && report.worldLayerUnchanged
+        && report.leakDetectable
         && Math.abs(report.diameterX - 80) <= 3 && Math.abs(report.diameterY - 80) <= 3
         && Math.abs(report.diameterX - report.diameterFar) < 2
         && report.headShiftAfterOrbit > 5
         && report.hitTestOk && report.snapOk;
       result.hudReport = report;
-      log(`坐标轴 HUD 自检: 层在相机=${report.layersInCameras} 逐格隔离=${report.ownPaneOnly} 直径 X/Y=${report.diameterX}/${report.diameterY}(期望 80) 退远3倍=${report.diameterFar} 转90°位移=${report.headShiftAfterOrbit} 命中=${report.hitTestOk} 吸附=${report.snapOk} pass/帧=${report.passesPerFrame}`);
+      log(`坐标轴 HUD 自检: 层在相机=${report.layersInCameras} 逐格隔离=${report.ownPaneOnly} 层内 mesh=${report.hudMeshesPerLayer.join(",")}(期望都是 12) World层不变=${report.worldLayerUnchanged} 轴色像素 隔离=${report.axisPixelsIsolated}/串层负对照=${report.axisPixelsLeaked}(别格层数=${report.leakDebug?.otherHudCenters.length ?? 0} 判据可辨=${report.leakDetectable}) 直径 X/Y=${report.diameterX}/${report.diameterY}(期望 80) 退远3倍=${report.diameterFar} 转90°位移=${report.headShiftAfterOrbit} 命中=${report.hitTestOk} 吸附=${report.snapOk} pass/帧=${report.passesPerFrame}`);
     }
 
     if (options.asset) {

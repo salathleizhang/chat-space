@@ -38,7 +38,7 @@ import { collectMaterials } from "../../shared/rendering/playcanvas/modelTexture
 import { isTypingTarget, modeForKey, shouldHandleModeKeys } from "../../shared/rendering/playcanvas/transformKeys";
 import { applyWireframeShading, collectMeshInstances, restoreWireframeShading } from "../../shared/rendering/playcanvas/wireframeShading";
 import { computeSceneLayout } from "./scenePlacement";
-import { LAYOUTS } from "./paneLayouts";
+import { LAYOUTS, type Projection } from "./paneLayouts";
 import { rigForPaneCamera } from "../../shared/rendering/playcanvas/paneRigPresets";
 import type { TransformMode, TransformSpace } from "./transformMode";
 import { ViewportChrome } from "./ViewportChrome";
@@ -204,6 +204,42 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     [paneRects],
   );
 
+  /**
+   * **相机 layers 的唯一合成点**（逐格的 HUD + gizmo + 线框）。
+   *
+   * 为什么必须是"一次 `sync` 写全部窗格"：`PaneRegistry.sync()` 每次都重写**每一个**窗格的
+   * `camera.layers`（`enginePanes.applyCamera`：`camera.layers = o.layers`）。所以
+   * **"循环逐格 sync"是错的**——后一次会把前一次格子里的层抹掉：这里以前写成
+   * `for (const id of paneIds) registry.sync(...)`，最终只剩**最后一格**留着 HUD/gizmo/线框层。
+   *
+   * 它当时被另一个 bug 掩盖着：坐标轴 HUD 的 mesh 因为 `entity.layers` 是无人读的自有属性而留在
+   * World 层（见 `paneAxisHud.ts` 的 `createAxisHudWidget`），所有相机都看得见，所以"每格都有坐标轴"。
+   * 修掉层归属之后，**不同时修这里就会有 3 格直接不画坐标轴**。
+   */
+  const syncPaneLayers = useCallback((override?: { index: number; projection: Projection }) => {
+    const registry = registryRef.current;
+    if (!registry) return;
+    const hud = hudRef.current;
+    const gizmos = gizmoHostRef.current;
+    const wireframeLayerId = wireframeRef.current?.layerId() ?? null;
+    const specs: RegistryPaneSpec[] = paneSpecs.flatMap((spec, index) => {
+      const viewport = rectFor(spec.id);
+      if (!viewport) return []; // 还没量到尺寸的窗格这一帧不画（与 `sync` 自己的口径一致）
+      const extraLayerIds = [
+        hud?.layerIdFor(spec.id) ?? null,
+        gizmos?.layerIdFor(spec.id) ?? null,
+        wireframeLayerId,
+      ].filter((value): value is number => value !== null);
+      return [{
+        id: spec.id,
+        viewport,
+        projection: override?.index === index ? override.projection : rigForPaneCamera(spec.camera).projection,
+        extraLayerIds,
+      }];
+    });
+    if (specs.length > 0) registry.sync(specs);
+  }, [paneSpecs, rectFor]);
+
   // 1) 设备 + app + 窗格相机 + 网格 + HUD
   useLayoutEffect(() => {
     const app = session.app;
@@ -278,14 +314,12 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
           漏了它的症状是"组件挂载成功、没有报错、画布全黑"（本机踩过）。
         */
         (app as unknown as { start(): void }).start();
-        // ① HUD 层必须进 extraLayerIds，否则下次 sync 就被 camera.layers 覆盖掉
-        // **每格**的 HUD 层都要进 extraLayerIds（sync 会重写 camera.layers）
-        let changed = false;
-        for (const spec of specs) {
-          const hudLayerId = hud.layerIdFor(spec.id);
-          if (hudLayerId !== null) { spec.extraLayerIds = [hudLayerId]; changed = true; }
-        }
-        if (changed) registry.sync(specs);
+        /*
+          ① HUD 层必须进 `extraLayerIds`（`sync` 每次都会重写 `camera.layers`），**每格都要**。
+          走 `syncPaneLayers()` 而不是自己拼一遍：相机 layers 只能有**一个**合成点，
+          否则某一处漏了 gizmo/线框层就会被下一次 sync 抹掉（这正是这里以前的问题）。
+        */
+        syncPaneLayers();
         setReady(true);
       } catch (error) {
         if (!cancelled) setFatal(error instanceof Error ? error.message : String(error));
@@ -318,7 +352,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       registryRef.current = null;
       setReady(false);
     };
-  }, [session.status, session.app, paneRects]);
+  }, [session.status, session.app, paneRects, paneSpecs, rectFor, syncPaneLayers]);
 
   // 卸载时按名单卸掉诊断口（它们只在 `?pcDebug=1` 下装过；真实页面上不该留全局可变状态）
   useEffect(() => () => { clearViewportDebug(); }, []);
@@ -467,6 +501,11 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         },
         removeLayer: (entry) => { (app.scene.layers as unknown as { remove(l: unknown): void }).remove(entry.layer); },
         addChild: (child) => { (app as { root: { addChild(c: unknown): void } }).root.addChild(child); },
+        /*
+          线框层是**懒建**的（第一次 `set()` 才建），所以这里拿到的 id 才是真的：
+          层 id 不补进各格相机的 `layers`，线框就永远不画（以前靠 World 层的 bug 歪打正着）。
+        */
+        onLayerCreated: () => { syncPaneLayers(); },
       });
       if (cancelled) { wireframe.dispose(); return; }
       wireframeRef.current = wireframe;
@@ -487,30 +526,18 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         wireframe.set(unionBounds(boxes), members().length > 0 ? "selected" : "none");
       };
 
-      let layerIdsChanged = false;
-      const paneIds = paneSpecs.map((spec) => spec.id);
-      for (const id of paneIds) {
+      /*
+        每格各挂一个 gizmo（`attach` 会把这一格的 gizmo 层与三种模式**懒建**出来），
+        然后**一次**把相机 layers 合成好：**不要**在循环里逐格 `registry.sync`——
+        `sync` 重写所有窗格的 `camera.layers`，后一格会把前一格的层抹掉（见 `syncPaneLayers`）。
+      */
+      for (const id of paneSpecs.map((spec) => spec.id)) {
         gizmos.attach(id, pivotEntity);
-        const gizmoLayerId = gizmos.layerIdFor(id);
-        const wireLayerId = wireframe.layerId();
-        const extra = [gizmoLayerId, wireLayerId].filter((value): value is number => value !== null);
-        if (extra.length > 0) {
-          const viewport = rectFor(id);
-          if (viewport) {
-            registry.sync(paneSpecs.map((spec) => ({
-              id: spec.id,
-              viewport: rectFor(spec.id)!,
-              projection: rigForPaneCamera(spec.camera).projection,
-              extraLayerIds: spec.id === id ? extra : [],
-            })));
-            layerIdsChanged = true;
-          }
-        }
         for (const mode of ["translate", "rotate", "scale"] as const) {
           gizmos.gizmoFor(id, mode)?.on("transform:move", onTransformMove);
         }
       }
-      void layerIdsChanged;
+      syncPaneLayers();
       /*
         引擎里新建的 gizmo 一律是 `translate`/`world`；把**当前**模式与参考系推一遍，
         免得"工具栏上写着 rotate、手柄却是移动"。读 ref 而不是闭包里的状态：这段是异步的，
@@ -632,7 +659,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       setDebug("__PC_VIEWPORT_TRANSFORM__", undefined);
     };
     // `props.selectedIds` 变化由下面那个 effect 调 `syncSelection`（避免整块重建）
-  }, [ready, session.app, paneSpecs, rectFor, props]);
+  }, [ready, session.app, paneSpecs, rectFor, props, syncPaneLayers]);
 
   /*
     2b-2) 变换模式/参考系 → 引擎 gizmo 的**唯一写入点**（工具栏按钮、G/R/S、布局切换都汇到这里）。
@@ -664,7 +691,6 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
   useLayoutEffect(() => {
     if (!ready || !projection) return;
     const bindings = bindingsRef.current;
-    const registry = registryRef.current;
     const kind = paneSpecs[0]!.camera;
     const base = rigForPaneCamera(kind);
     const rig: CameraRig = { ...base, projection };
@@ -676,16 +702,9 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         up: projection === "perspective" || kind === "perspective" ? undefined : ORTHO_UP[kind],
       });
     }
-    const viewport = rectFor(paneSpecs[0]!.id);
-    if (registry && viewport) {
-      registry.sync(paneSpecs.map((spec, index) => ({
-        id: spec.id,
-        viewport: rectFor(spec.id)!,
-        projection: index === 0 ? projection : rigForPaneCamera(spec.camera).projection,
-        extraLayerIds: [hudRef.current?.layerIdFor(spec.id) ?? null].filter((v): v is number => v !== null),
-      })));
-    }
-  }, [ready, projection, paneSpecs, rectFor]);
+    // 只覆盖这一格的投影；**其余层照旧走唯一合成点**（以前这里只补 HUD 层，会把 gizmo/线框层抹掉）
+    syncPaneLayers({ index: 0, projection });
+  }, [ready, projection, paneSpecs, syncPaneLayers]);
 
   /*
     2f) 线框着色：**PlayCanvas 的线框是 `meshInstance.renderStyle`**（`RENDERSTYLE_WIREFRAME`），
@@ -1041,23 +1060,11 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
   // 4) 尺寸变化：重设相机 rect（单窗格=整块画布）
   useLayoutEffect(() => {
     if (!ready) return;
-    const onResize = () => {
-      const registry = registryRef.current;
-      const rects = paneRects();
-      if (!registry || rects.length === 0) return;
-      registry.sync(rects.map((entry, index) => {
-        const hudLayerId = hudRef.current?.layerIdFor(entry.id) ?? null;
-        return {
-          id: entry.id,
-          viewport: entry.viewport,
-          projection: rigForPaneCamera(paneSpecs[index]!.camera).projection,
-          extraLayerIds: hudLayerId !== null ? [hudLayerId] : [],
-        };
-      }));
-    };
+    // 尺寸变了也要走**唯一合成点**：以前这里只补 HUD 层，resize 一次就把 gizmo/线框层从每格相机里抹掉
+    const onResize = () => { syncPaneLayers(); };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [ready, paneRects, paneSpecs]);
+  }, [ready, syncPaneLayers]);
 
   /*
     chrome 的取值全部来自**真实状态**（见 `MountedAsset`），口径与 three 侧一致：

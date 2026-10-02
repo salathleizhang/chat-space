@@ -41,6 +41,16 @@ export interface SelectionWireframeOptions {
   /** 删层：引擎的实体销毁不会删层（同 gizmo 那条约束）。 */
   removeLayer(layer: WireframeLayer): void;
   addChild(child: unknown): void;
+  /**
+   * 层**建好的那一刻**回调一次（层是懒建的：第一次 `set()` 才建，那时 `layerId()` 才从 null 变成 id）。
+   *
+   * 为什么必须要有这个钩子：层 id 得进**每一格**相机的 `layers`（`PaneSpec.extraLayerIds`），
+   * 而调用方在建句柄时拿到的是 `null`。**不补一次 `sync` 的话线框永远不画**——这个缺陷以前被
+   * 另一个 bug 掩盖着：`entity.layers = [...]` 是引擎里的 no-op（见 `paneAxisHud.ts` 的
+   * `createAxisHudWidget`），线框因此留在 World 层、所有相机都看得见；把层归属修对之后，
+   * 它才会暴露成"选中之后什么都没有"。本机踩到（探针的 `线框层=null` 那行就是它）。
+   */
+  onLayerCreated?: (layer: WireframeLayer) => void;
   createObject?(layer: WireframeLayer): WireframeObjectLike;
 }
 
@@ -84,11 +94,17 @@ export async function createSelectionWireframe(
       material.depthWrite = false;
       material.update();
       const entity = new Entity("selection-wireframe");
-      (entity as unknown as { layers: number[] }).layers = [layer.id];
+      /*
+        ⚠️ **层只能写在 `render` 组件上**：`Entity`/`GraphNode` 没有 `layers`（实测
+        `Object.getOwnPropertyNames(pc.Entity.prototype)` 不含、`pc.RenderComponent.prototype` 含），
+        `entity.layers = [id]` 只是挂了个**没人读**的自有属性，mesh 照样留在默认的 World 层。
+        症状与坐标轴 HUD 同源（见 `paneAxisHud.ts` 的 `createAxisHudWidget`）：World 层每格相机都看，
+        于是选中线框在 4 格里各画一遍，而且被深度测试（three 侧那条 `depthTest=false` 的等价物失效）。
+      */
       const instance = new MeshInstance(mesh as never, material as never, entity as never);
       // ③ 视觉反馈绝不参与命中判定
       instance.pick = false;
-      entity.addComponent("render", {});
+      entity.addComponent("render", { layers: [layer.id] });
       if (entity.render) entity.render.meshInstances = [instance as never];
       options.addChild(entity);
       return {
@@ -120,6 +136,8 @@ export async function createSelectionWireframe(
   const ensure = () => {
     if (object) return object;
     layer = options.createLayer();
+    // 先通知调用方（它这时才拿得到层 id、才能把层补进各格相机的 layers），再建部件
+    options.onLayerCreated?.(layer);
     object = createObject!(layer);
     object.setVisible(false);
     return object;

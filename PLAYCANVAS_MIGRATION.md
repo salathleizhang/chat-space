@@ -740,6 +740,85 @@ HUD 的逐格隔离失败、gizmo 的"本格变了"失败，而**每个模式单
   turntable（只有方位角/极角）。要做得先扩台架模型——**有意差异**。
 - **轴球上的字母**（three 画在 canvas 纹理上）与**吸附动画**（`SNAP_TURN_RATE` 缓动）：只做颜色区分与立即到位。
 
+## 三之九之二、修正：坐标轴 HUD 的"层"写错了 —— 4 窗格下能看见**别格**的坐标轴 🧪
+
+**症状（用户报的）**：PlayCanvas 视口右上角的坐标轴看着像"3D 空间里的东西"，而且开 4 窗格时
+**从一个视角能看到另一个视角的坐标轴**。它本该是**纯 UI 覆盖层**（three 侧就是单独一个场景 +
+自己的正交相机）。
+
+**根因（一句话）**：`entity.layers = [layer.id]` 在 PlayCanvas 里是**静默 no-op**——
+`GraphNode`/`Entity` **根本没有** `layers`，层归属只由 **`render` 组件**决定（`_layers`，
+默认 `[LAYERID_WORLD]`，注册路径是 `addMeshInstances/removeMeshInstances`）。
+于是 12 个部件全留在 **World 层**，而**每一格相机都含 World 层** ⇒ 每格都把 4 个窗格的坐标轴画一遍。
+
+```
+$ node -e "const pc=require('playcanvas'); ..."      # 本机实测（2.22.6）
+Entity.prototype    有 layers? false
+GraphNode.prototype 有 layers? false
+RenderComponent.prototype 有 layers? true
+e.layers=[7] → 读得回来 [7]（所以"赋值成功"不能当"层生效了"的证据），但它只是自有属性
+```
+
+**为什么现有判据全绿却没抓到**（两条，都值得记）：
+1. 像素判据跑在**默认机位**下，而每格部件钉在自己相机前方 1 单位、正交格相机离原点只有 12 世界单位 ——
+   别格的视锥**通常够不着**，于是"只摘 pane-0：本格变、其它格不变"真的通过了。
+2. 但**真实 4 窗格布局里它会露出来**：正交格的部件物理尺寸是 `worldPerPixel × 40`，而
+   `worldPerPixel = 15/窗格高` 很大 ⇒ 部件半边长 ≈ **1.9 世界单位**，还被推到离自己相机轴
+   **12 世界单位**处（`(窗格宽/2 − 64) px × wpp`，实测世界坐标 ≈ `(12, 5.6, 11)`）。
+   那正好落在**透视格**的视野里、占几十个像素 ⇒ 用户看到"别格的坐标轴"。透视格的部件只有
+   0.15 世界单位大，别格几乎看不见——所以这条串味是**单向的**（正交格 → 透视格）。
+
+**修法（4 处，都改成引擎自己的写法）**：
+
+| 位置 | 旧（no-op） | 新 |
+| --- | --- | --- |
+| `paneAxisHud.ts` 的部件工厂 | `root.layers = [id]` + `addComponent("render", { type })` | `addComponent("render", { type, layers: [id] })` |
+| `selectionWireframe.ts` | `entity.layers = [id]` | `addComponent("render", { layers: [id] })` |
+| `paneGrid.ts`（潜在同类） | `entity.layers = [options.layerId]` | 组件数据里带 `layers`；`GridEntityLike` 里**删掉** `layers` 声明 |
+| 相机 layers | **循环逐格 `registry.sync`**（后一格把前一格的层抹掉） | `syncPaneLayers()`：一次写全部窗格（HUD + gizmo + 线框 + 逐格投影） |
+
+`addComponent("render", { ..., layers })` 是**引擎自己的写法**（`extras/gizmo/mesh-line.js`：
+`entity.addComponent("render", { meshInstances, layers: [layer.id] })`），而且属性顺序帮了忙：
+`RenderComponentSystem._properties7` 里 `type` 排在 `layers` 前，先造 meshInstances 再换层。
+
+**修第 4 处是必须的**：它以前被这个 bug **掩盖**着。真实视口（`PlayCanvasViewport`）里
+`for (const id of paneIds) registry.sync(...)` 逐格重写 `camera.layers`，最终只有**最后一格**留着
+HUD/gizmo/线框层；以前"每格都看得见坐标轴"是因为部件在 World 层。**不修它，改对层归属之后
+3 个格子会直接不画坐标轴**（resize 与投影切换那两个 sync 点也只补 HUD 层，同样会抹掉 gizmo/线框）。
+
+**顺带修掉的两处连带缺陷**：
+- **线框层是懒建的**（第一次 `set()` 才建），调用方建句柄时 `layerId()` 还是 `null` ⇒ 该层**从来没进过
+  任何相机的 layers**。以前只因为"线框留在 World 层"才看得见。新增 `onLayerCreated` 钩子，
+  层一建好就补一次 `sync`（`selectionWireframe.test.ts` 钉住"建层那一刻回调一次、且只回调一次"）。
+- 探针里 `highlight=1` 单独跑时选中的是写死的 `"member-0"`（那个 id 只在 `multi=1` 时存在）⇒
+  像素/盒匹配断言**静默假阴性**（实测 `像素变了=false`）。改成用靶子自己的 id。
+
+### 实测（可见窗口 Chrome 154，`127.0.0.1:5199`，load 5.4）
+
+**页面内自检**（`input=1&picking=1&gizmo=1&multi=1&highlight=1&grid=1&hud=1`，**1/2/4 窗格全绿、零错误**）：
+
+| 断言 | 1 | 2 | 4 |
+| --- | --- | --- | --- |
+| 每格 HUD 层里的 mesh 数（引擎事实，**期望 12**） | 12 | 12,12 | 12,12,12,12 |
+| 建 HUD 没有往 World 层加东西 | ✓ | ✓ | ✓ |
+| 层在**每一格**相机里 / 只摘 pane-0 时其它格不变 | ✓ | ✓ | ✓ |
+| ±X/±Y 间距（期望 80 px）、退远 3 倍仍 80 | 80/80 | 80/80 | 80/80 |
+| **轴色像素：隔离 vs 串层负对照**（见下） | 884/884（不适用） | 884/1258 | 208/628 |
+| `startRenderPass` / 帧数 | 1 | 1 | 1 |
+
+**负对照（证明这条像素判据不是空转）**：把 pane-1..n 摆成**正视正交**、pane-0 摆成透视并且
+**先摘掉它自己的 HUD**，然后 ① 量 pane-0 的轴色像素数；② 临时把**别格的 HUD 层**塞进 pane-0 的相机
+（= 层写错时发生的事）再量一次。实测 **4 窗格：0 → 420**（2 窗格 884 → 1258，差值同样是别格部件），
+也就是说"别格的坐标轴出现在本格"这件事被**量化复现**了；修好之后隔离那一次是 **0**。
+探针把这条写成**硬判据**（`leakDetectable`）：两次差不开就判红，防止这条检查退化成空转。
+轴色判据用"最强通道 > 次强通道 × 1.5"而不是"通道极差"——米色模型 `(180,140,80)` 与青色成员
+`(115,199,191)` 的极差都很大，极差判据会把它们算进来（本机踩到：隔离时也读出 855 px，全是场景几何）。
+
+**新增单测 5 条**：`paneAxisHud.test.ts` 里"真实部件工厂：12 个 render 部件每个都带 `layers:[本格层 id]`、
+且**没有任何一处写 `entity.layers`**"（假引擎把"写实体 layers"也如实记一笔，断言为 0）
+与"换一层就落在新层"；`engineEntityLayers.test.ts` 3 条把上面那组**引擎事实**钉住（引擎升级时会红，
+提醒重新确认"层归谁管"，而不是顺手删断言）。
+
 ## 三之十、§五.4（第一人称漫游 + 相机飞行）的真实浏览器验证 🧪
 
 两个纯模块 + 两个接线点：

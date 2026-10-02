@@ -175,10 +175,14 @@ export interface ShaderMaterialLike {
   destroy(): void;
 }
 
-/** 网格实体的最小接口（引擎 `Entity` 满足）。 */
+/**
+ * 网格实体的最小接口（引擎 `Entity` 满足）。
+ *
+ * **故意不声明 `layers`**：`Entity` 上根本没有这个属性（层归属只由 `render` 组件决定），
+ * 声明出来只会让"`entity.layers = [...]` 能用"这件事看起来合法——那正是本仓库踩过的静默 no-op。
+ */
 export interface GridEntityLike {
   render?: { meshInstances?: { pick: boolean }[]; material?: unknown } | null;
-  layers?: number[];
   enabled?: boolean;
   addComponent(type: string, options?: unknown): void;
   setLocalScale(x: number, y: number, z: number): void;
@@ -249,7 +253,16 @@ export async function createEditorGrid(app: unknown, options: EditorGridOptions 
       const { Entity } = await import("playcanvas");
       return new Entity("editor:grid") as unknown as GridEntityLike;
     })();
-  entity.addComponent("render", { type: "plane" });
+  /*
+    ⚠️ **层只能写在 `render` 组件上**（`entity.layers` 是没人读的自有属性——证据与症状见
+    `paneAxisHud.ts` 的 `createAxisHudWidget` 文件头）。网格默认留在共享的 World 层
+    （整场景一份、所有窗格都要看见），传了 `layerId` 时也必须走组件数据，
+    否则那一行是**静默 no-op**（旧写法就是 `entity.layers = [...]`）。
+  */
+  entity.addComponent("render", {
+    type: "plane",
+    ...(options.layerId !== undefined ? { layers: [options.layerId] } : {}),
+  });
   // ⚠️ **不要**照搬 three 的 `rotation-x={-Math.PI/2}`：PlayCanvas 的 `PlaneGeometry` 默认
   // 就躺在 XZ 平面、法线是 +Y（`plane-geometry.d.ts:35-41` 的原话），再转 -90° 会把地面**立起来**，
   // 症状是"网格变成屏幕中间一条横带"而且零报错（本机踩过）。宽度沿 X、长度沿 Z，直接缩放即可。
@@ -259,7 +272,6 @@ export async function createEditorGrid(app: unknown, options: EditorGridOptions 
     // ② 必须关掉拾取：400×400 的平面会把所有点击都吃掉
     for (const instance of entity.render.meshInstances ?? []) instance.pick = false;
   }
-  if (options.layerId !== undefined) entity.layers = [options.layerId];
   const root = (app as { root: { addChild(child: unknown): void } }).root;
   root.addChild(entity);
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CameraRig } from "../../../shared/lib/cameraRig";
 import {
-  AXIS_HEADS, createPaneAxisHud, HALF_SIZE_PX, headWorldPositions, HUD_DEPTH, hudPlacement,
+  AXIS_HEADS, createAxisHudWidget, createPaneAxisHud, HALF_SIZE_PX, headWorldPositions, HUD_DEPTH, hudPlacement,
   MARGIN_PX, pickAxisHead, rigForAxisSnap, type AxisHudLayer, type AxisWidgetLike, type HudCameraLike,
 } from "./paneAxisHud";
 
@@ -223,3 +223,100 @@ describe("逐窗格 HUD 句柄（注入假部件）", () => {
     expect(f.layers.length).toBe(1);
   });
 });
+
+/**
+ * 真实工厂的回归（**这条是 4 窗格下"从一格能看见别格的坐标轴"那个 bug 的守卫**）。
+ *
+ * 引擎里 `Entity`/`GraphNode` **没有** `layers`（只有 `RenderComponent` 这类组件有），
+ * 所以层只能通过 `addComponent("render", { ..., layers: [...] })` 写进去；旧写法
+ * `entity.layers = [layer.id]` 只是挂了个**没人读**的自有属性 → 12 个部件全留在默认的
+ * World 层 → 每格相机（都含 World 层）把 4 个窗格的坐标轴全画出来。
+ *
+ * 假引擎把"写错的地方"也如实建模：实体上有个 `layers` 计数属性，**只要有人往它赋值就记一笔**，
+ * 测试断言那一笔是 0。
+ */
+describe("真实部件工厂：层写在 render 组件上（不是实体上）", () => {
+  interface FakeNode {
+    name: string;
+    enabled: boolean;
+    children: FakeNode[];
+    componentData: { type: string; layers?: number[] }[];
+    render: { material?: unknown; meshInstances: { pick: boolean }[] } | null;
+    layerWrites: number;
+  }
+
+  function fakeEngine() {
+    const nodes: FakeNode[] = [];
+    const layersSeen = new Set<number>();
+    class Entity {
+      name: string;
+      enabled = true;
+      children: FakeNode[] = [];
+      componentData: { type: string; layers?: number[] }[] = [];
+      render: FakeNode["render"] = null;
+      layerWrites = 0;
+      constructor(name = "") {
+        this.name = name;
+        nodes.push(this as unknown as FakeNode);
+      }
+      addComponent(type: string, data: Record<string, unknown> = {}) {
+        const record = { type, layers: data.layers as number[] | undefined };
+        this.componentData.push(record);
+        for (const id of record.layers ?? []) layersSeen.add(id);
+        this.render = { material: data.material, meshInstances: [{ pick: true }] };
+        return this.render;
+      }
+      addChild(child: Entity) { this.children.push(child as unknown as FakeNode); }
+      setLocalPosition() {}
+      setLocalScale() {}
+      setPosition() {}
+      destroy() {}
+      /** 谁要是写 `entity.layers = [...]`，这里记一笔（引擎里那是个没人读的自有属性）。 */
+      set layers(_value: number[]) { this.layerWrites += 1; }
+      get layers() { return [] as number[]; }
+    }
+    class StandardMaterial {
+      useLighting = true; diffuse: unknown; emissive: unknown; opacity = 1; blendType = 0;
+      update() {}
+    }
+    class Color { constructor(public r: number, public g: number, public b: number) {} }
+    const added: unknown[] = [];
+    const app = { root: { addChild: (child: unknown) => { added.push(child); } } };
+    const pc = { Entity, StandardMaterial, Color, BLEND_NORMAL: 2 };
+    return { pc, nodes, app, added, layersSeen };
+  }
+
+  test("12 个 render 部件，**每一个**都带 layers:[本格层 id]；没有任何一处写 entity.layers", () => {
+    const f = fakeEngine();
+    const layer: AxisHudLayer = { id: 31, layer: {} };
+    const widget = createAxisHudWidget(f.pc as never, f.app, "pane-0", layer);
+
+    const renderNodes = f.nodes.filter((node) => node.componentData.length > 0);
+    // 6 条色条 + 6 个轴球；根节点不建 render 组件（它只是个 transform 挂点）
+    expect(renderNodes.length).toBe(12);
+    for (const node of renderNodes) {
+      expect(node.componentData[0]!.layers).toEqual([31]);
+    }
+    // 整棵树里没有一处往实体上写 layers（旧写法；引擎不读它）
+    expect(f.nodes.reduce((sum, node) => sum + node.layerWrites, 0)).toBe(0);
+    expect([...f.layersSeen]).toEqual([31]);
+
+    // 挂到 root 上，并且是那棵树（不是别的东西）
+    expect(f.added).toEqual([f.nodes[0]!]);
+    // 部件不可拾取（拾取只走 Picker + 核心层）
+    const meshes = f.nodes.flatMap((node) => node.render?.meshInstances ?? []);
+    expect(meshes.length).toBe(12);
+    expect(meshes.every((instance) => instance.pick === false)).toBe(true);
+
+    // setVisible / destroy 的接线没坏
+    widget.setVisible(false);
+    expect(f.nodes[0]!.enabled).toBe(false);
+  });
+
+  test("换一层 → 部件落在新的那一层（层 id 不是写死的）", () => {
+    const f = fakeEngine();
+    createAxisHudWidget(f.pc as never, f.app, "pane-3", { id: 37, layer: {} });
+    expect([...f.layersSeen]).toEqual([37]);
+  });
+});
+

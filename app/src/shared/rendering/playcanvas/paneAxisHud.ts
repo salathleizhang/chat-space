@@ -15,7 +15,9 @@ import type { CameraRig, Vec3 } from "../../../shared/lib/cameraRig";
  *
  * ### 四条约束
  * ① HUD 层必须 `clearDepthBuffer: true`（永远画在世界之上），并且**要进 `PaneSpec.extraLayerIds`**
- *    （`PaneRegistry.sync()` 会重写 `camera.layers`，见 §三之七）。
+ *    （`PaneRegistry.sync()` 会重写 `camera.layers`，见 §三之七）。**而"部件属于这一层"只能写在
+ *    `render` 组件上**（`entity.layers = [id]` 是无人读的自有属性，实测过）——写错的症状是
+ *    "4 窗格下从一格能看见别格的坐标轴"，见 `createAxisHudWidget` 的文件头。
  * ② **不加相机**：部件靠上面的换算定位，每帧只更新一个实体的 transform（几个向量运算）。
  * ③ 命中用**屏幕空间**（把 6 个轴球投回屏幕、按像素半径判），不要去射线求交——简单、可单测。
  * ④ 轴球点击要**先于拾取**：命中轴球时既不能开始轨道手势（输入层的 `isPointerClaimed`），
@@ -237,6 +239,126 @@ interface PaneEntry {
 const toVec3 = (v: { x: number; y: number; z: number }): Vec3 => [v.x, v.y, v.z];
 
 /**
+ * 部件工厂真正用到的那部分引擎面。**只是为了能在单测里注入假实现**（好断言"层到底写在哪"），
+ * 不追求与引擎类型一一对应——真实的 `playcanvas` 模块结构上满足它。
+ */
+export interface AxisHudEntityLike {
+  addComponent(type: string, data?: Record<string, unknown>): unknown;
+  addChild(child: AxisHudEntityLike): void;
+  setLocalPosition(x: number, y: number, z: number): void;
+  setLocalScale(x: number, y: number, z: number): void;
+  setPosition(x: number, y: number, z: number): void;
+  enabled: boolean;
+  render?: { material?: unknown; meshInstances?: { pick: boolean }[] } | null;
+  children?: AxisHudEntityLike[];
+  destroy(): void;
+}
+
+export interface AxisHudEngineLike {
+  Entity: new (name?: string) => AxisHudEntityLike;
+  StandardMaterial: new () => {
+    useLighting: boolean;
+    diffuse: unknown;
+    emissive: unknown;
+    opacity: number;
+    blendType: number;
+    update(): void;
+  };
+  Color: new (r: number, g: number, b: number) => unknown;
+  BLEND_NORMAL: number;
+}
+
+/**
+ * 真实的引擎部件工厂：三根轴的色条 + 六个轴球，**全部挂在传进来的那一层**（逐窗格一层）。
+ *
+ * ### ⚠️ 层必须写在 `render` **组件**上，不能写在实体上（本机实测，引擎 2.22.6）
+ * `Object.getOwnPropertyNames(pc.Entity.prototype)`（以及 `GraphNode`）里**没有** `layers`，
+ * 只有 `RenderComponent` 这类**组件**才有；`entity.layers = [id]` 只是给实体挂了一个**没人读**的
+ * 自有属性，引擎照样把 mesh 注册在默认的 World 层（`render._layers = [LAYERID_WORLD]`，
+ * `addMeshInstances/removeMeshInstances` 是唯一的注册路径）。
+ *
+ * **这次的症状**（就是本文件之前那个 bug）：12 个部件全留在 World 层，而**每格相机都含 World 层**，
+ * 于是 4 窗格下**从一格能看到另一格的坐标轴**——那些部件又各自钉在自己那台相机前方 1 单位处，
+ * 看起来像飘在 3D 空间里的东西，而它本该是**纯 UI 覆盖层**（three 侧是"独立场景 + 自己的正交相机"，
+ * 等价物就是"独立层 + 逐格隔离"）。
+ *
+ * 引擎自己就是这个写法：`extras/gizmo/mesh-line.js` 的
+ * `entity.addComponent("render", { meshInstances, layers: [layer.id] })`。
+ * 组件数据的属性顺序也帮了忙：`RenderComponentSystem._properties7` 里 `type` 排在 `layers` 前，
+ * 所以 `{ type: "box", layers: [...] }` 会先造出 meshInstances（那一刻还在 World 层）再换成目标层。
+ */
+export function createAxisHudWidget(
+  pc: AxisHudEngineLike,
+  app: unknown,
+  paneId: string,
+  layer: AxisHudLayer,
+): AxisWidgetLike {
+  const { Entity, StandardMaterial, Color, BLEND_NORMAL } = pc;
+  const root = new Entity(`axis-hud:${paneId}`);
+  const geometry = (shape: string) => {
+    const entity = new Entity(shape);
+    entity.addComponent("render", { type: shape, layers: [layer.id] });
+    return entity;
+  };
+  const materialFor = (color: readonly [number, number, number], opacity: number) => {
+    const material = new StandardMaterial();
+    material.useLighting = false; // HUD 要的是纯色，不受光照影响
+    material.diffuse = new Color(color[0], color[1], color[2]);
+    material.emissive = new Color(color[0], color[1], color[2]);
+    material.opacity = opacity;
+    if (opacity < 1) material.blendType = BLEND_NORMAL;
+    material.update();
+    return material;
+  };
+  for (const head of AXIS_HEADS) {
+    const bar = geometry("box");
+    // 色条：从 BAR_INNER 到 BAR_OUTER，粗 0.04（`setLocalScale` 的世界 X 轴对应本地 X）
+    const barLength = BAR_OUTER - BAR_INNER;
+    const barMiddle = (BAR_INNER + BAR_OUTER) / 2;
+    const barMaterial = materialFor(head.color, head.sign === 1 ? 1 : 0.75);
+    if (bar.render) bar.render.material = barMaterial;
+    if (head.axis === "x") {
+      bar.setLocalScale(barLength, 0.04, 0.04);
+      bar.setLocalPosition(head.sign * barMiddle, 0, 0);
+    } else if (head.axis === "y") {
+      bar.setLocalScale(0.04, barLength, 0.04);
+      bar.setLocalPosition(0, head.sign * barMiddle, 0);
+    } else {
+      bar.setLocalScale(0.04, 0.04, barLength);
+      bar.setLocalPosition(0, 0, head.sign * barMiddle);
+    }
+    root.addChild(bar);
+
+    const ball = geometry("sphere");
+    const ballMaterial = materialFor(head.color, head.sign === 1 ? 1 : 0.75);
+    if (ball.render) ball.render.material = ballMaterial;
+    const radius = HEAD_RADIUS * (head.sign === 1 ? 1 : NEGATIVE_HEAD_SCALE);
+    ball.setLocalScale(radius * 2, radius * 2, radius * 2);
+    ball.setLocalPosition(head.direction[0], head.direction[1], head.direction[2]);
+    root.addChild(ball);
+  }
+  // 部件自身的 mesh instance 一律不可拾取（拾取只走 Picker + 核心层）
+  const collect = (node: AxisHudEntityLike) => {
+    for (const instance of node.render?.meshInstances ?? []) instance.pick = false;
+    for (const child of node.children ?? []) collect(child);
+  };
+  collect(root);
+  (app as { root: { addChild(child: unknown): void } }).root.addChild(root);
+  return {
+    setTransform(position, scale) {
+      root.setPosition(position[0], position[1], position[2]);
+      root.setLocalScale(scale, scale, scale);
+    },
+    setVisible(visible) {
+      root.enabled = visible;
+    },
+    destroy() {
+      root.destroy();
+    },
+  };
+}
+
+/**
  * 建一份**逐窗格**的坐标轴球 HUD：每种窗格一个部件、一层，每帧只更新一次 transform。
  *
  * 方向约定沿用 `applyRig` 那套：透视窗格的 `up` 是窗格自己的 up（俯视窗格是 `(0,0,-1)`），
@@ -249,72 +371,7 @@ export async function createPaneAxisHud(app: unknown, options: PaneAxisHudOption
 
   if (!createWidget) {
     const pc = await import("playcanvas");
-    const { Entity, StandardMaterial, Color, BLEND_NORMAL } = pc;
-    createWidget = (paneId, layer) => {
-      const root = new Entity(`axis-hud:${paneId}`);
-      (root as unknown as { layers: number[] }).layers = [layer.id];
-      const geometry = (shape: string) => {
-        const entity = new Entity(shape);
-        entity.addComponent("render", { type: shape as never });
-        return entity;
-      };
-      const materialFor = (color: readonly [number, number, number], opacity: number) => {
-        const material = new StandardMaterial();
-        material.useLighting = false; // HUD 要的是纯色，不受光照影响
-        material.diffuse = new Color(color[0], color[1], color[2]);
-        material.emissive = new Color(color[0], color[1], color[2]);
-        material.opacity = opacity;
-        if (opacity < 1) material.blendType = BLEND_NORMAL;
-        material.update();
-        return material;
-      };
-      for (const head of AXIS_HEADS) {
-        const bar = geometry("box");
-        // 色条：从 BAR_INNER 到 BAR_OUTER，粗 0.04（`setLocalScale` 的世界 X 轴对应本地 X）
-        const barLength = BAR_OUTER - BAR_INNER;
-        const barMiddle = (BAR_INNER + BAR_OUTER) / 2;
-        const barMaterial = materialFor(head.color, head.sign === 1 ? 1 : 0.75);
-        if (bar.render) bar.render.material = barMaterial;
-        if (head.axis === "x") {
-          bar.setLocalScale(barLength, 0.04, 0.04);
-          bar.setLocalPosition(head.sign * barMiddle, 0, 0);
-        } else if (head.axis === "y") {
-          bar.setLocalScale(0.04, barLength, 0.04);
-          bar.setLocalPosition(0, head.sign * barMiddle, 0);
-        } else {
-          bar.setLocalScale(0.04, 0.04, barLength);
-          bar.setLocalPosition(0, 0, head.sign * barMiddle);
-        }
-        root.addChild(bar);
-
-        const ball = geometry("sphere");
-        const ballMaterial = materialFor(head.color, head.sign === 1 ? 1 : 0.75);
-        if (ball.render) ball.render.material = ballMaterial;
-        const radius = HEAD_RADIUS * (head.sign === 1 ? 1 : NEGATIVE_HEAD_SCALE);
-        ball.setLocalScale(radius * 2, radius * 2, radius * 2);
-        ball.setLocalPosition(head.direction[0], head.direction[1], head.direction[2]);
-        root.addChild(ball);
-      }
-      // 部件自身的 mesh instance 一律不可拾取（拾取只走 Picker + 核心层）
-      const collect = (node: { render?: { meshInstances?: { pick: boolean }[] } | null; children?: unknown[] }) => {
-        for (const instance of node.render?.meshInstances ?? []) instance.pick = false;
-        for (const child of (node.children ?? []) as typeof node[]) collect(child);
-      };
-      collect(root as never);
-      (app as { root: { addChild(child: unknown): void } }).root.addChild(root);
-      return {
-        setTransform(position, scale) {
-          root.setPosition(position[0], position[1], position[2]);
-          root.setLocalScale(scale, scale, scale);
-        },
-        setVisible(visible) {
-          root.enabled = visible;
-        },
-        destroy() {
-          root.destroy();
-        },
-      };
-    };
+    createWidget = (paneId, layer) => createAxisHudWidget(pc as unknown as AxisHudEngineLike, app, paneId, layer);
   }
 
   const ensure = (paneId: string): PaneEntry | null => {
