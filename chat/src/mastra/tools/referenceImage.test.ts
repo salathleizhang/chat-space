@@ -600,6 +600,9 @@ describe("runReferenceImageEdit", () => {
     // 参考图与 3D 是两次同意：工具结果也要带上"先让用户看图、别接着调 start-3d-batch"
     expect(result.note).toContain("不要在同一条回复里调用 start-3d-batch");
     expect(result.note).toContain("贴进对话");
+    // 工作台会在图落盘后自动把 Agent 拉起来接着问：这一轮不许用正文要用户手打「继续」
+    expect(result.note).toContain("自动把你拉起来继续");
+    expect(result.note).toContain("回复继续");
     expect(submittedBodies[0]).toMatchObject({
       model: "doubao-seedream-4-5-251128",
       size: "2K",

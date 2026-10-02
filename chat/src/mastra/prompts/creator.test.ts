@@ -50,6 +50,22 @@ describe("creator 回复协议", () => {
   });
 
   /**
+   * 2026-10-02 用户反馈：参考图生成完，Agent 在正文里写「告诉我方向对不对」，
+   * 用户必须先手打一句「继续」才看到那张 3D 同意卡片。需要用户拍板的事只有一条
+   * 出路——ask-user 卡片；正文里不许出现等用户打字才能推进的话。
+   */
+  test("需要用户拍板只能用卡片，不许让用户手打一句来推进", () => {
+    expect(CREATOR_INSTRUCTIONS).toContain("永远不要让用户靠手打一句话来推进流程");
+    expect(CREATOR_INSTRUCTIONS).toContain("请回复继续");
+    expect(CREATOR_INSTRUCTIONS).toContain("告诉我方向对不对");
+    // 图片落盘后工作台会自动续跑一轮：提示词要按这个事实说，别把图当成"等用户回话"
+    expect(CREATOR_INSTRUCTIONS).toContain("[Reference image ready]");
+    // 失败也一样：同一条回复里就要把"重试/换参数/放弃"弹成卡片，别只报一句错
+    expect(CREATOR_INSTRUCTIONS).toContain("某一步失败时");
+    expect(CREATOR_INSTRUCTIONS).toContain("重试 / 换参数或渠道 / 放弃");
+  });
+
+  /**
    * 降面（Auto low-poly）的触发口径也是产品决策：**生成完问一次，同意才减**。
    * 它很容易被后人改回"生成完自动减"（用户为此多花一次付费任务却没人问过他），
    * 或者被改回"什么都不做"（高模静默交付）。这条把两头都钉住。

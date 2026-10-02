@@ -90,6 +90,34 @@ const IMAGE_OUTPUT_TOOLS = new Set([
   "edit-reference-image",
 ]);
 
+/** 图片工具在自动续跑卡片上的名词；缺省用兜底的 "Image"。 */
+const IMAGE_OUTPUT_NOUNS: Readonly<Record<string, string>> = {
+  "generate-reference-images": "Reference image",
+  "edit-reference-image": "Reference image",
+  "generate-clean-plate": "Clean plate",
+  "generate-skybox": "Skybox",
+};
+
+/**
+ * 图片续跑里最多把几张图内联回模型（超过就只带路径）。
+ *
+ * 参考图单张 0.6~1 MB，base64 之后约 1.3 MB；一轮批量出图实测有 8~16 张，
+ * 全量内联会把请求体顶到十几 MB——那正是"自动把 Agent 拉起来问一句"最可能变成
+ * 一条报错的地方。批量时图在对话里用户都看得到，模型只需要确认"这一批"。
+ */
+const IMAGE_REVIEW_MAX_IMAGES = 4;
+
+/**
+ * 记账类工具：它们只写工作台的进度记录，不产生任何真实产物。
+ *
+ * 它们失败时**不能**当成"这一步的用户交付失败了"：既轮不到用户拍板重试，也不该
+ * 把计划续跑一起掐掉。2026-10-02 实测到的正是这个后果——参考图生成完那一轮，模型
+ * 想把计划标题改名（普通进度更新不允许改标题），update-plan 被拒后 turnFailed 置位，
+ * 计划续跑让行，Agent 再也没机会把"要不要继续做 3D"弹成卡片，用户被留在
+ * 「看完这张图后告诉我方向对不对」这种必须手打回复的正文上。
+ */
+const BOOKKEEPING_TOOLS = new Set(["update-plan"]);
+
 /**
  * 一轮结束时若有图片生成工具还没回结果（用户点了停止，或流断了），补几次项目状态
  * 刷新：那几个调用仍在服务端跑，落盘时机从几秒到两分钟不等，所以是递减频率的有限
@@ -321,6 +349,25 @@ export function useAgentChat({
    */
   const pendingImageToolsRef = useRef(new Set<string>());
   const imageCatchUpTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  /**
+   * 刚落盘、Agent 还没看过的图片产物（参考图 / 底板 / 天空盒）：等本条 SSE 结束后
+   * 自动续跑一轮，把这批图交给模型，让它用 ask-user 卡片问用户下一步。
+   *
+   * 为什么必须有这条队列：generate-reference-images 的结果里明确要求模型"这一轮到此
+   * 为止"，而工作台只会把新图贴进对话——没有任何事件能把 Agent 拉起来。于是"要不要
+   * 继续做 3D"要么被模型用正文问出来（用户必须手打「继续」，2026-10-02 用户报的正是
+   * 这个），要么干脆不问。这条队列把那个空缺补成一次自动续跑，让流程一定落到卡片上。
+   *
+   * 与提问的关系同 inspection/identify：提问未决时留在队里，用户回答（或直接打字）后
+   * 再交回模型，免得绕过还没答的问题。
+   */
+  const pendingImageReviewRef = useRef<{ nouns: string[]; paths: string[] } | null>(null);
+  /**
+   * 正在跑的这一轮是不是"图片落盘的自动续跑"。续跑那一轮若又生成了图，不再自动续跑
+   * ——一次出图只带一轮自动跟进，避免无人值守地反复出图（真正的下一步要用户同意）。
+   * 用户发消息或点卡片作答即清零：那是新的交互回合，可以再跟一轮。
+   */
+  const imageAutoTurnRef = useRef(false);
   const [waiting, setWaiting] = useState(false);
   const hasPendingWork = () => backgroundTasksRef.current.size > 0 ||
     inspectionWaitRef.current !== null || identifyingRef.current;
@@ -368,6 +415,8 @@ export function useAgentChat({
     pendingQuestionRef.current = false;
     planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
     pendingImageToolsRef.current.clear();
+    pendingImageReviewRef.current = null;
+    imageAutoTurnRef.current = false;
     clearImageCatchUp();
     setWaiting(false);
   }, [sessionId]);
@@ -419,6 +468,22 @@ export function useAgentChat({
   };
 
   /**
+   * 记下一批刚落盘的图片产物，等本条 SSE 结束后自动续跑（见 flushPendingImageReview）。
+   * 同一轮里多个图片工具的结果合并成一次续跑；正在跑的若是图片续跑本身，就不再排。
+   */
+  const queueImageReview = (toolName: string, paths: string[]) => {
+    if (imageAutoTurnRef.current) return;
+    const noun = IMAGE_OUTPUT_NOUNS[toolName] ?? "Image";
+    const current = pendingImageReviewRef.current;
+    pendingImageReviewRef.current = current
+      ? {
+          nouns: current.nouns.includes(noun) ? current.nouns : [...current.nouns, noun],
+          paths: [...new Set([...current.paths, ...paths])],
+        }
+      : { nouns: [noun], paths: [...new Set(paths)] };
+  };
+
+  /**
    * 用户主动叫停。一轮生成可能跑几十秒并调用付费工具，看出方向不对时必须能收回——
    * 这也是发送按钮在流式期间变成"停止"而不是变灰的原因：把用户锁在一个他已经
    * 知道错了的过程里，比允许并发更糟。
@@ -452,6 +517,8 @@ export function useAgentChat({
     pendingIdentifyRef.current = null;
     pendingQuestionRef.current = false;
     planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
+    pendingImageReviewRef.current = null;
+    imageAutoTurnRef.current = false;
     setPreview((current) => current ? { ...current, inspection: null } : current);
     syncWaiting();
     abortRef.current?.abort();
@@ -505,6 +572,8 @@ export function useAgentChat({
       identifyingRef.current = false;
       pendingQuestionRef.current = false;
       planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
+      pendingImageReviewRef.current = null;
+      imageAutoTurnRef.current = false;
       // 卸载后不再补刷新：那些请求只会写进已经不在的界面
       clearImageCatchUp();
     };
@@ -863,6 +932,53 @@ export function useAgentChat({
     return true;
   };
 
+  /**
+   * 把刚落盘的图片产物（参考图 / 底板 / 天空盒）交回模型，并要它把下一步交回卡片。
+   *
+   * 不是用户发言：图本来就已经贴在那条 assistant 消息里（onToolResult 的 images），
+   * 这里只是把同一批图送进模型眼前（历史里的 assistant 图片不回放，见 chatService
+   * 的 toAgentMessages），并明确这一轮的唯一目的是"拿到用户的决定"。
+   */
+  const flushPendingImageReview = (): boolean => {
+    if (streamingRef.current) return false;
+    // 提问未决：图片先留在队里，等用户回答（或直接打字跳过）之后再交回模型
+    if (hasUnansweredQuestion()) return false;
+    const pending = pendingImageReviewRef.current;
+    if (!pending) return false;
+    pendingImageReviewRef.current = null;
+    imageAutoTurnRef.current = true;
+    const count = pending.paths.length;
+    const noun = pending.nouns.length === 1 ? pending.nouns[0]! : "Image";
+    const plural = count > 1 ? `${noun.toLowerCase()}s` : noun.toLowerCase();
+    /*
+      大一批图不内联：参考图单张 0.6~1 MB（base64 后约 1.3 MB），一轮批量出图实测有
+      8~16 张，全量塞进请求体就是十几 MB，可能直接撞上供应商的请求上限——那会把
+      "自动把 Agent 拉起来问一句"变成一条报错。这种批量场景要确认的本来就是
+      "这一批行不行"，全部路径都写在指令里，用户也看得到每一张。
+    */
+    const images = count <= IMAGE_REVIEW_MAX_IMAGES ? pending.paths : [];
+    startStream(toOutgoingHistory(messagesRef.current), {
+      resume: {
+        kind: "reference",
+        text: [
+          `[${count > 1 ? `${noun}s` : noun} ready] The workbench just attached ${count} new ${plural} to this conversation: ${pending.paths.join(", ")}.`,
+          ...(images.length > 0
+            ? ["Look at them and check them against what the user asked for."]
+            : ["The batch is too large to attach here — the user sees all of them in the conversation; ask about the batch as a whole."]),
+          "This turn exists to get the user's decision: if the next step needs their go-ahead (paid 3D generation, choosing between designs, confirming an object), call ask-user and stop.",
+          'Never ask the user to reply with text to continue — no "回复继续", no prose question they have to answer by typing.',
+          "If nothing needs their decision, say briefly what landed and finish; do not call any paid tool in this turn.",
+        ].join(" "),
+        ...(images.length > 0 ? { images } : {}),
+      },
+      autoTurn: {
+        kind: "reference",
+        label: count > 1 ? `${noun}s ready` : `${noun} ready`,
+      },
+    });
+    return true;
+  };
+
   /** 把已结束的后台任务交回同一会话的 Agent，让它继续原任务（不是用户消息）。 */
   const flushPendingTaskSettlements = (): boolean => {
     if (streamingRef.current) return false;
@@ -966,6 +1082,7 @@ export function useAgentChat({
           `Next up: ${next.id} — ${next.content}.`,
           "Keep executing the plan automatically, step by step, without asking the user to confirm routine progress; record each finished step with update-plan before you end this turn.",
           "If a decision only the user can make is needed (a paid action, choosing between options, confirming an object), call ask-user and stop.",
+          'Never end this turn by asking the user in prose to reply to continue — no "回复继续", no "告诉我…". A question they must answer goes on an ask-user card.',
         ].join(" "),
       },
       autoTurn: {
@@ -1188,6 +1305,12 @@ export function useAgentChat({
           if (IMAGE_OUTPUT_TOOLS.has(name)) {
             pendingImageToolsRef.current.delete(toolCallId ?? name);
             bumpRefresh();
+            /*
+              图已经贴进这条消息（上面的 nextImages）；再排一次自动续跑，让"要不要
+              继续 / 下一步做什么"一定落到 ask-user 卡片上，而不是正文里的一句
+              「告诉我方向对不对」——后者要用户手打「继续」才能前进。
+            */
+            if (images && images.length > 0) queueImageReview(name, images);
           }
           if (TASK_STARTING_TOOLS.has(name) && taskIds && taskIds.length > 0) {
             trackTasks(assistantId, taskIds);
@@ -1200,7 +1323,11 @@ export function useAgentChat({
           if (IMAGE_OUTPUT_TOOLS.has(name)) {
             pendingImageToolsRef.current.delete(toolCallId ?? name);
           }
-          turnFailedRef.current = true;
+          /*
+            记账类工具的失败不算"这一步失败了"：它没有改变任何真实产物，用户也没什么
+            可拍板的，更不该掐断计划续跑（见 BOOKKEEPING_TOOLS 的说明）。
+          */
+          if (!BOOKKEEPING_TOOLS.has(name)) turnFailedRef.current = true;
           const failureLabel = failedToolActivityMessage(name);
           const label = errorMessage
             ? `${failureLabel}: ${errorMessage}`
@@ -1310,8 +1437,11 @@ export function useAgentChat({
                   }
                 : item,
             );
+            // 记账类工具的失败不进这一行：它没交付失败，计划也照样往下走（见 BOOKKEEPING_TOOLS）
             const hasFailedStep = activities?.some(
-              (item) => item.status === "failed",
+              (item) =>
+                item.status === "failed" &&
+                !BOOKKEEPING_TOOLS.has(item.toolName ?? ""),
             );
             return {
               ...message,
@@ -1347,12 +1477,14 @@ export function useAgentChat({
           // agent 可能更新了计划或产出了资产：刷新派生状态
           bumpRefresh();
           /*
-            两条回传只能串行发，不能都发：agent 完全可能在同一轮里既调 inspect
+            几条回传只能串行发，不能都发：agent 完全可能在同一轮里既调 inspect
             又调 identify-asset，两个 flush 各自 startStream 就会并发拉起两条 SSE 流；
             而且第二条的 history 取自 messagesRef，此时还没包含第一条刚 push 的消息，
             两条流会带着分叉的历史打给 agent、回复交错写进两个气泡。
             这里只发第一条——它的 onDone 会再走到这里，把剩下那条接着发出去。
-            三条都没有时，才轮到"计划还没做完就接着做"。
+            都没有时，才轮到"计划还没做完就接着做"。
+
+            图片续跑排在最前：它是这一轮自己的产物，"要不要继续"这一步最该紧跟着问。
 
             推迟一个宏任务再发：最后几个 delta 和 done 常落在同一个网络 chunk 里、
             被同步连续处理，此刻 appendTo 的 setState 还没提交，messagesRef 里的
@@ -1363,6 +1495,7 @@ export function useAgentChat({
           setTimeout(() => {
             if (!activeRef.current || controller.signal.aborted) return;
             if (
+              !flushPendingImageReview() &&
               !flushPendingInspection() &&
               !flushPendingIdentify() &&
               !flushPendingTaskSettlements()
@@ -1411,8 +1544,9 @@ export function useAgentChat({
     // （startStream 里那道是真正的不变量，两者不重复，职责不同）
     if (streamingRef.current || uploadingRef.current || hasPendingWork()) return;
     supersedePendingQuestions();
-    // 用户重新开口 = 新的意图，计划续跑的止损计数从头开始
+    // 用户重新开口 = 新的意图：计划续跑的止损计数从头开始，图片续跑也重新允许跟一轮
     planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
+    imageAutoTurnRef.current = false;
     if (imageFiles && imageFiles.length > 0) {
       const controller = new AbortController();
       uploadAbortRef.current = controller;
@@ -1448,6 +1582,8 @@ export function useAgentChat({
     if (streamingRef.current || uploadingRef.current) return;
     pendingQuestionRef.current = false;
     planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
+    // 用户答了卡片 = 一次新交互：之后若又出图，可以再自动跟一轮
+    imageAutoTurnRef.current = false;
     updateMessage(ownerMessageId, (message) => ({
       ...message,
       questionAnswer: answer,

@@ -89,13 +89,13 @@ interface StreamHandlers {
 }
 
 /**
- * Agent 自发续跑：客户端协作工具（四视角自检、参考图身份确认、后台任务完成）
- * 拿到的产物，或"计划还有没做完的步骤"这一条无产物指令。它由服务端注入本轮
- * 上下文，**不进入 messages**——因此不会在会话记录里冒充一条用户消息，也不会
+ * Agent 自发续跑：客户端协作工具（四视角自检、参考图身份确认、后台任务完成、
+ * 图片产物落盘）拿到的产物，或"计划还有没做完的步骤"这一条无产物指令。它由服务端
+ * 注入本轮上下文，**不进入 messages**——因此不会在会话记录里冒充一条用户消息，也不会
  * 在后续每一轮被重复内联回传。
  */
 export interface ChatResume {
-  kind: "inspection" | "identify" | "tasks" | "plan";
+  kind: "inspection" | "identify" | "tasks" | "plan" | "reference";
   /** 面向模型的续跑指令；不是用户说的话 */
   text: string;
   /** 库内逻辑路径；服务端内联为图片部件 */

@@ -94,7 +94,7 @@ export interface ChatMessage {
 
 /** Agent 自发续跑的本轮产物；图片路径来自资产库，落盘后随会话保存。 */
 export interface AgentAutoTurn {
-  kind: "inspection" | "identify" | "tasks" | "plan";
+  kind: "inspection" | "identify" | "tasks" | "plan" | "reference";
   label: string;
   images?: string[];
 }

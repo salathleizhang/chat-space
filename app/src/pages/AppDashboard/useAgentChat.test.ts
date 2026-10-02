@@ -1592,4 +1592,175 @@ describe("计划续跑", () => {
 
     await h.unmount();
   });
+
+  /**
+   * 2026-10-02 用户报的正是这一条：参考图生成完那一轮，模型想把计划标题改名，
+   * 普通进度更新被 update-plan 拒绝；记账失败被当成"这一步失败了"，计划续跑让行，
+   * 于是再没有任何东西把 Agent 拉起来，用户被留在正文的「告诉我方向对不对」上，
+   * 只能手打一句「继续」才看到那张 3D 同意卡片。
+   */
+  test("update-plan 自己失败只是记账失败：计划照旧续跑，用户不用手打「继续」", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("生成完整场景"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () => handlersOf(0).onTool("update-plan", "tool-plan"));
+    await act(async () => handlersOf(0).onToolError("update-plan", "tool-plan"));
+    await act(async () =>
+      handlersOf(0).onToolResult("update-plan", "tool-plan-2", undefined, undefined, STEP_PLAN),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const turn = streamChat.mock.calls[1]![4] as {
+      resume: { kind: string; text: string };
+    };
+    expect(turn.resume.kind).toBe("plan");
+    // 续跑指令里点名"要用户拍板就用卡片，不许用正文让他手打一句"
+    expect(turn.resume.text).toContain("ask-user");
+    expect(turn.resume.text).toContain("Never end this turn by asking the user in prose");
+    expect(replay(updateMessage, assistant).agentStatus).toMatchObject({
+      label: "Continuing plan",
+      status: "running",
+    });
+
+    await h.unmount();
+  });
 });
+
+/**
+ * 图片落盘即自动续跑：generate-reference-images 的结果要求模型"这一轮到此为止"，
+ * 工作台只会把图贴进对话——过去没有任何事件能把 Agent 拉起来，于是"要不要继续做 3D"
+ * 全靠用户在正文里看到一句「告诉我方向对不对」再手打「继续」。
+ */
+describe("图片落盘自动续跑", () => {
+  const REF_PATH = "projects/demo/source/0-chair-ref.jpg";
+
+  test("参考图落盘后自动续跑：新图交回模型，并要它用卡片问下一步", async () => {
+    const { mount, pushMessage, updateMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("创建一把椅子模型"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-img"));
+    await act(async () =>
+      handlersOf(0).onToolResult("generate-reference-images", "tool-img", [REF_PATH]),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const turn = streamChat.mock.calls[1]![4] as {
+      resume: { kind: string; text: string; images?: string[] };
+    };
+    expect(turn.resume.kind).toBe("reference");
+    // 图要真的回到模型眼前：历史里的 assistant 图片不回放（chatService 只发文本部件）
+    expect(turn.resume.images).toEqual([REF_PATH]);
+    // 这一轮的用途就是把决定交给用户：点名 ask-user，并明确禁止"让用户手打回复"
+    expect(turn.resume.text).toContain("ask-user");
+    expect(turn.resume.text).toContain("Never ask the user to reply with text");
+    // 界面上仍是 Agent 侧卡片；图已经在上面那条气泡里，卡片不重复渲染一遍
+    const resumed = pushMessage.mock.calls.at(-1)![0];
+    expect(resumed).toMatchObject({
+      role: "assistant",
+      autoTurn: { kind: "reference", label: "Reference image ready" },
+    });
+    expect(resumed.autoTurn?.images).toBeUndefined();
+    // 落盘的图仍然挂在本轮那条 assistant 消息上
+    expect(replay(updateMessage, assistant).images).toEqual([REF_PATH]);
+
+    await h.unmount();
+  });
+
+  test("提问未决时图片续跑留在队里，用户答完卡片才交回模型", async () => {
+    const { mount, pushMessage } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("创建一把椅子模型"));
+    const assistant = assistantOf(pushMessage);
+    await act(async () =>
+      handlersOf(0).onToolResult("generate-reference-images", "tool-img", [REF_PATH]),
+    );
+    // 同一轮里模型还弹了一张卡片（服务端随后中止本轮）：先答卡片，不能让图绕过去
+    await act(async () =>
+      handlersOf(0).onToolResult("ask-user", "tool-q", undefined, undefined, undefined, QUESTION),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(1);
+
+    await act(async () => h.result.current.answerQuestion(assistant.id, ANSWER));
+    await flush(20);
+    // 回答本身开了第 2 条流；它的 onDone 才把排队的图交回去（第 3 条）
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    await act(async () => handlersOf(1).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(3);
+    const turn = streamChat.mock.calls[2]![4] as {
+      resume?: { kind: string; images?: string[] };
+    };
+    expect(turn.resume?.kind).toBe("reference");
+    expect(turn.resume?.images).toEqual([REF_PATH]);
+
+    await h.unmount();
+  });
+
+  /**
+   * 一轮批量出图（实测 8~16 张）如果全量内联成 data URI，请求体会到十几 MB——
+   * 那正是这条自动续跑最容易变成一条报错的地方。超过上限就只带路径：
+   * 用户在对话里看得到每一张，模型要确认的是"这一批"。
+   */
+  test("一批参考图超过上限时续跑只带路径，不把几十 MB 塞进请求", async () => {
+    const { mount, pushMessage } = harness();
+    const h = await mount();
+    const batch = Array.from(
+      { length: 6 },
+      (_, index) => `projects/demo/source/${index}-part-ref.jpg`,
+    );
+    await act(async () => h.result.current.send("拆出这组家具"));
+    await act(async () =>
+      handlersOf(0).onToolResult("generate-reference-images", "tool-img", batch),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const turn = streamChat.mock.calls[1]![4] as {
+      resume: { kind: string; text: string; images?: string[] };
+    };
+    expect(turn.resume.kind).toBe("reference");
+    expect(turn.resume.images).toBeUndefined();
+    // 路径与张数仍然如实写在指令里，模型点得出名
+    expect(turn.resume.text).toContain("6 new reference images");
+    expect(turn.resume.text).toContain(batch.at(-1)!);
+    expect(pushMessage.mock.calls.at(-1)![0]).toMatchObject({
+      autoTurn: { kind: "reference", label: "Reference images ready" },
+    });
+
+    await h.unmount();
+  });
+
+  test("自动续跑那一轮又落盘新图时不再自动跟：一次出图只带一轮自动跟进", async () => {
+    const { mount } = harness();
+    const h = await mount();
+    await act(async () => h.result.current.send("创建一把椅子模型"));
+    await act(async () =>
+      handlersOf(0).onToolResult("generate-reference-images", "tool-img", [REF_PATH]),
+    );
+    await act(async () => handlersOf(0).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+
+    // 第 2 条流就是图片续跑本身：它又出了图，也不该再无人值守地自动跟一轮
+    await act(async () =>
+      handlersOf(1).onToolResult("generate-reference-images", "tool-img-2", [
+        "projects/demo/source/1-chair-ref.jpg",
+      ]),
+    );
+    await act(async () => handlersOf(1).onDone());
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+
+    await h.unmount();
+  });
+});
+

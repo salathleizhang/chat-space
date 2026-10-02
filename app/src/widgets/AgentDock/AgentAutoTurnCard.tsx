@@ -10,11 +10,13 @@ const ICONS: Record<AgentAutoTurn["kind"], typeof MagnifyingGlassIcon> = {
   identify: ImageIcon,
   tasks: CheckCircleIcon,
   plan: ListChecksIcon,
+  reference: ImageIcon,
 };
 
 /**
  * Agent 自发续跑时本轮看的东西：四视角自检图、候选参考图、后台任务结果，
- * 以及"计划还有没做完的步骤"这种没有产物的续跑。
+ * 以及"计划还有没做完的步骤"这种没有产物的续跑、"刚落盘的参考图/底板/天空盒"
+ * 这种图片续跑（图本身已经在正文气泡里，卡片这里不再重复一遍）。
  *
  * 发起者是 Agent 自己——它请求工作台截图、等后台任务收尾，然后继续同一条思路，
  * 所以这里渲染成 Agent 侧的产物卡片而不是用户气泡：图上没有"用户发了张图"的痕迹，

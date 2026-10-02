@@ -104,9 +104,12 @@ export const LlmConfigSchema = z.object({
 export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 
 /**
- * Agent 自发续跑：客户端协作工具（四视角自检、参考图身份确认、后台任务完成）
- * 的产物要回到模型眼前，但发起者是 Agent 自己，不是用户。`plan` 是同一机制里
- * 没有产物的一种：计划还有没做完的步骤，客户端据此把 Agent 拉起来接着做。
+ * Agent 自发续跑：客户端协作工具（四视角自检、参考图身份确认、后台任务完成、
+ * 图片产物落盘）的产物要回到模型眼前，但发起者是 Agent 自己，不是用户。
+ * `plan` 是同一机制里没有产物的一种：计划还有没做完的步骤，客户端据此把 Agent
+ * 拉起来接着做；`reference` 是图片工具落盘的那一种：图已经贴进对话，客户端把
+ * Agent 拉起来，让它用 ask-user 卡片问用户下一步（例如要不要继续做 3D），而不是
+ * 用正文让用户手打「继续」。
  *
  * 为什么仍然由服务端拼成一条 user 消息：OpenAI 兼容协议的 tool 消息装不了图，
  * 图片只能走 user 角色。但这条消息只活在本次请求的上下文里——工作台不把它写进
@@ -114,7 +117,7 @@ export type LlmConfig = z.infer<typeof LlmConfigSchema>;
  * 也不会在后续每一轮里被重复内联回传。
  */
 export const ChatResumeSchema = z.object({
-  kind: z.enum(["inspection", "identify", "tasks", "plan"]),
+  kind: z.enum(["inspection", "identify", "tasks", "plan", "reference"]),
   /** 面向模型的续跑指令；措辞属于 Agent 的工作上下文，不是用户说的话 */
   text: z.string().min(1),
   /** 本轮要交回模型的库内图片（如 2×2 四视角检查图） */

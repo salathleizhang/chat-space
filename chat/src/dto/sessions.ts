@@ -19,13 +19,13 @@ export const SessionMessageSchema = z.object({
   /** 消息携带的库内图片（用户附件或工具生成图），逻辑路径引用 */
   images: z.array(LogicalPathSchema).optional(),
   /**
-   * Agent 自发续跑时本轮拿到的产物（四视角自检图、候选参考图、后台任务结果）。
-   * 它不是用户输入，只是渲染成 Agent 侧卡片所需的展示信息；发给模型时走请求的
-   * `resume` 字段，不从这里回放。
+   * Agent 自发续跑时本轮拿到的产物（四视角自检图、候选参考图、后台任务结果，
+   * 以及刚落盘的参考图/底板/天空盒）。它不是用户输入，只是渲染成 Agent 侧卡片
+   * 所需的展示信息；发给模型时走请求的 `resume` 字段，不从这里回放。
    */
   autoTurn: z
     .object({
-      kind: z.enum(["inspection", "identify", "tasks", "plan"]),
+      kind: z.enum(["inspection", "identify", "tasks", "plan", "reference"]),
       label: z.string().min(1),
       images: z.array(LogicalPathSchema).optional(),
     })

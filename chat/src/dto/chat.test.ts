@@ -209,6 +209,29 @@ describe("ChatStreamRequestSchema 续跑上下文", () => {
     expect(parsed.resume).toMatchObject({ kind: "inspection" });
   });
 
+  /**
+   * 图片落盘的那条续跑（reference）是 app 与 chat 的契约：app 在
+   * generate-reference-images 回结果后会自动拉起这一轮，把落盘的图交回模型。
+   * 少一个 kind，请求会在服务端校验处整条失败——用户看到的正是"参考图生成了但没动静"。
+   */
+  test("接受图片落盘续跑（reference），并同样要求库内图片", () => {
+    const parsed = ChatStreamRequestSchema.parse({
+      ...baseRequest,
+      resume: {
+        kind: "reference",
+        text: "[Reference image ready] ask the user with ask-user.",
+        images: ["projects/demo/source/0-chair-ref.jpg"],
+      },
+    });
+    expect(parsed.resume).toMatchObject({ kind: "reference" });
+    expect(() =>
+      ChatStreamRequestSchema.parse({
+        ...baseRequest,
+        resume: { kind: "reference", text: "看图", images: ["../../secret.png"] },
+      }),
+    ).toThrow();
+  });
+
   test("拒绝逃逸资产库的续跑图片与未知续跑类型", () => {
     expect(() =>
       ChatStreamRequestSchema.parse({
