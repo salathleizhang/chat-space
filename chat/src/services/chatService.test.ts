@@ -39,6 +39,17 @@ describe("hasExplicitReferenceAnalysisIntent", () => {
     expect(hasExplicitReferenceAnalysisIntent(imageMessage("请查看这张图片。"))).toBe(false);
     expect(hasExplicitReferenceAnalysisIntent(imageMessage("这个报错为什么出现？"))).toBe(false);
     expect(hasExplicitReferenceAnalysisIntent(imageMessage("你觉得这个界面设计怎么样？"))).toBe(false);
+    // 英文负例：有图片也有 3D/模型字眼，但没有任何"提取/生成"意图。
+    expect(
+      hasExplicitReferenceAnalysisIntent(imageMessage("What do you think of this interior design?")),
+    ).toBe(false);
+    expect(hasExplicitReferenceAnalysisIntent(imageMessage("Why does this error appear?"))).toBe(false);
+    expect(
+      hasExplicitReferenceAnalysisIntent(imageMessage("Can you make this 3D model look better?")),
+    ).toBe(false);
+    expect(
+      hasExplicitReferenceAnalysisIntent(imageMessage("Is this 3D model from this photo correct?")),
+    ).toBe(false);
   });
 
   test("明确要求参考图分析或从图片生成资产时才激活", () => {
@@ -52,6 +63,39 @@ describe("hasExplicitReferenceAnalysisIntent", () => {
       hasExplicitReferenceAnalysisIntent(
         imageMessage("把这个图片的每个家具拆出来，生成单个的参考图"),
       ),
+    ).toBe(true);
+  });
+
+  test("英文语序也要激活（2026-10 实测漏判导致 analyze-reference 整轮缺失）", () => {
+    // 真实事故原话：判定为 false 时工具集里没有 analyze-reference，
+    // agent 只能自己编 slug 去调 mode=edit，批量 404。
+    expect(
+      hasExplicitReferenceAnalysisIntent(
+        imageMessage("Extract all the furniture from this image and generate 3D models"),
+      ),
+    ).toBe(true);
+    expect(
+      hasExplicitReferenceAnalysisIntent(
+        imageMessage("extract every object from the photo and make 3d assets"),
+      ),
+    ).toBe(true);
+    expect(
+      hasExplicitReferenceAnalysisIntent(
+        imageMessage("pull the items out of this image as 3d models"),
+      ),
+    ).toBe(true);
+    expect(
+      hasExplicitReferenceAnalysisIntent(
+        imageMessage("generate 3D models from the objects in this photo"),
+      ),
+    ).toBe(true);
+    expect(
+      hasExplicitReferenceAnalysisIntent(
+        imageMessage("generate 3D models of the furniture in this picture"),
+      ),
+    ).toBe(true);
+    expect(
+      hasExplicitReferenceAnalysisIntent(imageMessage("Turn this photo into 3D models")),
     ).toBe(true);
   });
 });

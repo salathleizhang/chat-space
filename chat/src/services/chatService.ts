@@ -70,6 +70,18 @@ export function hasExplicitReferenceAnalysisIntent(message: ChatMessage): boolea
     /(图中|图片里|照片里|里面|其中).{0,30}(物体|对象|资产).{0,30}(生成|制作|建模|模型)/,
     /(extract|split|identify).{0,32}(asset|object|model).{0,32}(image|photo)/,
     /(image|photo).{0,32}(into|to|as).{0,16}(3d|assets?|models?)/,
+    /*
+      英文语序（2026-10 实测漏判：判定为 false 时工具集里根本没有 analyze-reference，
+      agent 只能自己编 slug 去调 mode=edit，批量 404）。中文那几条模式套不到英文语序上：
+      英文把"提取什么"放在动词之后、"从哪张图"挪到后半句，于是
+      "Extract all the furniture from this image and generate 3D models" 整句落空。
+      这两条分别覆盖**先提取后建模**与**先建模再交代来源**两种语序。
+      负例必须继续为假（"Can you make this 3D model look better?"、
+      "Is this 3D model from this photo correct?"）：所以第二条同时要求创造类动词与来源侧
+      落到图/物体上——光有"3D 模型 + 图"这两个词不算意图，那正是普通提问的样子。
+    */
+    /(extract|pull|isolate|separate|split|identify).{0,48}(objects?|items?|furniture|assets?|models?|pieces?)/,
+    /(generate|make|create|turn|convert|produce|build).{0,40}(3d|three-d|三维|models?|assets?).{0,40}\b(from|of|in|into|using)\b.{0,24}(image|photo|picture|objects?|furniture|items?|scene)/,
   ].some((pattern) => pattern.test(normalized));
 }
 
