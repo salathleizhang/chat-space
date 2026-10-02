@@ -1,4 +1,5 @@
 import { applyEntityPlacement, type PlacementEntityLike } from "./panePlacement";
+import { worldPlacement, type WorldSemanticsLike } from "./worldPlacement";
 import type { Placement } from "./selectionTransform";
 
 /**
@@ -48,6 +49,11 @@ export interface SceneAssetSpec {
   placement: Placement;
   /** 材质覆盖（右侧栏改过的）；形状由 `modelTextures` 决定，本模块只透传 */
   materials?: unknown;
+  /**
+   * 世界的语义变换（只有 `kind:"world"` 的 splat 会带）。实体的最终摆放是
+   * **语义 ∘ placement**（three 侧是"外层 group + 里层 SplatModel"的两级结构）。
+   */
+  worldSemantics?: WorldSemanticsLike | null;
 }
 
 /** 一件已挂载的资产。实体由本模块创建，销毁也归本模块。 */
@@ -122,7 +128,9 @@ export function createSceneAssets(options: SceneAssetsOptions): SceneAssetsHandl
     let visible = true;
     let materials = spec.materials;
     const entity = loaded.entity;
-    const apply = () => applyEntityPlacement(entityOf({ entity }), placement);
+    // 被 gizmo 改动的是 `placement`（用户摆放）；实体上写的是**合成后**的变换。
+    // `WorldSemantics` 缺省时 `worldPlacement` 原样返回用户摆放，老数据不受影响。
+    const apply = () => applyEntityPlacement(entityOf({ entity }), worldPlacement(spec.worldSemantics ?? null, placement));
     apply();
     return {
       id: spec.id,

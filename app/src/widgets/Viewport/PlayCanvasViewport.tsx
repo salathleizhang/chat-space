@@ -27,6 +27,7 @@ import {
   environmentCandidates,
   type SceneLightingHandle,
 } from "../../shared/rendering/playcanvas/sceneLighting";
+import { registerSplatParsers } from "../../shared/rendering/playcanvas/splat";
 import { libraryUrl } from "../../shared/lib/libraryApi";
 import {
   createWalkState, EYE_HEIGHT, MAX_FRAME_DELTA, walkForward, walkInputFromKeys, walkStep, lookStep, type WalkState,
@@ -296,6 +297,17 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         const lighting = await createSceneLighting(app as never);
         if (cancelled) { lighting.dispose(); grid.dispose(); bindings.dispose(); return; }
         lightingRef.current = lighting;
+
+        /*
+          **SPZ 解析器必须显式注册**（2026-10-02 修）。引擎的 `gsplat` handler 内置只有
+          `ply` / `sog` / `lod-meta.json`：SPZ 要 `addParser(new SpzParser(app))`，ZSTD 解码器
+          还得先 `WasmModule.setConfig('ZstdDecoderModule', …)`（两件事封在 `splat.ts` 里）。
+          探针一直在调它（`panes.browser.ts`），**产品路径此前漏了**——症状是资产稳定报
+          `No parser found for resource: …spz`，而且**v4 也一样报**（与"产物是不是 v4"无关）。
+          必须在 `setReady(true)` 之前完成，否则资产 effect 会先拿 gsplat 资产去加载。
+        */
+        await registerSplatParsers(app);
+        if (cancelled) { lighting.dispose(); grid.dispose(); bindings.dispose(); return; }
 
         const hud = await createPaneAxisHud(app, {
           createLayer: (id) => {

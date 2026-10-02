@@ -57,6 +57,31 @@ function fixture() {
 }
 
 describe("资产 → 实体 挂载器", () => {
+  test("世界的语义变换叠加在摆放上（+Y 朝下 ⇒ 先绕 X 转 π），且不改动记下来的用户摆放", async () => {
+    const { handle, spec } = fixture();
+    const semantics = { flipY: true, metricScaleFactor: 2, groundPlaneOffset: 0.5 };
+    await handle.sync([spec("world", { kind: "splat", url: "/world.spz", worldSemantics: semantics })]);
+
+    const entry = handle.entry("world")!;
+    const entity = entry.entity as ReturnType<typeof fakeEntity>;
+    // three 侧 `worldTransform()` 的同一份规则：绕 X π ⇒ q=(1,0,0,0)、y 平移、等比缩放
+    expect(entity.quat.x).toBeCloseTo(1, 6);
+    expect(entity.quat.w).toBeCloseTo(0, 6);
+    expect(entity.position.y).toBeCloseTo(0.5, 6);
+    expect(entity.scale.x).toBeCloseTo(2, 6);
+    // 记账里仍是**用户摆放**（单位阵）：gizmo 写回的是这一份，不该被语义污染
+    expect(entry.placement()).toEqual(placement());
+  });
+
+  test("没有语义字段的老世界数据：实体摆放就是用户摆放（不额外翻转）", async () => {
+    const { handle, spec } = fixture();
+    await handle.sync([spec("world", { kind: "splat", url: "/world.spz" })]);
+    const entity = handle.entry("world")!.entity as ReturnType<typeof fakeEntity>;
+    expect(entity.quat.x).toBeCloseTo(0, 6);
+    expect(entity.quat.w).toBeCloseTo(1, 6);
+  });
+
+
   test("sync 新增：每件资产一个实体，摆放按 three 约定写进实体", async () => {
     const f = fixture();
     const ready = await f.handle.sync([

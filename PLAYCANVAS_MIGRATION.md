@@ -1524,6 +1524,55 @@ HUD/gizmo/线框层；以前"每格都看得见坐标轴"是因为部件在 Worl
    **仍未解（不是视口侧）**：两个项目的 world 产物都是 **legacy SPZ**（头部 `1f8b` = gzip），
    引擎只认 v4 → 控制台稳定报 `No parser found for resource`，房间/背景仍不渲染；
    要修得换产物格式（`@playcanvas/splat-transform`）。
+   → **已在增量 19 解决**（而且真凶不止"格式"一条）。
+
+25. ✅ **增量 19：世界泼溅真的画出来了**（2026-10-02，接增量 18 的"世界仍不渲染"）。
+   三条**独立**的原因，缺一条都黑：
+
+   **① 产品路径从来没注册 SPZ 解析器**（这条最隐蔽，也是"错误信息会骗人"的典型）。
+   引擎的 `gsplat` handler 内置只有 `ply`/`sog`/`lod-meta.json`；SPZ 要
+   `loader.getHandler('gsplat').addParser(new SpzParser(app))`，ZSTD 解码器还要先
+   `WasmModule.setConfig('ZstdDecoderModule', …)`（`playcanvas/splat.ts` 把两件事封在一起）。
+   探针一直在调（`panes.browser.ts:431`），`PlayCanvasViewport` **没调**——
+   于是控制台稳定报 `No parser found for resource: …spz`，**换成 v4 也一样报**。
+   ⚠️ **教训**：那句话只说明"没有解析器"，不说明产物格式不对；我先前照着它把根因归到"legacy 格式"，
+   只对了一半。修法：装配 effect 里在 `setReady(true)` **之前** `await registerSplatParsers(app)`。
+
+   **② 上游产物是 legacy**：World Labs 下发 v2/v3（整段 gzip），引擎只认 v4。
+   在**入库**这一步统一转（`chat/src/common/spz.ts` + `downloadSpzToLibrary`，首次生成与续跑两条路都接；
+   补下载缺失产物那条路也接）：已经是 v4 就不动、是 legacy 才转、**转不了就保留原样并告警**（资产不能丢）。
+   three 侧（`gaussian-splat-lite`）两种都读，所以不需要按引擎各存一份。
+   历史项目补转：`bun run --cwd chat spz:to-v4`（8 件实测全部成功，1.92M 点约 1.9 s/件；
+   原文件备份进 `.spz-legacy/`，点开头 ⇒ 资产库不列出，转换后校验 `numPoints`/`shDegree` 一致才替换）。
+
+   **③ 世界的坐标语义没读**：World Labs 的坐标系 **+Y 朝下**，照原样画是**倒的**。
+   three 侧一直翻（`widgets/Viewport/worldTransform.ts`：`flipY` ⇒ 绕 X 转 π、`metricScaleFactor`、
+   `groundPlaneOffset`），PC 侧完全没读 `worldSemantics`。新增 `playcanvas/worldPlacement.ts`
+   （语义 ∘ 用户摆放；合成用 **three 当真值**钉住，含"`Quat.mul` 是就地修改"那个坑——
+   先算位置再合成旋转，否则位置会被多转一次）。真实项目的值**不是**默认的 1/0：
+   实测 `p-muo3u17c` 是 scale **1.8169396**、offset **1.0635998**，所以必须读字段。
+   规格链路：`viewportSceneSpecs` 透传 `worldSemantics` → `assetScene` 在写实体时合成
+   （记账里仍是**用户摆放**，gizmo 写回不被污染）。
+
+   **真机读数**（`.tmp/pc-panes/inspect-lighting.mjs`，真实业务页面 `/app/p-muo3u17c?pcViewport=1`）：
+
+   | 断言 | 修前 | 修后 |
+   | --- | --- | --- |
+   | 控制台 | `No parser found for resource: …0-world-full-res.spz` | **零错误、零告警** |
+   | 引擎里的 gsplat 组件 | 无 | `{enabled: true, numSplats: **1920000**}`（就是 full-res 的点数） |
+   | 该实体的局部变换 | — | `rotation [1,0,0,0]`（绕 X π）、`position.y 1.0636`、`scale 1.8169`（＝项目自己的语义值） |
+   | 亮像素 | 15956 | **1053533**（房间铺满画面） |
+   | JS 错误 | 0 | 0 |
+
+   截图：`.tmp/pc-panes/splat-fixed-p-muo3u17c.png`（远景）与 `.tmp/pc-panes/world-oriented-p-muo3u17c.png`；
+   同项目 **three 分屏对照** `.tmp/pc-panes/three-branch-p-muo3u17c.png`
+   ——两版的默认机位都落在房间内部（这是项目本身的世界尺度 + 默认机位决定的，不是朝向 bug）。
+
+   单测：`worldPlacement.test.ts` **7 条**（默认语义、三值各自生效、缺字段不猜、单位摆放、
+   gizmo 挪过世界的解析式、与 three 矩阵分解逐项一致、不翻转那条路）、
+   `assetScene.test.ts` +2（语义叠加进实体、老数据不翻）、`viewportSceneSpecs.test.ts` +1（透传/null）、
+   `chat/src/common/spz.test.ts` **11 条**（头判定、降级四态、**真工具往返**：现造 v3 夹具 → 转 v4 点数不变）、
+   `chat/src/mastra/tools/assetRepair.test.ts` **1 条**（下载 legacy → 落盘 v4，端到端接线）。
 
 3. 接 `live` + `onTransformCommit`（`selectionTransform` 的回调已就位）+ history 按钮；
    选中/悬浮接 `selectionWireframe`；G/R/S 接 `transformKeys`。

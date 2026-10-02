@@ -110,6 +110,15 @@ describe("当前世界（场景背景）", () => {
     expect(result.specs[0]!.placement).toEqual(placement);
   });
 
+  test("世界规格带上 worldSemantics（装配层据此翻坐标系），缺省时是 null", () => {
+    const withSemantics = { ...world, worldSemantics: { flipY: true, metricScaleFactor: 1, groundPlaneOffset: 0 } };
+    const result = viewportSceneSpecs({ assets: [withSemantics], layout: new Map(), currentWorld: "world" });
+    expect(result.specs[0]!.worldSemantics).toEqual({ flipY: true, metricScaleFactor: 1, groundPlaneOffset: 0 });
+    // 老数据没有这个字段：显式 null（装配层不猜、不加变换）
+    const plain = viewportSceneSpecs({ assets: [world], layout: new Map(), currentWorld: "world" });
+    expect(plain.specs[0]!.worldSemantics).toBeNull();
+  });
+
   test("不是当前世界的世界资产进 skipped（other-world），不渲染", () => {
     const other = asset({ id: "world-2", assetSlug: "another", kind: "world", modelPath: null, spzPath: "/w2.spz" });
     const result = viewportSceneSpecs({ assets: [world, other], layout: new Map(), currentWorld: "world" });

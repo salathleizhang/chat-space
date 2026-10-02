@@ -360,9 +360,22 @@ bun run check                        # typecheck + test + build
 - engine GSplat 用默认的 **`unified = true`**（WebGPU 上 = GPU compute radix sort，每帧每相机、
   **无 CPU 回读也无同步等待**）。**不要设 `false`**：legacy 路径 `gsplat-instance.js:137` 硬编码
   `cameras[0]`，多视图排序**是错的**（不是慢，是错）。2.22.6 的默认值也已核实是 `true`。
-- **资产必须是 SPZ v4**。解析器只认 version 4；本项目原有的四份 `.spz` 全是 legacy（头部 `1f8b` = gzip），
-  必须用 `@playcanvas/splat-transform` 转（实测 1.92M 约 2.5 s）。已转好的在 `.tmp/pc-assets/`
-  （`world-150k-v4.spz` / `world-full-res-v4.spz`），探针用 `asset=/@fs/<绝对路径>` 加载。
+- **资产必须是 SPZ v4**。解析器只认 version 4；World Labs 下发的是 legacy（头部 `1f8b` = gzip）——
+  所以**入库时统一转 v4**（`chat/src/common/spz.ts` + `downloadSpzToLibrary`，2026-10-02）。
+  three 侧（`gaussian-splat-lite`）两种都能读，因此不需要按引擎各存一份产物。
+  历史项目补转：`bun run --cwd chat spz:to-v4`（原文件备份到 `.spz-legacy/`，点开头 ⇒ 资产库不列出）。
+  转换用 `@playcanvas/splat-transform`（实测 1.92M 点约 1.9 s）；**转不了就保留原样并告警**，资产不丢。
+- **SPZ 解析器必须显式注册，而且产品路径曾经漏过**：引擎的 `gsplat` handler 内置只有
+  `ply`/`sog`/`lod-meta.json`，SPZ 要 `addParser(new SpzParser(app))`，ZSTD 解码器还要先
+  `WasmModule.setConfig('ZstdDecoderModule', …)`（`playcanvas/splat.ts` 把两件事封在一起）。
+  探针一直在调它，`PlayCanvasViewport` **此前没调**——症状是 `No parser found for resource: …spz`，
+  而且**换成 v4 也照样报**（那条错误信息只说明"没有解析器"，不说明格式不对；别只看它下结论）。
+- **世界的朝向由 `worldSemantics` 决定**：World Labs 的坐标系 **+Y 朝下**，照原样画房间是倒的
+  （症状：家具被一片巨大的地面/天花盖住）。three 侧一直翻（`widgets/Viewport/worldTransform.ts`：
+  `flipY` ⇒ 绕 X 转 π、`metricScaleFactor`、`groundPlaneOffset`），PC 侧也补上了同一份规则
+  （`playcanvas/worldPlacement.ts`：语义 ∘ 用户摆放，合成用 three 当真值钉住）。
+  真实项目的值不是默认的 1/0（实测 `p-muo3u17c` 是 scale **1.8169**、offset **1.0636**），
+  所以**必须读字段、不能写死**。
 - **splat 拾取的判据要写成负对照**："开着 `enableIds` 能选中、关掉选不中"（同一投影点）。
   只测"能选中"的话，把 `enableIds` 写成恒真也能过。实测两个真实资产：默认 **false**、
   开着命中 `kind:"gsplat"`、关掉 `null`。

@@ -1,5 +1,6 @@
 import type { SceneAssetSpec, SceneAssetKind } from "./assetScene";
 import type { Placement } from "./selectionTransform";
+import type { WorldSemanticsLike } from "./worldPlacement";
 
 /**
  * `ViewportProps` → 场景规格的**纯解析**：视口每次渲染都要调它，所以它必须没有副作用、
@@ -22,6 +23,8 @@ export interface ViewportAssetLike {
   kind: string;
   modelPath: string | null;
   spzPath: string | null;
+  /** 世界的坐标系契约（+Y 朝下那套）。只有 `kind:"world"` 会有；缺省时不加任何变换。 */
+  worldSemantics?: WorldSemanticsLike | null;
 }
 
 export type SkipReason = "other-world" | "no-product" | "no-placement";
@@ -96,6 +99,8 @@ export function viewportSceneSpecs(options: SceneSpecsOptions): SceneSpecsResult
         kind,
         url: withRevision(options.urlFor?.(rawUrl) ?? rawUrl, options.revisionFor?.(asset) ?? null),
         placement: options.transforms?.[asset.id] ?? IDENTITY,
+        // 世界的**语义变换**（+Y 朝下 ⇒ 绕 X 转 π）由实体装配层读它合成，见 `worldPlacement.ts`
+        worldSemantics: asset.worldSemantics ?? null,
       });
       continue;
     }
