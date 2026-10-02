@@ -27,11 +27,14 @@ import type { AssetMaterial, AssetTransform, LibraryAsset } from "../../shared/l
 import { libraryUrl, selectProjectSkybox } from "../../shared/lib/libraryApi";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
 import type { CameraTarget } from "./CameraRig";
+import { CloseupInspectionRig } from "./CloseupInspectionRig";
 import { FirstPersonRig } from "./FirstPersonRig";
+import { focusPoseFor, type FocusPose } from "./focusPose";
 import { ModelMesh } from "./ModelMesh";
 import { PlayCanvasViewport } from "./PlayCanvasViewport";
 import { LAYOUTS, gridTemplateFor, type CameraKind, type LayoutMode, type Projection } from "./paneLayouts";
 import { PaneCamera } from "./PaneCamera";
+import type { PaneControls } from "./paneControls";
 import { computeSceneLayout, type AssetPlacement } from "./scenePlacement";
 import { SceneInspectionCapturer } from "./SceneInspectionCapturer";
 import type { InspectionRequest } from "../../shared/lib/inspection";
@@ -90,11 +93,12 @@ export interface ViewportProps {
   /** 拖入本地模型文件（一批 File，可能含 .mtl/贴图附属文件） */
   onImportModel?: (files: File[]) => void;
   /**
-   * 整场景检查请求（agent 的 `inspect` 工具，target=scene）：按请求里的**一个机位**
-   * 拍一张整个场景的检查图。为 null 时不拍、也不挂截图器。
+   * 主视口检查请求（agent 的 `inspect` 工具）：`target="scene"` 按请求里的**一个机位**
+   * 拍一张整个场景的检查图；`target="closeup"` 把相机**真的飞到**那个资产旁边拍一张、
+   * 再飞回出发机位。为 null 时不拍、也不挂截图器（`target="asset"` 走预览小窗，不经过这里）。
    */
   inspection?: InspectionRequest | null;
-  /** 场景检查图完成（pngBase64 不含 data: 前缀）；失败时 base64 为 null */
+  /** 主视口检查图完成（pngBase64 不含 data: 前缀）；失败时 base64 为 null */
   onInspectionCaptured?: (id: string, pngBase64: string | null) => void;
 }
 
@@ -103,8 +107,6 @@ type ViewMode = "orbit" | "firstPerson";
 /** Blender 式默认机位：斜上方俯视场景原点 */
 const ORBIT_CAMERA = { position: [5, 4.5, 5] as [number, number, number], fov: 45 };
 const DEFAULT_LOOK_AT: [number, number, number] = [0, 0, 0];
-/** 聚焦某个对象时，相机相对该对象网格坐标的固定偏移 */
-const FOCUS_CAMERA_OFFSET: [number, number, number] = [3, 2, 3];
 
 /** 窗格默认投影：透视机位默认透视，其余轴向预设机位默认正交——用户可随时切换，与 kind 解耦 */
 function defaultProjectionFor(camera: CameraKind): Projection {
@@ -463,16 +465,7 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
   const focusedPos = isFocusable ? layout.get(focusedId!)?.position : undefined;
 
   const cameraTarget = useMemo<CameraTarget>(() => {
-    if (focusedPos) {
-      return {
-        camPos: [
-          focusedPos[0] + FOCUS_CAMERA_OFFSET[0],
-          focusedPos[1] + FOCUS_CAMERA_OFFSET[1],
-          focusedPos[2] + FOCUS_CAMERA_OFFSET[2],
-        ],
-        lookAt: focusedPos,
-      };
-    }
+    if (focusedPos) return focusPoseFor(focusedPos);
     return { camPos: ORBIT_CAMERA.position, lookAt: DEFAULT_LOOK_AT };
   }, [focusedPos]);
   /*
@@ -490,6 +483,25 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
   const hasContent = worldAsset != null || placedAssets.length > 0;
   const panes = LAYOUTS[paneLayout];
   const [objects] = useState(() => new Map<string, THREE.Object3D>());
+  /*
+    贴近检查（agent 的 `inspect`，target="closeup"）：相机真的飞到模型旁边 → 拍一张 → 飞回出发机位。
+    机位与**双击模型列表**共用同一个算式（`focusPoseFor`：摆放位置 + 固定偏移 [3,2,3]），
+    所以"agent 看到的"就是"你双击看到的"；执行器见 `CloseupInspectionRig`。
+  */
+  const closeupRequest = inspection?.target === "closeup" ? inspection : null;
+  const closeupAsset = closeupRequest
+    ? assets.find((asset) => asset.assetSlug === closeupRequest.assetSlug) ?? null
+    : null;
+  const closeupPos = closeupAsset ? layout.get(closeupAsset.id)?.position : undefined;
+  const closeupPose = useMemo(() => (closeupPos ? focusPoseFor(closeupPos) : null), [closeupPos]);
+  /*
+    机位经 ref 交给飞行器：飞行途中改了摆放（或场景刷新换了坐标数组的引用）不该让这一趟改瞄。
+    同步用 layout effect，保证起飞那一帧读到的一定是本次请求的机位。
+  */
+  const closeupPoseRef = useRef<FocusPose | null>(null);
+  useLayoutEffect(() => { closeupPoseRef.current = closeupPose; }, [closeupPose]);
+  /** 透视窗格的控制器：贴近检查的写入点（见 PaneCamera 的 controlsOutRef） */
+  const perspControlsRef = useRef<PaneControls | null>(null);
   const [hoveredByLayer, setHoveredByLayer] = useState<Record<number, string>>({});
   const handleHover = useCallback((layer: number, id: string, entered: boolean) => {
     setHoveredByLayer((current) => {
@@ -673,13 +685,32 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
                 focusKey={focusedId ?? "__overview__"}
                 cameraTargetRef={cameraTargetRef}
                 paneRef={paneRefs[pane.id] as RefObject<HTMLDivElement | null>}
+                controlsOutRef={pane.id === "persp" ? perspControlsRef : undefined}
               />
             </WebGPUView>
           ))}
           {firstPerson && <><FirstPersonView /><FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} /></>}
         </ProjectRenderRuntime>
         {onInspectionCaptured && (
-          <SceneInspectionCapturer request={inspection ?? null} onCaptured={onInspectionCaptured} />
+          <>
+            {/*
+              两种检查各有自己的执行者，按 target 分流：整场景检查用北窗外的专用相机按机位拍，
+              贴近检查由 CloseupInspectionRig 真的把相机飞过去再拍（两者都只认自己那一种请求，
+              同一个批次 id 只结算一次）。
+            */}
+            <SceneInspectionCapturer
+              request={inspection?.target === "scene" ? inspection : null}
+              onCaptured={onInspectionCaptured}
+            />
+            <CloseupInspectionRig
+              request={closeupRequest}
+              poseRef={closeupPoseRef}
+              objects={objects}
+              assetId={closeupAsset?.id ?? null}
+              controlsRef={perspControlsRef}
+              onCaptured={onInspectionCaptured}
+            />
+          </>
         )}
       </WebGPUCanvas>
 

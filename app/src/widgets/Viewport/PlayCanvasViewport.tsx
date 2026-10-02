@@ -744,6 +744,12 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     **同一个请求 id 只拍一次**（否则每次渲染都重拍，agent 会收到一堆重复图）；失败回 `null`，
     别让 agent 干等（`captureInspectionSheet` 自己抛错，这里接住）。
     取景：`asset` 用选中资产的世界包围盒；`scene` 用所有已挂资产的并集（退化成原点 + 最小半径）。
+
+    ⚠️ **`target="closeup"`（贴近检查）在 PlayCanvas 视口上还没接**：它要的是"相机真的飞过去、
+    从那个机位拍"，而这一层的相机聚焦/飞行（`paneInput.focus` + `rigFlight`）只存在于探针里，
+    产品组件根本没有接线（连双击聚焦都没有）。这里如实回 `null` 让 agent 收到失败，
+    **不能**退化成四视角——那是"单独看模型"，拿它回答"摆得对不对"会得出错误结论。
+    缺口记在 PLAYCANVAS_MIGRATION.md 的未完成清单里。
   */
   useLayoutEffect(() => {
     const request = props.inspection;
@@ -752,6 +758,11 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     if (inspectionDoneRef.current === request.id) return;
     inspectionDoneRef.current = request.id;
     let cancelled = false;
+    if (request.target === "closeup") {
+      console.warn("[pcViewport] 贴近检查尚未在 PlayCanvas 视口上实现，如实回传失败");
+      props.onInspectionCaptured(request.id, null);
+      return;
+    }
     void (async () => {
       try {
         const assets = assetsRef.current;

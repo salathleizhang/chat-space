@@ -497,19 +497,26 @@ test("后台生成与自检恢复点随会话保存，恢复时不显示执行�
   const pending: ChatMessage[] = [
     { id: "task", role: "assistant", content: "生成中", pendingTaskIds: ["job-1"], agentStatus: { label: "Generating", status: "running" } },
     { id: "inspection", role: "assistant", content: "检查中", pendingInspectionAssetSlug: "dog", agentStatus: { label: "Inspecting", status: "running" } },
+    { id: "scene", role: "assistant", content: "看场景", pendingSceneInspectionView: "top", agentStatus: { label: "Inspecting", status: "running" } },
+    { id: "closeup", role: "assistant", content: "凑近看", pendingCloseupAssetSlug: "sofa", agentStatus: { label: "Inspecting", status: "running" } },
   ];
   fetchLatestSession.mockImplementation(async () => session("resume", pending));
   const p = parent();
   const h = await p.mount("resume");
   await flush();
+  // 三种检查都是"在等一张截图"：恢复后都该显示成还在跑，而不是执行中断
   expect(p.messages.every((message) => message.agentStatus?.status === "running")).toBe(true);
   expect(p.messages[0]?.pendingTaskIds).toEqual(["job-1"]);
   expect(p.messages[1]?.pendingInspectionAssetSlug).toBe("dog");
+  expect(p.messages[3]?.pendingCloseupAssetSlug).toBe("sofa");
   await h.rerender("resume");
   await flush(PAST_DEBOUNCE);
   expect(saveSession.mock.calls.at(-1)?.[3]).toEqual(expect.arrayContaining([
     expect.objectContaining({ pendingTaskIds: ["job-1"] }),
     expect.objectContaining({ pendingInspectionAssetSlug: "dog" }),
+    // 整场景检查的机位与贴近检查的资产都必须round-trip：漏一个，刷新后那次检查就再也续不上
+    expect.objectContaining({ pendingSceneInspectionView: "top" }),
+    expect.objectContaining({ pendingCloseupAssetSlug: "sofa" }),
   ]));
   await h.unmount();
 });

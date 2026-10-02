@@ -68,6 +68,11 @@ export interface ChatMessage {
    * 与 pendingInspectionAssetSlug 是两条并列的通道：一个查模型，一个查场景。
    */
   pendingSceneInspectionView?: string;
+  /**
+   * 等待主视口**贴近检查**的资产 slug；恢复后把相机再飞过去拍那一张。
+   * 与上一条同样是"主视口执行"，但检查对象是一个摆好的资产、机位由摆放决定。
+   */
+  pendingCloseupAssetSlug?: string;
   /** 消息携带的库内图片（用户附件或工具生成图），逻辑路径 */
   images?: string[];
   /**

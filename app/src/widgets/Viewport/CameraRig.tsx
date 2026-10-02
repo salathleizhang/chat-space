@@ -1,16 +1,16 @@
 import type { OrbitControls } from "@react-three/drei/core/OrbitControls";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, type ComponentRef, type RefObject } from "react";
-import * as THREE from "three";
+import {
+  dampToward,
+  hasArrived,
+  FLIGHT_DAMP_LAMBDA,
+} from "../../shared/lib/cameraFlight";
 
 export interface CameraTarget {
   camPos: [number, number, number];
   lookAt: [number, number, number];
 }
-
-/** 相机飞行缓动系数（越大越快收敛），越小的距离阈值判定为"到达" */
-const DAMP_LAMBDA = 4;
-const ARRIVE_DISTANCE_SQ = 0.0004;
 
 /**
  * 相机飞行：focusKey 变化时（不含首次挂载）启动缓动，
@@ -46,18 +46,18 @@ export function CameraRig({
     if (!controls) return;
     const { camPos, lookAt } = targetRef.current;
 
-    camera.position.x = THREE.MathUtils.damp(camera.position.x, camPos[0], DAMP_LAMBDA, delta);
-    camera.position.y = THREE.MathUtils.damp(camera.position.y, camPos[1], DAMP_LAMBDA, delta);
-    camera.position.z = THREE.MathUtils.damp(camera.position.z, camPos[2], DAMP_LAMBDA, delta);
-    controls.target.x = THREE.MathUtils.damp(controls.target.x, lookAt[0], DAMP_LAMBDA, delta);
-    controls.target.y = THREE.MathUtils.damp(controls.target.y, lookAt[1], DAMP_LAMBDA, delta);
-    controls.target.z = THREE.MathUtils.damp(controls.target.z, lookAt[2], DAMP_LAMBDA, delta);
+    camera.position.x = dampToward(camera.position.x, camPos[0], FLIGHT_DAMP_LAMBDA, delta);
+    camera.position.y = dampToward(camera.position.y, camPos[1], FLIGHT_DAMP_LAMBDA, delta);
+    camera.position.z = dampToward(camera.position.z, camPos[2], FLIGHT_DAMP_LAMBDA, delta);
+    controls.target.x = dampToward(controls.target.x, lookAt[0], FLIGHT_DAMP_LAMBDA, delta);
+    controls.target.y = dampToward(controls.target.y, lookAt[1], FLIGHT_DAMP_LAMBDA, delta);
+    controls.target.z = dampToward(controls.target.z, lookAt[2], FLIGHT_DAMP_LAMBDA, delta);
     controls.update();
 
     const dx = camera.position.x - camPos[0];
     const dy = camera.position.y - camPos[1];
     const dz = camera.position.z - camPos[2];
-    if (dx * dx + dy * dy + dz * dz < ARRIVE_DISTANCE_SQ) animating.current = false;
+    if (hasArrived(dx, dy, dz)) animating.current = false;
     else state.invalidate();
   });
 

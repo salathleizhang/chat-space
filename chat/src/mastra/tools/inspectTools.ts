@@ -14,9 +14,12 @@ import { requireCurrentProject } from "./requestContext";
  * 下一轮上下文末尾（OpenAI 兼容协议的 tool 消息装不了图，这是唯一通道）。
  * 它不属于会话历史，也不在界面上冒充用户发言。
  *
- * 两种目标：
+ * 三种目标：
  *  - `asset`：一个资产自己的模型，默认拍 ISO/前/右/顶四视角（app 侧开预览小窗）；
- *  - `scene`：当前项目的整个场景，按**一个机位**拍一张（app 侧用主视口）。
+ *  - `scene`：当前项目的整个场景，按**一个机位**拍一张（app 侧用主视口）；
+ *  - `closeup`：某个资产**在场景里**的样子（app 侧把相机真的飞到它旁边再拍一张，之后飞回原机位）。
+ *    `asset` 回答"这个模型本身长什么样"，`closeup` 回答"它摆在这儿合不合适"——要判贴合、
+ *    悬空、穿模、与邻居的间距时用后者，它带着环境上下文。
  *
  * **什么时候调用**（这条是产品口径，提示词里同步写着）：只在用户明确要求检查、
  * 或用户对已经产出的东西提出疑问时调用；单模型生成完成不检查。唯一自动的一次是
@@ -94,13 +97,15 @@ export async function saveSceneInspectionSheet(
  */
 export const InspectParamsSchema = z.object({
   target: z
-    .enum(["asset", "scene"])
-    .describe("asset = 检查一个资产自己的模型；scene = 检查当前项目的整个场景"),
-  /** target=asset 时必填 */
+    .enum(["asset", "scene", "closeup"])
+    .describe(
+      "asset = 检查一个资产自己的模型（单独看外观）；scene = 检查当前项目的整个场景；closeup = 凑近看某个资产摆在场景里的样子",
+    ),
+  /** target=asset / closeup 时必填 */
   assetSlug: SlugSchema.optional(),
   /**
    * 要拍的视角 id。asset 省略 = ISO/前/右/顶四视角，也可以只要一个面（例如只看底面）；
-   * scene 只取第一个作为机位，省略 = iso（斜 45° 俯瞰）。
+   * scene 只取第一个作为机位，省略 = iso（斜 45° 俯瞰）。closeup 不用这一项。
    */
   views: z.array(z.enum(INSPECTION_VIEW_IDS)).min(1).optional(),
 });
@@ -110,14 +115,32 @@ export type InspectParams = z.infer<typeof InspectParamsSchema>;
 const SCENE_VIEW_HINT =
   "Camera views you can ask for: iso (3/4 overview, default), front, right, top, left, back, bottom. If the image you get back is unusable (scene out of frame, blocked, too small to judge), call inspect again with another view — at most 3 camera changes — then report what you can and cannot see.";
 
+/** 贴近检查没有可选机位：飞到哪里、从哪个角度拍都由摆放决定，重复调用只会得到同一张图。 */
+const CLOSEUP_HINT =
+  "The camera flies to the object and shoots from there, so calling inspect with target=\"closeup\" again gives the same framing — do not retry hoping for a different angle. If the object is not visible in the shot (still loading, hidden behind something else, or the camera is inside geometry), say so, or use target=\"asset\" to look at the model on its own.";
+
 export const inspectTool = createTool({
   id: "inspect",
   description:
-    "让工作台渲染一张检查图并交回给你（免费）。“检查这只狗/这个模型”用 target=\"asset\" + assetSlug（默认四视角 ISO/前/右/顶，可用 views 只要某几个面，例如只剩底面）；“检查整个场景/场景摆得对不对”用 target=\"scene\"（按 views[0] 指定的机位拍整张场景图）。本轮不会返回图片：收到 [Self-check]/[Scene check] 后逐视角或按机位对照用户的要求检查（缺件、比例失调、部件断开、贴图错位、摆放不合理都算不合格）。只在用户明确要求检查、或用户对已产出的模型/场景提出疑问时调用；单模型生成完成不要自检。",
+    "让工作台渲染一张检查图并交回给你（免费）。“检查这只狗/这个模型”用 target=\"asset\" + assetSlug（默认四视角 ISO/前/右/顶，可用 views 只要某几个面，例如只剩底面）；“检查整个场景/场景摆得对不对”用 target=\"scene\"（按 views[0] 指定的机位拍整张场景图）；“凑近看看它摆在这儿合不合适”（贴合、悬空、穿模、与邻居的间距）用 target=\"closeup\" + assetSlug——相机会真的飞到那个模型旁边拍一张，带着周围环境，拍完飞回原机位。本轮不会返回图片：收到 [Self-check]/[Scene check]/[Close-up check] 后逐视角或按机位对照用户的要求检查（缺件、比例失调、部件断开、贴图错位、摆放不合理都算不合格）。只在用户明确要求检查、或用户对已产出的模型/场景提出疑问时调用；单模型生成完成不要自检。",
   inputSchema: InspectParamsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
     const storage = getAssetStorage();
+    if (input.target === "closeup") {
+      if (!input.assetSlug) {
+        throw new ChatServiceError("target=closeup 时必须给 assetSlug", 400, "missing_asset_slug");
+      }
+      // 与 asset 检查同一道前置：没有可渲染模型时立刻失败，避免 app 侧空转
+      const modelPath = await latestAssetModel(storage, projectSlug, input.assetSlug);
+      return {
+        requested: true,
+        target: "closeup" as const,
+        assetSlug: input.assetSlug,
+        modelPath,
+        note: `已请求工作台把相机飞到 "${input.assetSlug}" 旁边拍一张贴近检查图（拍完相机飞回原机位）。${CLOSEUP_HINT}`,
+      };
+    }
     if (input.target === "asset") {
       if (!input.assetSlug) {
         throw new ChatServiceError("target=asset 时必须给 assetSlug", 400, "missing_asset_slug");

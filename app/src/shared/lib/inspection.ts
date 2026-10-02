@@ -15,11 +15,14 @@ import type { InspectionViewId } from "./inspectionSheet";
 /**
  * 检查谁：
  * - `asset`：一个资产自己的模型，执行者是预览小窗（拍几个面，默认四视角）；
- * - `scene`：当前项目的整个场景，执行者是主视口（按一个机位拍一张）。
+ * - `scene`：当前项目的整个场景，执行者是主视口（按一个机位拍一张）；
+ * - `closeup`：某个资产**在场景里**的样子，执行者是主视口——相机真的飞到它旁边（与双击
+ *   模型列表同一段缓动、同一个固定偏移），到位后从那个机位拍一张，再飞回出发机位。
+ *   `asset` 是"这个模型本身长什么样"，`closeup` 是"它摆在这儿合不合适"，两者不可互相替代。
  *
- * 两者共用"截图 → 落盘 → resume 交回模型"的回传通道，只是执行者与版式不同。
+ * 三者共用"截图 → 落盘 → resume 交回模型"的回传通道，只是执行者与版式不同。
  */
-export type InspectionTarget = "asset" | "scene";
+export type InspectionTarget = "asset" | "scene" | "closeup";
 
 export interface InspectionRequest {
   /** 截图批次 id（来自 agent 工具调用的 toolCallId） */
@@ -28,6 +31,9 @@ export interface InspectionRequest {
   /**
    * 要拍的视角 id（见 `inspectionSheet.ts` 的 `INSPECTION_VIEW_IDS`）。
    * `asset` 省略 = 默认四视角 ISO/前/右/顶；`scene` 只取第一个作为机位，省略 = ISO。
+   * `closeup` 不用它：机位由被检查资产的摆放位置决定（没有"换个方向"这一说）。
    */
   views?: InspectionViewId[];
+  /** `closeup` 必填：要贴近看哪个资产（资产目录名 slug）。 */
+  assetSlug?: string;
 }

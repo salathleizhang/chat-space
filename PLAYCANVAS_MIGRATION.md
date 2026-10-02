@@ -1285,6 +1285,13 @@ HUD/gizmo/线框层；以前"每格都看得见坐标轴"是因为部件在 Worl
    而 `Bounds3` 是 `{min, max}` 元组、取中心/尺寸要用 `boundsCenter`/`boundsSize`——两种形状混读必然编译不过
    （这次是 TypeScript 拦住的，不是运行时）。
 
+   🔴 **`target="closeup"`（贴近检查）在 PC 侧没接**（2026-10-02）：这一种检查要的是"相机真的飞到
+   那个模型旁边、从那个机位拍一张、再飞回出发机位"，而 PC 视口**连相机聚焦/飞行都没接进产品组件**
+   （`paneInput.focus` + `rigFlight` 只在探针里跑，模型列表双击在这一层也没有聚焦）。所以
+   `PlayCanvasViewport` 对它**如实回 `null`**（`console.warn` 一条），让 agent 收到失败——
+   **不能**退化成四视角：那是"单独看模型"，拿它回答"摆得对不对"会得出错误结论。three 侧
+   （默认路径）已实现，见 `CloseupInspectionRig.tsx`。要补齐需要先在这一层接上聚焦与飞行。
+
 16. ✅ **增量 11（材质覆盖 / `props.materials`）**：`materialOverride.ts`（**6 条单测** + 引擎侧贴图加载器）
    把右侧栏改过的贴图槽位写进模型材质。两处**语义不同、同名互喂必然画错**的槽位（引擎已核实）：
    - `roughnessMap` → **`glossMap` + `glossInvert = true`**：引擎的 gloss 是光滑度（roughness 的补），

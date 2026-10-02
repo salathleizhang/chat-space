@@ -51,9 +51,18 @@ function inspectionBatchId(toolCallId?: string) {
   );
 }
 
-/** 状态行文案：单模型与整场景是两件事，别都说成"检查模型"。 */
+/** 状态行文案：三种检查是三件事，别都说成"检查模型"。 */
 function inspectionStatusLabel(target: InspectionTarget) {
-  return target === "scene" ? "Inspecting the scene" : "Inspecting generated model";
+  if (target === "scene") return "Inspecting the scene";
+  if (target === "closeup") return "Inspecting up close";
+  return "Inspecting generated model";
+}
+
+/** 工具入参里的 target 是 unknown：只认名单里的值，别把任意字符串当成一种检查。 */
+function inspectionTargetFrom(args: Record<string, unknown> | undefined): InspectionTarget | null {
+  const value = args?.target;
+  if (value === "asset" || value === "scene" || value === "closeup") return value;
+  return null;
 }
 
 /** Agent 凭证与模型端点均由本机服务决定；网页只发送显示偏好。 */
@@ -226,6 +235,15 @@ function failedToolActivityMessage(name: string) {
   return `Failed: ${running.charAt(0).toLowerCase()}${running.slice(1)}`;
 }
 
+/**
+ * 检查工具**完成**时的活动文案：取发起时那一次检查的目标，而不是工具名的默认文案——
+ * 否则同一行会先写 "Inspecting up close"、再被改成 "Completed: inspecting asset"。
+ */
+function completedInspectionLabel(target: InspectionTarget) {
+  const running = inspectionStatusLabel(target);
+  return `Completed: ${running.charAt(0).toLowerCase()}${running.slice(1)}`;
+}
+
 interface UseAgentChatOptions {
   projectSlug: string;
   sessionId?: string;
@@ -303,8 +321,8 @@ export function useAgentChat({
     inspection: InspectionRequest | null;
   } | null>(null);
   /**
-   * 整场景检查请求（inspect 工具，target=scene）：不开小窗，由主视口按机位截图。
-   * 与 preview.inspection 是两条并列的通道——检查对象不同、执行者不同。
+   * 主视口检查请求（inspect 工具）：整场景按机位拍一张，或贴近某个资产拍一张。
+   * 不开小窗；与 preview.inspection（单模型四视角）是两条并列的通道。
    */
   const [sceneInspection, setSceneInspection] = useState<InspectionRequest | null>(null);
   /** 已上传待交回 Agent 的检查截图：等当前 SSE 流结束后自动续跑下一轮 */
@@ -672,7 +690,8 @@ export function useAgentChat({
 
   /**
    * agent 检查请求（inspect 工具）：单模型走预览小窗的四视角截图，
-   * 整场景走主视口的一个机位截图。两条通道共用回传（截图 → 落盘 → resume）。
+   * 整场景与贴近检查走主视口（前者按机位拍，后者把相机真的飞过去再拍）。
+   * 三条通道共用回传（截图 → 落盘 → resume）。
    */
   const failInspection = (message: string) => {
     const owner = inspectionWaitRef.current;
@@ -683,6 +702,7 @@ export function useAgentChat({
       ...current,
       pendingInspectionAssetSlug: undefined,
       pendingSceneInspectionView: undefined,
+      pendingCloseupAssetSlug: undefined,
       agentStatus: { label: "Inspection failed", status: "failed" },
     }));
     setActivity({ state: "attention", message });
@@ -703,6 +723,7 @@ export function useAgentChat({
       ...message,
       pendingInspectionAssetSlug: assetSlug,
       pendingSceneInspectionView: undefined,
+      pendingCloseupAssetSlug: undefined,
       agentStatus: { label: "Inspecting generated model", status: "running" },
     }));
     syncWaiting();
@@ -751,6 +772,7 @@ export function useAgentChat({
       ...message,
       pendingInspectionAssetSlug: undefined,
       pendingSceneInspectionView: picked,
+      pendingCloseupAssetSlug: undefined,
       agentStatus: { label: "Inspecting the scene", status: "running" },
     }));
     syncWaiting();
@@ -759,6 +781,37 @@ export function useAgentChat({
       id: inspectionBatchId(toolCallId),
       target: "scene",
       views: [picked],
+    });
+  };
+
+  /**
+   * 贴近检查：相机**真的**飞到模型旁边（与双击模型列表同一段缓动、同一个固定偏移），
+   * 到位后从那个机位拍一张，再飞回出发机位。执行者是主视口——要的就是"它在场景里的样子"。
+   *
+   * 与整场景检查共用 `sceneInspection` 这条通道：两者都由主视口执行，靠 `target` 分流
+   * （各有自己的执行器，同一个批次 id 只结算一次）。机位由 app 侧按摆放位置算，agent 不用给。
+   */
+  const startCloseupInspection = (
+    assetSlug: string,
+    toolCallId?: string,
+    ownerId = activeAssistantIdRef.current,
+  ) => {
+    if (!projectSlug || !ownerId) return;
+    inspectionWaitRef.current = { ownerId, target: "closeup", assetSlug };
+    registeredInspectionsRef.current.add(ownerId);
+    updateMessage(ownerId, (message) => ({
+      ...message,
+      pendingInspectionAssetSlug: undefined,
+      pendingSceneInspectionView: undefined,
+      pendingCloseupAssetSlug: assetSlug,
+      agentStatus: { label: "Inspecting up close", status: "running" },
+    }));
+    syncWaiting();
+    setActivity({ state: "working", message: "Inspecting up close" });
+    setSceneInspection({
+      id: inspectionBatchId(toolCallId),
+      target: "closeup",
+      assetSlug,
     });
   };
 
@@ -799,7 +852,10 @@ export function useAgentChat({
     [preview, pushAssistant],
   );
 
-  /** 整场景检查图完成：与单模型同一条回传路径，只是落盘在项目级目录。 */
+  /**
+   * 主视口检查图完成：整场景与贴近检查同一条回传路径（都落盘在项目级目录，
+   * 因为贴近图也带着整个场景、不属于某个资产单独留档）。
+   */
   const handleSceneInspectionCaptured = useCallback(
     (id: string, pngBase64: string | null) => {
       const current = sceneInspection;
@@ -808,17 +864,20 @@ export function useAgentChat({
       setSceneInspection(null);
       if (!current) return;
       if (!pngBase64) {
-        failInspection("Inspection screenshot failed: the scene did not render in the viewport.");
+        failInspection(
+          current.target === "closeup"
+            ? "Inspection screenshot failed: the model did not render in the viewport."
+            : "Inspection screenshot failed: the scene did not render in the viewport.",
+        );
         return;
       }
       void uploadSceneInspection(projectSlug, id, pngBase64)
         .then((path) => {
           if (!activeRef.current || epoch !== generationEpochRef.current) return;
-          pendingInspectionRef.current = {
-            target: "scene",
-            view: current.views?.[0] ?? DEFAULT_SCENE_VIEW,
-            path,
-          };
+          pendingInspectionRef.current =
+            current.target === "closeup"
+              ? { target: "closeup", assetSlug: current.assetSlug, path }
+              : { target: "scene", view: current.views?.[0] ?? DEFAULT_SCENE_VIEW, path };
           if (!streamingRef.current) flushPendingInspection();
         })
         .catch((err) => {
@@ -853,9 +912,11 @@ export function useAgentChat({
       ...message,
       pendingInspectionAssetSlug: undefined,
       pendingSceneInspectionView: undefined,
+      pendingCloseupAssetSlug: undefined,
       agentStatus: { label: "Inspection images ready", status: "completed" },
     }));
     const sceneCheck = pending.target === "scene";
+    const closeupCheck = pending.target === "closeup";
     const view = pending.view ?? DEFAULT_SCENE_VIEW;
     const views = resolveInspectionViews(pending.views);
     startStream(toOutgoingHistory(messagesRef.current), {
@@ -867,14 +928,22 @@ export function useAgentChat({
               "Check this image against the user's intent for the scene as a whole.",
               `If this camera is unusable (scene out of frame, blocked, or too small to judge), call inspect again with target="scene" and one of iso/front/right/top/left/back/bottom as the new view — at most 3 camera changes — then report what you can and cannot see.`,
             ].join(" ")
-          : `[Self-check] ${pending.assetSlug ?? ""}: ${views.length} view${views.length === 1 ? "" : "s"} (2×2 sheet, reading order: ${views.map((item) => item.label).join(" / ")}). Check each view.`,
+          : closeupCheck
+            ? [
+                `[Close-up check] ${pending.assetSlug ?? ""}, shot from a camera that flew to the object in the scene (object in place, with its surroundings; the editor grid is excluded).`,
+                "Judge whether it sits correctly: contact with the ground or the surface under it, intersections with neighbours, scale against them, and how much clearance it has.",
+                "The camera has already flown back, and this framing is the same one the user gets by double-clicking the object — calling inspect again gives the same shot, so do not retry for a different angle. If the object is not visible (still loading, hidden behind something, or too dark), say so, or use target=\"asset\" to look at the model on its own.",
+              ].join(" ")
+            : `[Self-check] ${pending.assetSlug ?? ""}: ${views.length} view${views.length === 1 ? "" : "s"} (2×2 sheet, reading order: ${views.map((item) => item.label).join(" / ")}). Check each view.`,
         images: [pending.path],
       },
       autoTurn: {
         kind: "inspection",
         label: sceneCheck
           ? `Scene check · whole scene · ${INSPECTION_VIEW_LIBRARY[view].label}`
-          : `Self-check · ${pending.assetName ?? pending.assetSlug ?? ""} · ${views.map((item) => item.label).join(" / ")}`,
+          : closeupCheck
+            ? `Close-up check · ${pending.assetName ?? pending.assetSlug ?? ""}`
+            : `Self-check · ${pending.assetName ?? pending.assetSlug ?? ""} · ${views.map((item) => item.label).join(" / ")}`,
         images: [pending.path],
       },
     });
@@ -1227,9 +1296,10 @@ export function useAgentChat({
           if (IMAGE_OUTPUT_TOOLS.has(name)) {
             pendingImageToolsRef.current.add(toolCallId ?? name);
           }
-          // inspect 的两种目标在状态行里是两件事：检查一个模型 vs 检查整个场景。
-          const label = name === "inspect" && args?.target === "scene"
-            ? inspectionStatusLabel("scene")
+          // inspect 的三种目标在状态行里是三件事：单独看模型 / 凑近看摆放 / 看整个场景。
+          const inspectTarget = name === "inspect" ? inspectionTargetFrom(args) : null;
+          const label = inspectTarget && inspectTarget !== "asset"
+            ? inspectionStatusLabel(inspectTarget)
             : toolActivityMessage(name);
           const activityId = toolCallId ?? `tool-${assistantId}-${++toolSequence}`;
           replying = false;
@@ -1261,6 +1331,9 @@ export function useAgentChat({
               : undefined;
             if (args?.target === "scene") {
               void startSceneInspection(views?.[0], toolCallId);
+            } else if (args?.target === "closeup" && typeof args?.assetSlug === "string") {
+              // 贴近检查不要 views：机位由摆放位置决定，没有"换个方向"这一说
+              startCloseupInspection(args.assetSlug, toolCallId);
             } else if (typeof args?.assetSlug === "string") {
               void startAssetInspection(args.assetSlug, toolCallId, undefined, views);
             }
@@ -1280,6 +1353,10 @@ export function useAgentChat({
           const status: AgentMessageStatus = question
             ? { label: "Waiting for your decision", status: "waiting" }
             : { label: "Thinking", status: "running" };
+          // 这次 inspect 是哪种检查：发起时已经记在等待表里（onTool 同步写入）
+          const completedLabel = name === "inspect" && inspectionWaitRef.current
+            ? completedInspectionLabel(inspectionWaitRef.current.target)
+            : completedToolActivityMessage(name);
           updateMessage(assistantId, (message) => {
             const nextImages = images?.filter(
               (path) => !message.images?.includes(path),
@@ -1298,7 +1375,7 @@ export function useAgentChat({
                 item.status === "running"
                   ? {
                       ...item,
-                      label: completedToolActivityMessage(name),
+                      label: completedLabel,
                       status: "completed" as const,
                     }
                   : item,
@@ -1630,6 +1707,11 @@ export function useAgentChat({
           undefined,
           message.id,
         );
+      } else if (
+        message.pendingCloseupAssetSlug &&
+        !registeredInspectionsRef.current.has(message.id)
+      ) {
+        startCloseupInspection(message.pendingCloseupAssetSlug, undefined, message.id);
       }
     }
   });

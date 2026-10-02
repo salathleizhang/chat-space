@@ -31,7 +31,8 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
     agentStatus:
       message.pendingTaskIds?.length ||
       message.pendingInspectionAssetSlug ||
-      message.pendingSceneInspectionView
+      message.pendingSceneInspectionView ||
+      message.pendingCloseupAssetSlug
         ? { label: "Resuming generation", status: "running" as const }
         : message.agentStatus?.status === "running"
         ? { label: "Execution interrupted", status: "failed" as const }
@@ -45,7 +46,7 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
 }
 
 function storedMessages(messages: ChatMessage[]) {
-  return messages.map(({ id, role, content, images, assets, autoTurn, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug, pendingSceneInspectionView, pendingQuestion, questionAnswer, supersededQuestion }) => ({
+  return messages.map(({ id, role, content, images, assets, autoTurn, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug, pendingSceneInspectionView, pendingCloseupAssetSlug, pendingQuestion, questionAnswer, supersededQuestion }) => ({
     id,
     role,
     content,
@@ -57,6 +58,7 @@ function storedMessages(messages: ChatMessage[]) {
     ...(pendingTaskIds?.length ? { pendingTaskIds } : {}),
     ...(pendingInspectionAssetSlug ? { pendingInspectionAssetSlug } : {}),
     ...(pendingSceneInspectionView ? { pendingSceneInspectionView } : {}),
+    ...(pendingCloseupAssetSlug ? { pendingCloseupAssetSlug } : {}),
     ...(pendingQuestion ? { pendingQuestion } : {}),
     ...(questionAnswer ? { questionAnswer } : {}),
     ...(supersededQuestion ? { supersededQuestion: true } : {}),

@@ -93,6 +93,7 @@ describe("inspect 工具入参", () => {
     const schema = InspectParamsSchema;
     expect(schema.safeParse({ target: "asset" }).success).toBe(true);
     expect(schema.safeParse({ target: "scene", views: ["top"] }).success).toBe(true);
+    expect(schema.safeParse({ target: "closeup", assetSlug: "cube" }).success).toBe(true);
     // 未知视角 id 直接拒绝，而不是悄悄退化成默认四视角
     expect(schema.safeParse({ target: "scene", views: ["diagonal"] }).success).toBe(false);
     expect(schema.safeParse({ target: "whatever" }).success).toBe(false);
@@ -121,6 +122,39 @@ describe("inspect 工具", () => {
         requestContext: buildRequestContext({ projectSlug: "inspect-demo" }),
       } as never),
     ).rejects.toThrow(/assetSlug/);
+  });
+
+  test("贴近检查：没给 assetSlug 时同样明确拒绝（不是退化成整场景）", async () => {
+    setAssetStorage(storage);
+    await expect(
+      inspectTool.execute!({ target: "closeup" } as never, {
+        requestContext: buildRequestContext({ projectSlug: "inspect-demo" }),
+      } as never),
+    ).rejects.toThrow(/assetSlug/);
+  });
+
+  test("贴近检查：资产没有可渲染模型时立刻失败，并说明相机要飞过去看的是哪个资产", async () => {
+    setAssetStorage(storage);
+    await expect(
+      inspectTool.execute!({ target: "closeup", assetSlug: "no-model" } as never, {
+        requestContext: buildRequestContext({ projectSlug: "inspect-demo" }),
+      } as never),
+    ).rejects.toThrow(/没有模型文件/);
+  });
+
+  test("贴近检查：有模型时返回 closeup 请求，且提示词不让它重复换角度", async () => {
+    setAssetStorage(storage);
+    await storage.writeBytes("projects/inspect-demo/assets/closeup-cube/1-cube.glb", new Uint8Array([1]));
+    const result = (await inspectTool.execute!(
+      { target: "closeup", assetSlug: "closeup-cube" } as never,
+      { requestContext: buildRequestContext({ projectSlug: "inspect-demo" }) } as never,
+    )) as { requested: boolean; target: string; assetSlug: string; modelPath: string; note: string };
+    expect(result.requested).toBe(true);
+    expect(result.target).toBe("closeup");
+    expect(result.assetSlug).toBe("closeup-cube");
+    expect(result.modelPath).toBe("projects/inspect-demo/assets/closeup-cube/1-cube.glb");
+    // 机位由摆放决定：重复调用只会得到同一张图，必须告诉模型别指望换角度
+    expect(result.note).toContain("same framing");
   });
 });
 

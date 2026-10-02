@@ -14,6 +14,7 @@ import {
 } from "react";
 import * as THREE from "three";
 import { CameraRig, type CameraTarget } from "./CameraRig";
+import type { PaneControls } from "./paneControls";
 import type { CameraKind, Projection } from "./paneLayouts";
 
 type TrackedRectRef = MutableRefObject<DOMRect | null>;
@@ -565,6 +566,11 @@ interface PaneCameraProps {
   focusKey: string;
   cameraTargetRef: RefObject<CameraTarget>;
   paneRef: RefObject<HTMLDivElement | null>;
+  /**
+   * 把本窗格的控制器交给外部（贴近检查要读出发机位、写飞行姿态，见 `CloseupInspectionRig`）。
+   * 只有透视窗格用得到它；不传就什么也不做。
+   */
+  controlsOutRef?: MutableRefObject<PaneControls | null>;
 }
 
 /**
@@ -574,8 +580,23 @@ interface PaneCameraProps {
  * 组件不支持动态改 isPerspectiveCamera），为了不让镜头瞬间跳回默认机位，用 liveState 在
  * 每一帧把当前相机的 position/target/up 记下来，作为切换后新相机的初始值。
  */
-export function PaneCamera({ kind, projection, orbitCamera, focusKey, cameraTargetRef, paneRef }: PaneCameraProps) {
+export function PaneCamera({ kind, projection, orbitCamera, focusKey, cameraTargetRef, paneRef, controlsOutRef }: PaneCameraProps) {
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
+
+  /*
+    交给外部的控制器从**引擎自己的登记表**取：drei 的 OrbitControls 带 `makeDefault` 时会把
+    实例写进所在 store 的 `state.controls`（一个窗格一个 store——`WebGPUView` 的 portal）。
+    不能只读一次 `controlsRef.current`：drei 的实例由 `useMemo([explCamera])` 持有，
+    窗格相机在 `makeDefault` 落地/切换投影时会换一次对象，于是实例被重建、ref 换人，
+    而"只读一次"的那个 effect 不会再跑——外部就会一直拿着绑在旧相机上的控制器。
+    订阅 `state.controls` 则由引擎替我们盯住这次换代。
+  */
+  const paneControls = useThree((state) => state.controls);
+  useEffect(() => {
+    if (!controlsOutRef) return;
+    controlsOutRef.current = (paneControls as unknown as PaneControls | null) ?? null;
+    return () => { controlsOutRef.current = null; };
+  }, [controlsOutRef, paneControls]);
 
   const liveStateRef = useRef<{ position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 } | null>(null);
   if (!liveStateRef.current) {

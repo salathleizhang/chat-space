@@ -1155,6 +1155,75 @@ test("整场景检查：主视口按机位截图，落盘项目级目录后走 [
   }
 });
 
+/**
+ * 贴近检查是与整场景检查并列、但**同一执行者（主视口）**的第三条通道：不开小窗，
+ * 相机真的飞到那个模型旁边拍一张，落盘同样在项目级目录，回到模型眼前的上下文是
+ * [Close-up check]——并且要明说"再调一次得到的是同一张图"，否则模型会以为能换个角度重试。
+ */
+test("贴近检查：主视口把相机飞过去拍，落盘项目级目录后走 [Close-up check] 续跑", async () => {
+  const originalFetch = globalThis.fetch;
+  const posted: string[] = [];
+  globalThis.fetch = mock(async (input: unknown, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      posted.push(String(input));
+      return Response.json({ path: "projects/proj-a/inspections/closeup-1.png" });
+    }
+    return Response.json({
+      project: { slug: "proj-a", name: "Test" },
+      assets: [{ slug: "dog", files: ["0-dog.glb"] }],
+      sources: [],
+    });
+  }) as unknown as typeof fetch;
+  const { h } = await liveHarness();
+  try {
+    await act(async () => h.result.current.send("看看这只狗摆得对不对"));
+    await act(async () =>
+      handlersOf(0).onTool("inspect", "closeup-1", { target: "closeup", assetSlug: "dog" }),
+    );
+    await act(async () => handlersOf(0).onDone());
+    // 贴近检查也不开小窗：等的是主视口飞过去拍的那张图
+    expect(h.result.current.preview).toBe(null);
+    expect(h.result.current.sceneInspection).toMatchObject({
+      id: "closeup-1",
+      target: "closeup",
+      assetSlug: "dog",
+    });
+    // 恢复会话靠这个字段把相机再飞一次（与整场景检查的机位字段并列）
+    expect(h.result.current.messages.at(-1)?.pendingCloseupAssetSlug).toBe("dog");
+
+    await act(async () =>
+      h.result.current.handleSceneInspectionCaptured("closeup-1", "aGVsbG8="),
+    );
+    await flush(20);
+    expect(posted).toEqual(["http://127.0.0.1:3901/api/projects/proj-a/inspection"]);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const resume = streamChat.mock.calls[1]![4] as {
+      resume: { kind: string; text: string; images: string[] };
+    };
+    // 逐项断言而不是 toMatchObject + 不对称匹配器：bun 会把匹配器**写回**被匹配对象，
+    // 之后同一处再读就只剩一个 ExpectStringContaining（这条踩过）。
+    expect(resume.resume.kind).toBe("inspection");
+    expect(resume.resume.images).toEqual(["projects/proj-a/inspections/closeup-1.png"]);
+    expect(resume.resume.text).toContain("[Close-up check]");
+    // 机位由摆放决定：必须写明重复调用是同一张，别让它空转三轮
+    expect(resume.resume.text).toContain("the same shot");
+    expect(h.result.current.messages.some((m) => m.pendingCloseupAssetSlug)).toBe(false);
+    expect(h.result.current.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      autoTurn: {
+        kind: "inspection",
+        label: expect.stringContaining("Close-up check"),
+        images: ["projects/proj-a/inspections/closeup-1.png"],
+      },
+    });
+    await act(async () => handlersOf(1).onDone());
+    expect(h.result.current.streaming).toBe(false);
+  } finally {
+    await h.unmount();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("恢复保存的自检，截图失败时解除等待并明确报错", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = mock(async () => Response.json({
