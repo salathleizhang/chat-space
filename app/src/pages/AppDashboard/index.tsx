@@ -30,6 +30,7 @@ import { useAgentChat } from "./useAgentChat";
 import { useAssetMaterials } from "./useAssetMaterials";
 import { useChatMessages } from "./useChatMessages";
 import { useProjectState } from "./useProjectState";
+import { useReferenceImageSurfacing } from "./useReferenceImageSurfacing";
 import { useSceneHistory } from "./useSceneHistory";
 import { useSceneTransforms } from "./useSceneTransforms";
 import { useSessionPersistence } from "./useSessionPersistence";
@@ -109,6 +110,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
   }, []);
 
   const {
+    loaded: projectLoaded,
     projectName,
     projectError,
     plan,
@@ -149,6 +151,19 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     setSessionPlan,
     startNewSession,
   } = useSessionPersistence(projectSlug, messages, setMessages);
+
+  /*
+    参考图落盘就贴进对话：SSE 那条通道只在工具正常返回时有效，用户中途点停止、
+    或参考图由 SceneJob 后台节点生成时都不会有任何事件到达界面。这里用项目状态里
+    的参考图清单补这条缺口（判据与基线见该 hook 的头注）。
+  */
+  useReferenceImageSurfacing({
+    ready: sessionReady,
+    loaded: projectLoaded,
+    referenceImages,
+    messages,
+    updateMessage,
+  });
 
   /** update-plan 的完整结果随 SSE 返回，直接成为当前会话快照；项目状态另行刷新。 */
   const handlePlanUpdated = useCallback(

@@ -87,6 +87,13 @@ const IMAGE_OUTPUT_TOOLS = new Set([
 ]);
 
 /**
+ * 一轮结束时若有图片生成工具还没回结果（用户点了停止，或流断了），补几次项目状态
+ * 刷新：那几个调用仍在服务端跑，落盘时机从几秒到两分钟不等，所以是递减频率的有限
+ * 几次，而不是一条常驻轮询。0 那一档让同步落盘的图立刻可见。
+ */
+const IMAGE_CATCH_UP_DELAYS_MS = [0, 5_000, 15_000, 45_000, 120_000];
+
+/**
  * 只读查询工具：它们不产生用户可见的动作，也不落任何产物，只把状态交回给模型。
  * 时间线是"这一步做了什么"的记录，查询本身不是一步——展示出来会和它正在等的那个
  * 生成步骤抢同一块地方，读起来像多了一步"checking generation progress"。
@@ -299,6 +306,17 @@ export function useAgentChat({
   const registeredTasksRef = useRef(new Set<string>());
   const registeredInspectionsRef = useRef(new Set<string>());
   const generationEpochRef = useRef(0);
+  /**
+   * 本轮发起、还没拿到结果的图片生成工具（generate-reference-images 等）。
+   *
+   * 用户中途点"停止"时，服务端那几个在途调用**不会跟着停**：它们照旧跑完、把图写进
+   * source/，但那一条 SSE 已经没人接收，图片也就永远进不了对话（2026-10-02 实测：
+   * 16 张参考图全部落盘成功，界面上 16 条活动全是"Stopped"，对话里一张图都没有）。
+   * 这里记着它们，是为了在这一轮结束时主动补几次项目状态刷新，让对账逻辑
+   * （useReferenceImageSurfacing）不用等用户下一次操作才发现新图。
+   */
+  const pendingImageToolsRef = useRef(new Set<string>());
+  const imageCatchUpTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [waiting, setWaiting] = useState(false);
   const hasPendingWork = () => backgroundTasksRef.current.size > 0 ||
     inspectionWaitRef.current !== null || identifyingRef.current;
@@ -345,6 +363,8 @@ export function useAgentChat({
     pendingIdentifyRef.current = null;
     pendingQuestionRef.current = false;
     planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
+    pendingImageToolsRef.current.clear();
+    clearImageCatchUp();
     setWaiting(false);
   }, [sessionId]);
   /**
@@ -367,6 +387,32 @@ export function useAgentChat({
   const activeAssistantIdRef = useRef<string | null>(null);
   /** Promise cleanup 后仍可能兑现；卸载后禁止 continuation 再写 UI 或启动流。 */
   const activeRef = useRef(true);
+
+  /** 取消还没到点的补刷新，避免卸载后继续请求项目状态。 */
+  const clearImageCatchUp = () => {
+    for (const timer of imageCatchUpTimersRef.current) clearTimeout(timer);
+    imageCatchUpTimersRef.current = [];
+  };
+
+  /**
+   * 本轮有图片生成工具没回结果时，补几次项目状态刷新。
+   *
+   * 那几个调用在服务端会继续跑完并把图写进 source/，界面唯一的发现通道是项目状态
+   * 里的参考图清单（见 useReferenceImageSurfacing）；没有这一步的话，图片要等到
+   * 用户下一次发言（onDone 才刷新）才现身。只在本轮结束时排一次，排完就清表。
+   */
+  const scheduleImageCatchUp = () => {
+    if (pendingImageToolsRef.current.size === 0) return;
+    pendingImageToolsRef.current.clear();
+    clearImageCatchUp();
+    for (const delay of IMAGE_CATCH_UP_DELAYS_MS) {
+      imageCatchUpTimersRef.current.push(
+        setTimeout(() => {
+          if (activeRef.current) bumpRefresh();
+        }, delay),
+      );
+    }
+  };
 
   /**
    * 用户主动叫停。一轮生成可能跑几十秒并调用付费工具，看出方向不对时必须能收回——
@@ -421,6 +467,12 @@ export function useAgentChat({
       }));
     }
     setActivity({ state: "idle", message: "Agent stopped; submitted background tasks may still finish" });
+    /*
+      被中止的图片生成会在服务端继续跑完并落盘（这里没有它们的返回事件），所以要主动
+      补几次项目状态刷新，让新参考图自己冒出来——用户点了停止不等于放弃这些图，
+      他下一步的判断（要不要继续 3D）正需要看到它们。
+    */
+    scheduleImageCatchUp();
   };
 
   /**
@@ -449,6 +501,8 @@ export function useAgentChat({
       identifyingRef.current = false;
       pendingQuestionRef.current = false;
       planAutoTurnRef.current = { active: false, progressed: false, stalled: 0 };
+      // 卸载后不再补刷新：那些请求只会写进已经不在的界面
+      clearImageCatchUp();
     };
   }, []);
 
@@ -1015,6 +1069,10 @@ export function useAgentChat({
         onTool: (name, toolCallId, args) => {
           if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
+          // 记在途的图片生成：这一轮结束时若还没回结果，就补几次项目状态刷新（见 scheduleImageCatchUp）
+          if (IMAGE_OUTPUT_TOOLS.has(name)) {
+            pendingImageToolsRef.current.add(toolCallId ?? name);
+          }
           // inspect 的两种目标在状态行里是两件事：检查一个模型 vs 检查整个场景。
           const label = name === "inspect" && args?.target === "scene"
             ? inspectionStatusLabel("scene")
@@ -1104,7 +1162,10 @@ export function useAgentChat({
             // 计划续跑期间改了计划 = 有进展，止损计数清零
             if (planAutoTurnRef.current.active) planAutoTurnRef.current.progressed = true;
           }
-          if (IMAGE_OUTPUT_TOOLS.has(name)) bumpRefresh();
+          if (IMAGE_OUTPUT_TOOLS.has(name)) {
+            pendingImageToolsRef.current.delete(toolCallId ?? name);
+            bumpRefresh();
+          }
           if (TASK_STARTING_TOOLS.has(name) && taskIds && taskIds.length > 0) {
             trackTasks(assistantId, taskIds);
           }
@@ -1112,6 +1173,10 @@ export function useAgentChat({
         onToolError: (name, toolCallId, errorMessage) => {
           if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);
+          // 明确失败的工具不会再产出图片，不必为它补刷新
+          if (IMAGE_OUTPUT_TOOLS.has(name)) {
+            pendingImageToolsRef.current.delete(toolCallId ?? name);
+          }
           turnFailedRef.current = true;
           const failureLabel = failedToolActivityMessage(name);
           const label = errorMessage
@@ -1173,12 +1238,16 @@ export function useAgentChat({
             if (!activeRef.current || controller.signal.aborted) return;
             if (!flushPendingInspection() && !flushPendingIdentify()) flushPendingTaskSettlements();
           }, 0);
+          // 流出错时在途的图片生成同样会跑完落盘，补刷新让它们进对话
+          scheduleImageCatchUp();
         },
         onDone: () => {
           if (!activeRef.current || controller.signal.aborted) return;
           abortRef.current = null;
           activeAssistantIdRef.current = null;
           markStreaming(false);
+          // 正常结束的轮次里图片工具都已回结果（表已清空），这里是给"没回结果"兜底
+          scheduleImageCatchUp();
           /*
             提问后服务端会主动中止本轮，所以流同样是正常结束的——光看"流结束"分不出
             "干完了"和"在等你决定"。pendingQuestionRef 在 onToolResult 里同步置位，

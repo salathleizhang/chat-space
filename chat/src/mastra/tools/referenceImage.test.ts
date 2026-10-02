@@ -597,6 +597,9 @@ describe("runReferenceImageEdit", () => {
 
     expect(result).toMatchObject({ mode: "edit", channel: "volcengine" });
     expect(result.images).toHaveLength(1);
+    // 参考图与 3D 是两次同意：工具结果也要带上"先让用户看图、别接着调 start-3d-batch"
+    expect(result.note).toContain("不要在同一条回复里调用 start-3d-batch");
+    expect(result.note).toContain("贴进对话");
     expect(submittedBodies[0]).toMatchObject({
       model: "doubao-seedream-4-5-251128",
       size: "2K",

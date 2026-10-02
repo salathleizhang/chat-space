@@ -37,6 +37,11 @@ export function useProjectState(
   }
   const revisions = revisionsRef.current.store;
   const [snapshot, setSnapshot] = useState<{
+    /**
+     * 项目状态至少成功读到过一次。调用方要区分"还没有参考图"和"还没扫完"，
+     * 例如 useReferenceImageSurfacing 的基线不能在扫描完成前定下来。
+     */
+    loaded: boolean;
     projectName: string;
     projectError: string | null;
     plan: ProjectPlan | null;
@@ -47,6 +52,7 @@ export function useProjectState(
     sceneTransforms: Record<string, AssetTransform>;
     sceneMaterials: Record<string, AssetMaterial>;
   }>(() => ({
+    loaded: false,
     projectName: "",
     projectError: null,
     plan: null,
@@ -77,6 +83,7 @@ export function useProjectState(
         // 已经不存在的资产不再占修订号；同名重建的资产拿的是新稳定 id，天然是新号。
         revisions.prune(assets.map((asset) => asset.id));
         setSnapshot({
+          loaded: true,
           projectName: state.project.name,
           projectError: null,
           plan: state.plan ?? null,

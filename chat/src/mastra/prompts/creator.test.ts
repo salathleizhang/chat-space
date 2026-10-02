@@ -30,4 +30,22 @@ describe("creator 回复协议", () => {
     // 旧口径不该再出现：工具已改名，提示词里也不该再写"生成完就自检"
     expect(CREATOR_INSTRUCTIONS).not.toContain("inspect-asset");
   });
+
+  /**
+   * 参考图是用户判断"方向对不对"的唯一依据，所以图片生成与 3D 生成必须是两次
+   * 付费同意：不能在图还没出来时就把 3D 的钱一起批了，也不能生成完图就顺手接着
+   * 建模（2026-10 用户反馈的正是这一点）。这条口径很容易被后人合并回"一次同意"，
+   * 所以钉住。
+   */
+  test("参考图与 3D 分两次同意，且不得在同一条回复里接着生成 3D", () => {
+    expect(CREATOR_INSTRUCTIONS).toContain("必须分成两次同意");
+    expect(CREATOR_INSTRUCTIONS).toContain(
+      "不得在同一条回复里生成完参考图就直接调 start-3d-batch",
+    );
+    // 工作台确实会把新参考图贴进对话，提示词要按这个事实说
+    expect(CREATOR_INSTRUCTIONS).toContain("工作台会把新图贴进对话");
+    expect(CREATOR_INSTRUCTIONS).toContain("不要接着调 start-3d-batch");
+    // 旧口径：一次同意覆盖整条计划里的付费步骤
+    expect(CREATOR_INSTRUCTIONS).not.toContain("同一计划的多个付费步骤可以一次同意");
+  });
 });

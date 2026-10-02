@@ -758,6 +758,18 @@ export const GenerateReferenceImagesToolSchema = z.object({
   extraInstructions: z.string().optional(),
 });
 
+/**
+ * 参考图落盘那一刻要重申给模型的下一步约束。
+ *
+ * "参考图与 3D 必须分两次同意"写在系统提示词里，但离决策点太远：模型刚拿到图片
+ * 结果时最容易顺手接着调 start-3d-batch。参考图是用户判断方向对不对的唯一依据，
+ * 所以在这个工具结果里再钉一次，并说明工作台会把图贴进对话——让"先让用户看图"
+ * 这件事在模型的上下文里有具体去处。
+ */
+const REFERENCE_REVIEW_NOTE =
+  "参考图已落盘，工作台会把它们贴进对话。现在结束这一轮：不要在同一条回复里调用 " +
+  "start-3d-batch；下一轮先用 ask-user 把图交给用户确认，用户同意后再启动 3D 生成。";
+
 /** 各模式归一成 images 数组，方便 SSE 统一展示新图片。 */
 export async function runGenerateReferenceImages(
   storage: AssetStorage,
@@ -787,6 +799,7 @@ export async function runGenerateReferenceImages(
       images: [result.image],
       sidecar: result.sidecar,
       channel: result.channel,
+      note: REFERENCE_REVIEW_NOTE,
     };
   }
   if (input.mode === "multiview") {
@@ -803,7 +816,7 @@ export async function runGenerateReferenceImages(
       keys.tripo3dApiKey,
       options,
     );
-    return { mode: "multiview" as const, ...result };
+    return { mode: "multiview" as const, note: REFERENCE_REVIEW_NOTE, ...result };
   }
 
   const result = await runReferenceImageGeneration(
@@ -812,7 +825,7 @@ export async function runGenerateReferenceImages(
     keys,
     options,
   );
-  return { mode: "generate" as const, ...result };
+  return { mode: "generate" as const, note: REFERENCE_REVIEW_NOTE, ...result };
 }
 
 export const generateReferenceImagesTool = createTool({

@@ -59,6 +59,7 @@ function harness() {
   );
   const onPlanUpdated = mock(() => {});
   const pollTasks = mock((..._args: unknown[]) => {});
+  const bumpRefresh = mock(() => {});
   const messagesRef = { current: [] as ChatMessage[] };
   const mount = (slug = "proj-a") =>
     renderHook(
@@ -72,7 +73,7 @@ function harness() {
           appendTo: () => {},
           setActivity: () => {},
           pollTasks: pollTasks as never,
-          bumpRefresh: () => {},
+          bumpRefresh,
           sessionPlan: null,
           onPlanUpdated,
         }),
@@ -80,6 +81,7 @@ function harness() {
     );
   return {
     messagesRef,
+    bumpRefresh,
     pushAssistant,
     pushMessage,
     updateMessage,
@@ -861,6 +863,63 @@ describe("useAgentChat 中止能力", () => {
 
     await h.unmount();
     expect(signal.aborted).toBe(true);
+  });
+
+  /**
+   * 用户点停止不等于放弃那些已经在跑、且**会继续在服务端跑完**的参考图生成
+   * （2026-10-02 实测：16 张参考图全部落盘、界面上全是"Stopped"、对话里一张没有）。
+   * 所以停止之后必须补几次项目状态刷新，让新图自己冒出来；判据是这一轮确实有
+   * 图片生成工具没回结果。
+   */
+  test("中止在途图片生成后补刷新项目状态", async () => {
+    const { mount, bumpRefresh } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("提取这张图里的全部家具"));
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-1"));
+    bumpRefresh.mockClear();
+
+    await act(async () => h.result.current.stopStream());
+    // 0ms 那一档必须立刻到：不能等用户下一次操作才发现新图
+    await flush();
+    expect(bumpRefresh).toHaveBeenCalled();
+
+    await h.unmount();
+  });
+
+  test("停止普通生成不会额外刷新图片", async () => {
+    const { mount, bumpRefresh } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("生成一把椅子"));
+    await act(async () => handlersOf(0).onTool("start-3d-batch", "tool-1"));
+    bumpRefresh.mockClear();
+
+    await act(async () => h.result.current.stopStream());
+    await flush();
+    expect(bumpRefresh).not.toHaveBeenCalled();
+
+    await h.unmount();
+  });
+
+  test("图片结果正常回来之后停止，不再补刷新", async () => {
+    const { mount, bumpRefresh } = harness();
+    const h = await mount();
+
+    await act(async () => h.result.current.send("提取家具"));
+    await act(async () => handlersOf(0).onTool("generate-reference-images", "tool-1"));
+    await act(async () =>
+      handlersOf(0).onToolResult("generate-reference-images", "tool-1", [
+        "projects/proj-a/source/0-sofa-ref.png",
+      ]),
+    );
+    bumpRefresh.mockClear();
+
+    await act(async () => h.result.current.stopStream());
+    await flush();
+    expect(bumpRefresh).not.toHaveBeenCalled();
+
+    await h.unmount();
   });
 
 });
