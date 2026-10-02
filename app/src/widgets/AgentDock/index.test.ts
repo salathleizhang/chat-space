@@ -648,11 +648,7 @@ describe("AgentDock ask-user 提问卡片", () => {
         },
       ],
     });
-    await act(async () =>
-      (container.querySelector(
-        'button[aria-label="Expand agent"]',
-      ) as HTMLButtonElement).click(),
-    );
+    // 未回答的提问会自动展开对话（见「AgentDock 提问自动展开」），不必手点
 
     const history = container.querySelector("#agent-dock-history")!;
     const message = history.querySelector("[data-agent-message]")!;
@@ -676,11 +672,7 @@ describe("AgentDock ask-user 提问卡片", () => {
       ],
       onAnswerQuestion: onAnswerQuestion as never,
     });
-    await act(async () =>
-      (container.querySelector(
-        'button[aria-label="Expand agent"]',
-      ) as HTMLButtonElement).click(),
-    );
+    // 未回答的提问会自动展开对话（见「AgentDock 提问自动展开」），不必手点
 
     await act(async () =>
       (container.querySelector(
@@ -695,6 +687,180 @@ describe("AgentDock ask-user 提问卡片", () => {
       optionIds: ["approve"],
       labels: ["同意"],
     });
+  });
+});
+
+describe("AgentDock 提问自动展开", () => {
+  const QUESTION = {
+    questionId: "q-1",
+    header: "付费确认",
+    question: "是否按上述计划生成？",
+    options: [
+      { id: "approve", label: "同意", recommended: true },
+      { id: "stop", label: "停止", tone: "danger" as const },
+    ],
+    multiSelect: false,
+    allowOther: false,
+  };
+
+  // 会话菜单按钮上也有 aria-expanded，这里按 aria-controls 精确取折叠开关本身
+  const isExpanded = (container: HTMLElement) =>
+    container
+      .querySelector('button[aria-controls="agent-dock-history"]')
+      ?.getAttribute("aria-expanded") === "true";
+
+  const generating: Parameters<typeof AgentDock>[0]["messages"] = [
+    { id: "u1", role: "user", content: "帮我生成一把椅子" },
+    { id: "a1", role: "assistant", content: "开始生成。" },
+  ];
+
+  test("生成中收到新问题时自动展开对话", async () => {
+    const { container, root } = await render({ messages: generating });
+    expect(isExpanded(container)).toBe(false);
+
+    await rerender(root, {
+      messages: [
+        ...generating,
+        {
+          id: "a2",
+          role: "assistant",
+          content: "还有一件事要你拍板。",
+          pendingQuestion: QUESTION,
+          agentStatus: { label: "Waiting for your decision", status: "waiting" },
+        },
+      ],
+    });
+
+    expect(isExpanded(container)).toBe(true);
+    expect(
+      container.querySelector('[data-ask-user-option="approve"]'),
+    ).not.toBeNull();
+  });
+
+  test("刷新后仍挂着的问题，挂载时就展开", async () => {
+    const { container } = await render({
+      messages: [
+        ...generating,
+        {
+          id: "a2",
+          role: "assistant",
+          content: "",
+          pendingQuestion: QUESTION,
+        },
+      ],
+    });
+
+    expect(isExpanded(container)).toBe(true);
+  });
+
+  test("已回答的问题不展开", async () => {
+    const { container } = await render({
+      messages: [
+        ...generating,
+        {
+          id: "a2",
+          role: "assistant",
+          content: "",
+          pendingQuestion: QUESTION,
+          questionAnswer: {
+            questionId: "q-1",
+            question: QUESTION.question,
+            optionIds: ["approve"],
+            labels: ["同意"],
+          },
+        },
+      ],
+    });
+
+    expect(isExpanded(container)).toBe(false);
+  });
+
+  test("被用户直接打字跳过的问题不展开", async () => {
+    const { container } = await render({
+      messages: [
+        ...generating,
+        {
+          id: "a2",
+          role: "assistant",
+          content: "",
+          pendingQuestion: QUESTION,
+          supersededQuestion: true,
+        },
+      ],
+    });
+
+    expect(isExpanded(container)).toBe(false);
+  });
+
+  test("用户自己收起后，同一个问题不再把他弹开", async () => {
+    const withQuestion: Parameters<typeof AgentDock>[0]["messages"] = [
+      ...generating,
+      { id: "a2", role: "assistant", content: "", pendingQuestion: QUESTION },
+    ];
+    const { container, root } = await render({ messages: withQuestion });
+    expect(isExpanded(container)).toBe(true);
+
+    await act(async () =>
+      (container.querySelector(
+        'button[aria-label="Collapse agent"]',
+      ) as HTMLButtonElement).click(),
+    );
+    expect(isExpanded(container)).toBe(false);
+
+    // 同一张卡片的后续更新（新数组、同一个 questionId）不该再展开
+    await rerender(root, {
+      messages: [
+        ...generating,
+        {
+          id: "a2",
+          role: "assistant",
+          content: "补充一点说明。",
+          pendingQuestion: QUESTION,
+        },
+      ],
+    });
+    expect(isExpanded(container)).toBe(false);
+  });
+
+  test("收起之后又来一个新问题，仍然会展开", async () => {
+    const { container, root } = await render({
+      messages: [
+        ...generating,
+        { id: "a2", role: "assistant", content: "", pendingQuestion: QUESTION },
+      ],
+    });
+    await act(async () =>
+      (container.querySelector(
+        'button[aria-label="Collapse agent"]',
+      ) as HTMLButtonElement).click(),
+    );
+    expect(isExpanded(container)).toBe(false);
+
+    await rerender(root, {
+      messages: [
+        ...generating,
+        {
+          id: "a2",
+          role: "assistant",
+          content: "",
+          pendingQuestion: QUESTION,
+          questionAnswer: {
+            questionId: "q-1",
+            question: QUESTION.question,
+            optionIds: ["approve"],
+            labels: ["同意"],
+          },
+        },
+        {
+          id: "a3",
+          role: "assistant",
+          content: "还有下一件事。",
+          pendingQuestion: { ...QUESTION, questionId: "q-2" },
+        },
+      ],
+    });
+
+    expect(isExpanded(container)).toBe(true);
   });
 });
 

@@ -807,6 +807,46 @@ export function AgentDock({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
 
+  /**
+   * 还挂着、没人回答的提问（卡片的 questionId）；没有就是 null。
+   *
+   * 口径与会话自动续跑的那道闸门一致（`useAgentChat.hasUnansweredQuestion`）：
+   * assistant 消息上有 pendingQuestion、还没有 questionAnswer、也没被用户跳过。
+   * 回答过、或被"直接打字回别的"顶掉的问题都不算数——它们不再需要用户拍板。
+   */
+  const unansweredQuestionId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]!;
+      if (
+        message.role === "assistant" &&
+        message.pendingQuestion &&
+        !message.questionAnswer &&
+        !message.supersededQuestion
+      ) {
+        return message.pendingQuestion.questionId;
+      }
+    }
+    return null;
+  }, [messages]);
+
+  /** 已经因为"要用户回答"自动展开过的提问；同一个问题只弹一次。 */
+  const expandedQuestionIdsRef = useRef(new Set<string>());
+
+  /**
+   * 生成模型期间对话常常是收起的，只剩一行状态文字；ask-user 之后服务端会主动
+   * 中止本轮，生成链就停在那个问题上。所以新问题一到就自动展开，把它摆到用户面前。
+   *
+   * 只对新问题展开一次：用户看完自己收起后，同一个问题不再把他弹开（折叠是他明确的
+   * 选择），换会话回来也不重复。刷新后 ref 是新的，会话里还挂着的问题会重新展开——
+   * 那正是"等你决定"的状态，收起反而看不到。答案已回来或问题已被跳过时不会触发。
+   */
+  useEffect(() => {
+    if (!unansweredQuestionId) return;
+    if (expandedQuestionIdsRef.current.has(unansweredQuestionId)) return;
+    expandedQuestionIdsRef.current.add(unansweredQuestionId);
+    setExpanded(true);
+  }, [unansweredQuestionId]);
+
   useEffect(() => {
     const urls = imageFiles.map((file) => URL.createObjectURL(file));
     setImagePreviewUrls(urls);
