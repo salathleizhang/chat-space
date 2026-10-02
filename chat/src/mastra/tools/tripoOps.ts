@@ -28,6 +28,7 @@ import {
   DEFAULT_TRIPO_IMAGE_MODEL,
   DEFAULT_TRIPO_TEXTURE_MODEL,
   runTripoTask,
+  TRIPO_DECIMATE_FACES,
   tripoImageToModelRequest,
   tripoImportModelRequest,
   tripoMultiviewToModelRequest,
@@ -51,6 +52,7 @@ import {
 } from "../../services/modelPublishing";
 import { startCustomTask } from "../../services/tasks";
 import { downloadToLibrary } from "./assetRepair";
+import { runWithGeneratedModelInfo } from "./modelInfo";
 import { latestAssetModel, requireProject } from "./projectTools";
 import {
   optionalContextString,
@@ -511,16 +513,22 @@ export function startTripo3dBatch(
       (task) =>
         runAndPublishGeneratedModel(
           getAssetStorage(), projectSlug, task.id, object, task.setPhase,
-          (target) => runTripoImageTo3d(
+          // 结果带上真实面数与"是不是高模"：生成完那一轮 Agent 才有依据问用户要不要减面
+          (target) => runWithGeneratedModelInfo(
             target,
-            {
-              projectSlug,
-              assetSlug: object.slug,
-              image: object.sourceImages[0],
-              referenceViews: object.referenceViews,
-              generationMode: options.generationMode ?? "auto",
-            },
-            { apiKey: options.tripo3dApiKey, imageModel: options.imageModel },
+            projectSlug,
+            object.slug,
+            () => runTripoImageTo3d(
+              target,
+              {
+                projectSlug,
+                assetSlug: object.slug,
+                image: object.sourceImages[0],
+                referenceViews: object.referenceViews,
+                generationMode: options.generationMode ?? "auto",
+              },
+              { apiKey: options.tripo3dApiKey, imageModel: options.imageModel },
+            ),
           ),
         ),
       {
@@ -533,7 +541,10 @@ export function startTripo3dBatch(
           sourceImages: object.sourceImages,
           ...(object.referenceViews ? { referenceViews: object.referenceViews } : {}),
           provider: "tripo-direct",
-          options: { generationMode: options.generationMode ?? "auto", imageModel: options.imageModel },
+          options: {
+            generationMode: options.generationMode ?? "auto",
+            imageModel: options.imageModel,
+          },
         },
       },
     ),
@@ -715,10 +726,10 @@ export async function runTripoRetopology(
   const model = params.model ?? "v2.0";
   const quad = params.quad ?? false;
   if (params.faceLimit !== undefined) {
-    const max = quad ? 10_000 : 20_000;
-    if (params.faceLimit < 500 || params.faceLimit > max) {
+    const { min, max } = quad ? TRIPO_DECIMATE_FACES.quad : TRIPO_DECIMATE_FACES.triangle;
+    if (params.faceLimit < min || params.faceLimit > max) {
       throw new ChatServiceError(
-        `Tripo ${quad ? "四边面" : "三角面"}目标面数须在 500–${max} 之间`,
+        `Tripo ${quad ? "四边面" : "三角面"}目标面数须在 ${min}–${max} 之间`,
         400,
         "tripo_face_limit_invalid",
       );

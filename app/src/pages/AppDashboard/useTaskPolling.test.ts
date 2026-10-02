@@ -16,6 +16,7 @@ mock.module("../../shared/lib/workflowClient", () => ({
 }));
 
 const { useTaskPolling } = await import("./useTaskPolling");
+const { modelInfoFromTaskResult, modelInfoSuffix } = await import("./useTaskPolling");
 
 function task(overrides: Partial<GenerationTask> = {}): GenerationTask {
   return {
@@ -49,6 +50,35 @@ function harnessFor(projectSlug: string | null) {
 
 beforeEach(() => {
   listTasks.mockReset();
+});
+
+describe("生成完成通知里的面数（modelInfo）", () => {
+  test("百万面标成 high-poly：Agent 据此弹降面卡片", () => {
+    const result = {
+      files: ["projects/p/assets/sofa/0-sofa.glb"],
+      modelInfo: { path: "projects/p/assets/sofa/0-sofa.glb", faces: 1_483_936, highPoly: true },
+    };
+    expect(modelInfoFromTaskResult(result)).toEqual({ faces: 1_483_936, highPoly: true });
+    expect(modelInfoSuffix(result)).toBe(" · 1,483,936 triangles · high-poly");
+  });
+
+  test("低模如实标 low-poly，不催着降面", () => {
+    const result = { modelInfo: { faces: 4_780, highPoly: false } };
+    expect(modelInfoSuffix(result)).toBe(" · 4,780 triangles · low-poly");
+  });
+
+  test("面数未知就写未知，不编数字（未知仍算高模，所以要问）", () => {
+    const result = { modelInfo: { path: "projects/p/assets/x/0-x.obj", faces: null, highPoly: true } };
+    expect(modelInfoFromTaskResult(result)).toEqual({ faces: null, highPoly: true });
+    expect(modelInfoSuffix(result)).toBe(" · polygon count unknown · high-poly");
+  });
+
+  test("旧任务结果没有 modelInfo：不加尾巴，也不当成高模", () => {
+    for (const result of [undefined, null, {}, { files: ["a.glb"] }, { modelInfo: {} }]) {
+      expect(modelInfoFromTaskResult(result)).toBeNull();
+      expect(modelInfoSuffix(result)).toBe("");
+    }
+  });
 });
 
 describe("useTaskPolling", () => {

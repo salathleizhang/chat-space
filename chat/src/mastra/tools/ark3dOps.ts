@@ -10,6 +10,7 @@ import { runAndPublishGeneratedModel, type GenerationObject } from "../../servic
 import { startCustomTask } from "../../services/tasks";
 import { requireProject } from "./projectTools";
 import { downloadSeed3dOutputs, resolveSingleImage } from "./seed3dOps";
+import { runWithGeneratedModelInfo } from "./modelInfo";
 
 export type Ark3dProvider = "hyper3d-volc" | "hi3d-volc";
 
@@ -142,8 +143,14 @@ export function startArk3dBatch(
     startCustomTask("3d", projectSlug, `3D 生成（火山 ${label}）：${object.name}`, (task) =>
       runAndPublishGeneratedModel(
         getAssetStorage(), projectSlug, task.id, object, task.setPhase,
-        (storage) => runArk3dImageTo3d(
-          storage, provider, projectSlug, object.slug, object.sourceImages[0], options,
+        // 结果带上真实面数与"是不是高模"：生成完那一轮 Agent 才有依据问用户要不要减面
+        (storage) => runWithGeneratedModelInfo(
+          storage,
+          projectSlug,
+          object.slug,
+          () => runArk3dImageTo3d(
+            storage, provider, projectSlug, object.slug, object.sourceImages[0], options,
+          ),
         ),
       ), {
       assetSlug: object.slug,

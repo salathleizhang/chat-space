@@ -48,4 +48,22 @@ describe("creator 回复协议", () => {
     // 旧口径：一次同意覆盖整条计划里的付费步骤
     expect(CREATOR_INSTRUCTIONS).not.toContain("同一计划的多个付费步骤可以一次同意");
   });
+
+  /**
+   * 降面（Auto low-poly）的触发口径也是产品决策：**生成完问一次，同意才减**。
+   * 它很容易被后人改回"生成完自动减"（用户为此多花一次付费任务却没人问过他），
+   * 或者被改回"什么都不做"（高模静默交付）。这条把两头都钉住。
+   */
+  test("高模生成完先问一次要不要降面，同意才调 retopologize", () => {
+    expect(CREATOR_INSTRUCTIONS).toContain("高模生成完必须先问一次要不要降面");
+    expect(CREATOR_INSTRUCTIONS).toContain("modelInfo");
+    expect(CREATOR_INSTRUCTIONS).toContain("Auto low-poly");
+    // 卡片必须给出"不减面"这条退路，否则用户只能被迫付费
+    expect(CREATOR_INSTRUCTIONS).toContain("保持高模，不减面");
+    // 低模不打扰用户；完整场景跑的过程中也不问（那条任务有自己的付费计划）
+    expect(CREATOR_INSTRUCTIONS).toContain("不要问，直接交付");
+    expect(CREATOR_INSTRUCTIONS).toContain("跑的过程中不要问");
+    // 旧口径：生成完自动减面、不需要问
+    expect(CREATOR_INSTRUCTIONS).not.toContain("会自动追加一次 Tripo 减面");
+  });
 });

@@ -31,6 +31,7 @@ import { runAndPublishGeneratedModel, type GenerationObject } from "../../servic
 import { startCustomTask } from "../../services/tasks";
 import { requireProject } from "./projectTools";
 import { downloadAndLandSeed3dOutput } from "./seed3dOutput";
+import { runWithGeneratedModelInfo } from "./modelInfo";
 
 /**
  * 火山方舟 Seed3D 直连能力（seed3d-direct 渠道）——图生 3D，一张参考图 + 可选
@@ -221,17 +222,23 @@ export function startSeed3d3dBatch(
     startCustomTask("3d", projectSlug, `3D 生成（Seed3D 直连）：${object.name}`, (task) =>
       runAndPublishGeneratedModel(
         getAssetStorage(), projectSlug, task.id, object, task.setPhase,
-        (target) => runSeed3dImageTo3d(
+        // 结果带上真实面数与"是不是高模"：生成完那一轮 Agent 才有依据问用户要不要减面
+        (target) => runWithGeneratedModelInfo(
           target,
-          {
-            projectSlug,
-            assetSlug: object.slug,
-            image: object.sourceImages[0],
-            subdivisionLevel: options.subdivisionLevel,
-            fileFormat: options.fileFormat,
-            model: options.model,
-          },
-          { apiKey: options.seed3dApiKey },
+          projectSlug,
+          object.slug,
+          () => runSeed3dImageTo3d(
+            target,
+            {
+              projectSlug,
+              assetSlug: object.slug,
+              image: object.sourceImages[0],
+              subdivisionLevel: options.subdivisionLevel,
+              fileFormat: options.fileFormat,
+              model: options.model,
+            },
+            { apiKey: options.seed3dApiKey },
+          ),
         ),
       ), {
       assetSlug: object.slug,

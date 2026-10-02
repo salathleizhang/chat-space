@@ -37,7 +37,11 @@ import {
   type InspectionViewId,
 } from "../../shared/lib/inspectionSheet";
 import { nextId } from "./useChatMessages";
-import type { TaskSettlement } from "./useTaskPolling";
+import {
+  modelInfoFromTaskResult,
+  modelInfoSuffix,
+  type TaskSettlement,
+} from "./useTaskPolling";
 
 /** 检查批次 id：agent 的 toolCallId 优先（可溯源到那一次工具调用），否则现造一个。 */
 function inspectionBatchId(toolCallId?: string) {
@@ -880,6 +884,20 @@ export function useAgentChat({
     syncWaiting();
     const tasks = settlements.flatMap((settlement) => settlement.tasks);
     const failed = tasks.filter((task) => task.status !== "succeeded").length;
+    /**
+     * 3D 任务的结算行里带上服务端测到的面数与"是不是高模"：Agent 收到这条通知就要决定
+     * 要不要弹降面卡片，数据在这一行给全，省掉一次 list-generation-tasks 往返。
+     */
+    const modelTaskSuffix = (task: (typeof tasks)[number]) =>
+      task.workflowId === "3d" && task.status === "succeeded"
+        ? modelInfoSuffix(task.result)
+        : "";
+    const highPoly = tasks.some(
+      (task) =>
+        task.workflowId === "3d" &&
+        task.status === "succeeded" &&
+        modelInfoFromTaskResult(task.result)?.highPoly === true,
+    );
     startStream(toOutgoingHistory(messagesRef.current), {
       resume: {
         kind: "tasks",
@@ -887,9 +905,14 @@ export function useAgentChat({
           "[Background tasks finished]",
           ...tasks.map((task) =>
             task.status === "succeeded"
-              ? `- ${taskSubjectLabel(task.subject)}: succeeded`
+              ? `- ${taskSubjectLabel(task.subject)}: succeeded${modelTaskSuffix(task)}`
               : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
           ),
+          ...(highPoly
+            ? [
+                "At least one finished 3D model is high-poly. Before delivering it, ask the user once with ask-user whether to run the decimation tool (the Auto low-poly options plus a keep-high-poly option), and only call retopologize if they agree — see the high-poly rule in your instructions.",
+              ]
+            : []),
           "Continue the original request automatically: check the finished outputs, then deliver the result. Only call inspect if the user asked for a check or raised a question about the result — a finished single-model generation is delivered without a self-check. A finished complete-scene job ends with one whole-scene check (inspect with target=\"scene\"). Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",
         ].join("\n"),
       },

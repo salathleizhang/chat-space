@@ -1,8 +1,10 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { SlugSchema } from "../../dto/library";
+import { TRIPO_DECIMATE_FACES } from "../../models/tripo";
 import { getAssetStorage } from "../../services/assetStorage";
 import { startCustomTask } from "../../services/tasks";
+import { runWithGeneratedModelInfo } from "./modelInfo";
 import {
   requireContextString,
   requireCurrentProject,
@@ -37,10 +39,15 @@ function startTripoTask(
 export const retopologizeTool = createTool({
   id: "retopologize",
   description:
-    "通过 Tripo v3 智能重拓扑/减面资产库中的模型（付费操作——启动前须经用户同意）。三角面目标 500–20000，四边面目标 500–10000；省略 targetPolycount 时由 Tripo 自适应。任务化返回",
+    "降面工具：通过 Tripo v3 智能重拓扑/减面资产库中的模型（付费操作——启动前须经用户同意；高模生成完成后要主动用 ask-user 问一次）。三角面目标 500–20000，四边面目标 500–10000；省略 targetPolycount 时由 Tripo 自适应。产物是**新的一代**（原高模保留，视口与摆放自动用最新一代），所以减面糊了也不用重新生成。任务化返回",
   inputSchema: z.object({
     assetSlug: SlugSchema,
-    targetPolycount: z.number().int().min(500).max(20000).optional(),
+    targetPolycount: z
+      .number()
+      .int()
+      .min(TRIPO_DECIMATE_FACES.triangle.min)
+      .max(TRIPO_DECIMATE_FACES.triangle.max)
+      .optional(),
     topology: z.enum(["quad", "triangle"]).default("triangle"),
     tripoModel: z.enum(["v2.0", "v1.0"]).optional(),
     /** Tripo v2 专用：把纹理烘焙到低模 */
@@ -48,17 +55,20 @@ export const retopologizeTool = createTool({
   }),
   execute: async (input, context) =>
     startTripoTask(context, "retopo", `重拓扑：${input.assetSlug}`, (projectSlug, apiKey) =>
-      runTripoRetopology(
-        getAssetStorage(),
-        {
-          projectSlug,
-          assetSlug: input.assetSlug,
-          faceLimit: input.targetPolycount,
-          quad: input.topology === "quad",
-          model: input.tripoModel,
-          bake: input.bake,
-        },
-        { apiKey },
+      // 结果里也带 modelInfo：交付时能如实报出"现在多少面"（降面任务本身不再触发降面卡片）
+      runWithGeneratedModelInfo(getAssetStorage(), projectSlug, input.assetSlug, () =>
+        runTripoRetopology(
+          getAssetStorage(),
+          {
+            projectSlug,
+            assetSlug: input.assetSlug,
+            faceLimit: input.targetPolycount,
+            quad: input.topology === "quad",
+            model: input.tripoModel,
+            bake: input.bake,
+          },
+          { apiKey },
+        ),
       ),
     ),
 });

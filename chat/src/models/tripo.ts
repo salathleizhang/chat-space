@@ -32,6 +32,16 @@ export const DEFAULT_TRIPO_IMAGE_MODEL = "v3.1-20260211";
 export const TRIPO_P1_MODEL = "P1-20260311";
 export const TRIPO_P2_MODEL = "P2-20260801";
 
+/**
+ * `/mesh/decimate` 的目标面数区间（三角面 / 四边面）。
+ * 工具 schema 与执行前的校验都从这里取，免得 20 000 这个上限在两个文件里各写一遍、
+ * 改一处漏一处（降面卡片的推荐档位也照这个上限来，见 creator 提示词）。
+ */
+export const TRIPO_DECIMATE_FACES = {
+  triangle: { min: 500, max: 20_000 },
+  quad: { min: 500, max: 10_000 },
+} as const;
+
 /** 最新贴图模型（v3.5，2026-09）：新增 texture_quality=fast 与 delight。 */
 export const DEFAULT_TRIPO_TEXTURE_MODEL = "v3.5-20260815";
 

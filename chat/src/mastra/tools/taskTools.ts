@@ -67,7 +67,7 @@ export const Batch3dOptionsSchema = z.object({
 export const start3dBatchTool = createTool({
   id: "start-3d-batch",
   description:
-    "为当前项目的对象并行生成 3D 模型。可选火山方舟 Seed3D（默认）、Hyper3D Gen-2、数美 Hi3D 2.0，或 Tripo3D；付费启动前须经用户同意。用户在下拉框选定具体 3D 模型时，渠道与模型 ID 由服务端按该选择钉住，provider 参数会被忽略。Tripo 的 tripoGenerationMode=auto 会对带视角标记的参考图自动使用多视角生成，也可指定 single/multiview。Hi3D 使用 Seedream 生成或编辑的参考图 URL。返回任务 id，用 list-generation-tasks 跟进。",
+    "为当前项目的对象并行生成 3D 模型。可选火山方舟 Seed3D（默认）、Hyper3D Gen-2、数美 Hi3D 2.0，或 Tripo3D；付费启动前须经用户同意。用户在下拉框选定具体 3D 模型时，渠道与模型 ID 由服务端按该选择钉住，provider 参数会被忽略。Tripo 的 tripoGenerationMode=auto 会对带视角标记的参考图自动使用多视角生成，也可指定 single/multiview。Hi3D 使用 Seedream 生成或编辑的参考图 URL。返回任务 id，用 list-generation-tasks 跟进；任务的 result 里带 modelInfo（实测三角面数与 highPoly），高模完成后要按提示用 ask-user 问一次要不要降面。",
   inputSchema: Batch3dOptionsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);

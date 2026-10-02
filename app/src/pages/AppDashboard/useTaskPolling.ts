@@ -43,6 +43,36 @@ export function modelPathFromTaskResult(result: unknown): string | null {
   );
 }
 
+/**
+ * 从任务结果里取出**服务端测到的**模型重量（`modelInfo`，见 chat 侧 `tools/modelInfo.ts`）。
+ * 判据在服务端，这里只做搬运：面数是"要不要问用户降面"的唯一依据，前端各算一遍必然与它不一致。
+ */
+export function modelInfoFromTaskResult(
+  result: unknown,
+): { faces: number | null; highPoly: boolean } | null {
+  if (!result || typeof result !== "object") return null;
+  const info = (result as { modelInfo?: unknown }).modelInfo;
+  if (!info || typeof info !== "object") return null;
+  const record = info as { faces?: unknown; highPoly?: unknown };
+  if (typeof record.highPoly !== "boolean") return null;
+  return {
+    faces: typeof record.faces === "number" ? record.faces : null,
+    highPoly: record.highPoly,
+  };
+}
+
+/**
+ * 生成完成通知里附的"这个模型多重"。带上它，Agent 在"生成完成"那一轮就能直接决定
+ * 要不要弹降面卡片，不必为此再多调一次 list-generation-tasks——少一次往返，也少一次
+ * 模型可能忘记判定的机会。读不到面数时如实写"未知"，不要编一个数字。
+ */
+export function modelInfoSuffix(result: unknown): string {
+  const info = modelInfoFromTaskResult(result);
+  if (!info) return "";
+  const faces = info.faces === null ? "polygon count unknown" : `${info.faces.toLocaleString("en-US")} triangles`;
+  return ` · ${faces}${info.highPoly ? " · high-poly" : " · low-poly"}`;
+}
+
 /** 轮询当前项目的生成任务，逐个回报完成/失败，全部结束后停止 */
 export function useTaskPolling({
   projectSlug,
