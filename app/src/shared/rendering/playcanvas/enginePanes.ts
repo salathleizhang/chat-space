@@ -38,6 +38,8 @@ export interface PaneEngineApi {
   Color: new (r: number, g: number, b: number) => unknown;
   PROJECTION_PERSPECTIVE: number;
   PROJECTION_ORTHOGRAPHIC: number;
+  /** 色调映射曲线常量（`TONEMAP_ACES === 3`）。 */
+  TONEMAP_ACES: number;
 }
 
 export interface EnginePaneBindings extends PaneRegistryOptions {
@@ -51,6 +53,12 @@ export interface EnginePaneOptions {
   root?: unknown;
   alpha?: number;
   background?: [number, number, number];
+  /**
+   * 每台窗格相机的色调映射。默认 **ACES**，对齐 three 侧（R3F 的 Canvas 默认
+   * `ACESFilmicToneMapping`；引擎 `CameraComponent.toneMapping` 默认是 `TONEMAP_LINEAR`）。
+   * 不对齐的话，即使光照能量一样，高光滚降也不同——"看着不一样"多半出在这里。
+   */
+  toneMapping?: number;
 }
 
 /** 纯装配：只用传进来的引擎 API，不 import 任何东西（所以能单测）。 */
@@ -63,7 +71,9 @@ export function buildPaneBindings(
   const {
     Entity, Layer, Vec4, Color,
     PROJECTION_PERSPECTIVE, PROJECTION_ORTHOGRAPHIC,
+    TONEMAP_ACES,
   } = engine;
+  const toneMapping = options.toneMapping ?? TONEMAP_ACES;
 
   const application = app as {
     root: { addChild(child: unknown): void };
@@ -92,9 +102,12 @@ export function buildPaneBindings(
       const camera = (entity as { camera?: {
         rect: unknown; layers: number[]; priority: number;
         clearColorBuffer: boolean; clearDepthBuffer: boolean; projection: number;
-        orthoHeight: number; fov: number;
+        orthoHeight: number; fov: number; toneMapping: number; gammaCorrection: number;
       } }).camera;
       if (!camera) throw new Error(`camera component was not created for pane ${paneId}`);
+      // **直接写属性**，不赌 `addComponent("camera", { toneMapping })` 的 data 会不会走到 setter：
+      // 对齐 three 的 ACES 是这一层的硬要求，写错就是"光照一样、画面仍不同"。
+      camera.toneMapping = toneMapping;
       return {
         applyCamera(o: CameraApplyOptions) {
           // rect 是归一化、左下原点；**不要**在这里翻 y —— WebGPU 后端自己会翻。

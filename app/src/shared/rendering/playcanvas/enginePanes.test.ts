@@ -36,6 +36,7 @@ function fakeEngine(): PaneEngineApi {
     Color: FakeColor as unknown as PaneEngineApi["Color"],
     PROJECTION_PERSPECTIVE: 0,
     PROJECTION_ORTHOGRAPHIC: 1,
+    TONEMAP_ACES: 3,
   };
 }
 
@@ -69,6 +70,17 @@ describe("引擎绑定：每格相机 must-see 的场景级层", () => {
     expect(layers).toContain(0);
     expect(layers).toContain(5);
     expect(layers).toContain(7);
+  });
+
+  test("每台窗格相机的色调映射对齐 three 的 ACES（引擎默认是 LINEAR）", () => {
+    const app = fakeApp();
+    const engine = fakeEngine();
+    const bindings = buildPaneBindings(engine, canvas, app);
+    const handle = bindings.createCamera("pane-0");
+    // 假实体把 camera 组件记在 entity.camera 上，直接读它
+    const entity = (bindings.entityFor("pane-0") as { camera?: { toneMapping?: number } });
+    expect(entity.camera?.toneMapping).toBe(engine.TONEMAP_ACES);
+    handle.destroy();
   });
 
   test("相机与逐格 HUD 层照旧工作（顺手确认这次重构没动到它们）", () => {

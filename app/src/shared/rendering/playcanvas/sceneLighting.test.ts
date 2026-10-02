@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ambientColorForLinear,
   createSceneLighting,
   DEFAULT_AMBIENT_LIGHT,
   DEFAULT_DIRECTIONAL_LIGHTS,
   DEFAULT_ENVIRONMENT_URL,
   environmentCandidates,
+  intensityForLinear,
+  linearToSrgb,
+  srgbToLinear,
   type LightingAppLike,
   type LightEntityLike,
 } from "./sceneLighting";
@@ -48,14 +52,46 @@ function fakeApp() {
 }
 
 describe("默认光照的数值（与 three 侧同一份契约）", () => {
-  test("环境光是 0.6、两盏平行光是 (4,6,4)/1.4 与 (-4,2,-3)/0.4", () => {
+  test("环境光是 0.6、两盏平行光是 (4,6,4)/1.4 与 (-4,2,-3)/0.4（都是 three 的**线性**能量）", () => {
     // 逐项对齐 `widgets/Viewport/index.tsx` 的 <ambientLight>/<directionalLight>：
-    // 这两边**必须同值**，否则同一个项目在 `?pcViewport=1` 前后会是两种明暗。
+    // 这两边**必须同能量**，否则同一个项目在 `?pcViewport=1` 前后会是两种明暗。
     expect([...DEFAULT_AMBIENT_LIGHT]).toEqual([0.6, 0.6, 0.6]);
     expect(DEFAULT_DIRECTIONAL_LIGHTS.map((light) => [light.position, light.intensity])).toEqual([
       [[4, 6, 4], 1.4],
       [[-4, 2, -3], 0.4],
     ]);
+  });
+});
+
+/**
+ * 引擎把环境光当 **sRGB** 再转线性，光的 `intensity < 1` 还会**多压一次** sRGB
+ * （`playcanvas.mjs:31479` 与 `:33623-33632`）。所以"照抄 three 的数字"并不等效——
+ * 这里钉住"写进去的值反解回来正好等于 three 的线性能量"。
+ */
+describe("线性能量的色空间换算（等效，而不是数值相同）", () => {
+  test("linearToSrgb / srgbToLinear 是同一对可逆的传输函数", () => {
+    expect(linearToSrgb(0)).toBe(0);
+    expect(linearToSrgb(1)).toBe(1);
+    expect(srgbToLinear(linearToSrgb(0.6))).toBeCloseTo(0.6, 6);
+    expect(srgbToLinear(linearToSrgb(0.4))).toBeCloseTo(0.4, 6);
+    // 0.6 的线性值编码成 sRGB 约 0.798；0.4 → 约 0.665（这正是要写进引擎的数）
+    expect(linearToSrgb(0.6)).toBeCloseTo(0.7977, 3);
+    expect(linearToSrgb(0.4)).toBeCloseTo(0.665, 3);
+  });
+
+  test("环境光：写 sRGB 值，引擎 linear() 之后正好是 three 的 0.6", () => {
+    const written = ambientColorForLinear(0.6);
+    expect(written[0]).toBeCloseTo(0.7977, 3);
+    expect(srgbToLinear(written[0])).toBeCloseTo(0.6, 4);
+    expect(written[1]).toBe(written[0]);
+    expect(written[2]).toBe(written[0]);
+  });
+
+  test("平行光强度：>=1 原样（引擎那条分支本来就是线性），<1 要 sRGB 编码", () => {
+    expect(intensityForLinear(1.4)).toBe(1.4);
+    expect(intensityForLinear(1)).toBe(1);
+    expect(intensityForLinear(0.4)).toBeCloseTo(0.665, 3);
+    expect(srgbToLinear(intensityForLinear(0.4))).toBeCloseTo(0.4, 4);
   });
 });
 
@@ -68,7 +104,8 @@ describe("createSceneLighting", () => {
       createColor: (r, g, b) => ({ r, g, b }),
     });
 
-    expect(app.scene.ambientLight).toEqual({ r: 0.6, g: 0.6, b: 0.6 });
+    // 写进去的是 sRGB 编码值（引擎会再 linear() 回 0.6）
+    expect(app.scene.ambientLight).toEqual({ r: ambientColorForLinear(0.6)[0], g: ambientColorForLinear(0.6)[0], b: ambientColorForLinear(0.6)[0] });
     expect(records).toHaveLength(2);
     expect(app.added).toHaveLength(2);
     expect(app.added).toEqual([...handle.entities()]);
@@ -77,7 +114,9 @@ describe("createSceneLighting", () => {
     expect(records[0]!.components).toEqual([
       { type: "light", data: { type: "directional", color: { r: 1, g: 1, b: 1 }, intensity: 1.4 } },
     ]);
-    expect(records[1]!.components[0]!.data!.intensity).toBe(0.4);
+    // 补光 0.4：引擎对 <1 的强度会多压一次 sRGB，所以写 sRGB 编码值才是**等效**的 0.4 线性
+    expect(records[1]!.components[0]!.data!.intensity).toBeCloseTo(intensityForLinear(0.4), 6);
+    expect(srgbToLinear(records[1]!.components[0]!.data!.intensity as number)).toBeCloseTo(0.4, 4);
 
     // 方向用 lookAt(0,0,0) 表达（引擎平行光方向是实体 −Z），不是手写欧拉角
     expect(records[0]!.position).toEqual([4, 6, 4]);

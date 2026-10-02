@@ -23,10 +23,53 @@
  * 我们确实按 three 侧那份数值建了灯、方向用 `lookAt` 表达、dispose 真的销毁了它们"。
  */
 
-/** 环境光颜色（对齐 three 侧 `ambientLight intensity={0.6}`；引擎按 sRGB 解释该颜色）。 */
+/** 环境光颜色（three 侧 `ambientLight intensity={0.6}` 的**线性**能量；写入引擎前要过 `ambientColorForLinear`）。 */
 export const DEFAULT_AMBIENT_LIGHT: readonly [number, number, number] = [0.6, 0.6, 0.6];
 
+/**
+ * 线性光强 → sRGB 编码值（引擎两处会把我们的输入当 sRGB 再转线性，见下面两个换算函数）。
+ * 用的是标准 sRGB 传输函数，与引擎 `Color.linear()` 同一条曲线。
+ */
+export function linearToSrgb(c: number): number {
+  if (!(c > 0)) return 0;
+  if (c >= 1) return 1;
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+}
+
+/** `linearToSrgb` 的逆（测试用来把引擎实际用的值还原成线性能量）。 */
+export function srgbToLinear(c: number): number {
+  if (!(c > 0)) return 0;
+  if (c >= 1) return 1;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * 环境光要写进 `scene.ambientLight` 的值。
+ *
+ * **为什么要换算**：three 的 `intensity` 是**线性**乘数，而引擎把 `scene.ambientLight` 当 **sRGB**
+ * 再转线性（`dispatchGlobalLights()`：`tmpColor.linear(scene.ambientLight)`，`playcanvas.mjs:31479`；
+ * d.ts 原话 "specified in sRGB color space"）。照抄数字会让 PC 的环境光只有 three 的 ≈ 一半
+ * （0.6 → 线性 0.319）。这里传入 three 的线性能量、返回该写的 sRGB 值。
+ */
+export function ambientColorForLinear(linear: number): [number, number, number] {
+  const encoded = linearToSrgb(linear);
+  return [encoded, encoded, encoded];
+}
+
+/**
+ * 平行光要写进 `intensity` 的值（**白光**前提）。
+ *
+ * 引擎 `LightComponent._updateLinearColor()`（`playcanvas.mjs:33623-33632`）分两条路：
+ *  - `intensity >= 1` → `linear(color) * intensity`：白光时结果就是 `intensity`，**与 three 一致**；
+ *  - `intensity < 1` → `linear(color * intensity)`：**会多压一次 sRGB**，0.4 只剩线性 ≈ 0.133。
+ * 所以小于 1 的强度要写 sRGB 编码值，才能让引擎实际用到的线性能量等于 three 的。
+ */
+export function intensityForLinear(linear: number): number {
+  return linear >= 1 ? linear : linearToSrgb(linear);
+}
+
 export interface DirectionalLightSpec {
+  /** three 侧的**线性**强度（写入引擎前过 `intensityForLinear`）。 */
   intensity: number;
   /** 世界坐标下的位置；方向 = 该点指向原点（引擎平行光的方向是实体的 **−Z**）。 */
   position: readonly [number, number, number];
@@ -100,7 +143,9 @@ export async function createSceneLighting(
   const createColor = options.createColor ?? await defaultColorFactory();
   const createEntity = options.createEntity ?? await defaultEntityFactory();
 
-  app.scene.ambientLight = createColor(ambient[0], ambient[1], ambient[2]);
+  // three 的线性能量 → 引擎要的值（环境光是 sRGB 字段；光强 < 1 会被多压一次 sRGB，见上面两个函数）
+  const ambientWrite = ambientColorForLinear(ambient[0]);
+  app.scene.ambientLight = createColor(ambientWrite[0], ambientWrite[1], ambientWrite[2]);
 
   const created: LightEntityLike[] = [];
   for (const [index, spec] of lights.entries()) {
@@ -108,7 +153,7 @@ export async function createSceneLighting(
     entity.addComponent("light", {
       type: "directional",
       color: createColor(1, 1, 1),
-      intensity: spec.intensity,
+      intensity: intensityForLinear(spec.intensity),
     });
     entity.setPosition(spec.position[0], spec.position[1], spec.position[2]);
     entity.lookAt(0, 0, 0);

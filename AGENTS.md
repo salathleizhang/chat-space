@@ -451,6 +451,26 @@ bun run check                        # typecheck + test + build
   时贴图只剩高光，看着就像"贴图没显示"。兜底是 **`/env/sky.jpg`**（引擎认的 equirect）；
   **不要用 three 侧的 `/env/sky.exr`**（引擎只认 img/dds/basis/hdr）。候选表按"项目产物 → 兜底"
   顺序试，第一个成功的生效。
+- **"和 three 一样的参数"要按「等效能量」给，不是照抄数字**（2026-10-02，用户要求"参数效果一样"）。
+  引擎有两处色空间口径，照抄会让实际能量偏低：
+  ① `scene.ambientLight` 是 **sRGB** 字段（`dispatchGlobalLights()` 里 `tmpColor.linear(scene.ambientLight)`，
+     `playcanvas.mjs:31479`），而 three 的 `ambientLight intensity={0.6}` 是**线性** —— 要写 sRGB 编码值
+     **≈0.7977**（否则只有 ≈0.319 线性，约一半）；
+  ② 光组件 `_updateLinearColor()`（`playcanvas.mjs:33623-33632`）对 `intensity >= 1` 用
+     `linear(color) * intensity`（白光下就等于 intensity，**这条对**），对 `intensity < 1` 用
+     `linear(color * intensity)`（**多压一次 sRGB**）—— 补光 0.4 要写 **≈0.6652**（否则只剩 ≈0.133）。
+  换算只在 `sceneLighting.ts` 的 `ambientColorForLinear()` / `intensityForLinear()` 里做，
+  单测反解回线性能量（`srgbToLinear(写进去的值) === three 的值`）。
+- **色调映射必须逐相机设成 ACES**：three 侧走 R3F 的 `<Canvas>`，默认 `ACESFilmicToneMapping`；
+  引擎 `CameraComponent.toneMapping` 默认是 **`TONEMAP_LINEAR`**（`gammaCorrection` 默认已是
+  `GAMMA_SRGB`，与 three 一致，不用动）。`enginePanes.ts` 拿到相机组件后**直接写属性**
+  （不赌 `addComponent("camera", {...})` 的 data 会不会走 setter），默认 `TONEMAP_ACES`。
+  真机实测这一项是两者差得**最多**的地方：同帧 ACES↔LINEAR 有 **67.5 万**像素变化（均值差 11.9、
+  最大 28），远大于色空间补偿那 1.9 万像素。
+- **残留差异（不要假装相同）**：① IBL 的来源编码——three 默认 `/env/sky.exr`（真 HDR，太阳 >1），
+  PC 兜底 `/env/sky.jpg`（8-bit，太阳被截到 1.0；项目自带 jpg/png 天空盒时两边读同一张，最接近）；
+  ② 着色实现本身不同（`MeshStandardMaterial` vs `StandardMaterial`，含 gloss/roughness 取反映射）；
+  ③ 两边的**默认机位本来就不同**（PC 是"看得全"的总览机位），所以没做"逐像素一致"的验收。
 
 ### skybox / 环境贴图
 

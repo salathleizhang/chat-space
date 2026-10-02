@@ -1605,6 +1605,36 @@ HUD/gizmo/线框层；以前"每格都看得见坐标轴"是因为部件在 Worl
    **教训（与增量 19 的 SPZ 解析器同一条）**：**注释里的"必须有这一项"如果没人接线，就等于没有**。
    本仓库已经有两处同型缺陷（SPZ 解析器、Skybox 层），所以凡这类约束都要配一条**会失败的测试**。
 
+27. ✅ **增量 21：光照与 three「等效」（色空间 + 色调映射对齐）**（2026-10-02，用户："让 playcanvas
+   跟 three 参数效果一样"）。
+
+   **"参数一样"≠"效果一样"**：配方（环境光 0.6 + 两盏平行光 1.4 / 0.4、位置与方向）从增量 18 起就是照抄的，
+   但引擎有两处色空间口径让**实际能量偏低**，色调映射曲线也不同：
+
+   | 项 | three（意图） | 引擎口径 | 修前实际 | 修后写入值 |
+   | --- | --- | --- | --- | --- |
+   | 环境光 | 0.6（线性） | `scene.ambientLight` 是 **sRGB**（`playcanvas.mjs:31479`） | ≈0.319 线性（约一半） | **0.7977** |
+   | 补光 (−4,2,−3) | 0.4（线性） | `intensity<1` 走 `linear(color*intensity)`（`:33623-33632`） | ≈0.133 线性（约 1/3） | **0.6652** |
+   | 主光 (4,6,4) | 1.4（线性） | `intensity>=1` 走 `linear(color)*intensity` | 1.4 ✔ | 1.4（不变） |
+   | 色调映射 | ACESFilmic + sRGB 输出 | `CameraComponent.toneMapping` 默认 **LINEAR** | LINEAR | **TONEMAP_ACES**（`gammaCorrection` 默认已是 `GAMMA_SRGB` ✔） |
+
+   **真机读数**（`p-mupq6eua`；同一次会话内 A/B，脚本自带还原）：
+
+   - 引擎事实：`scene.ambientLight = [0.7977, 0.7977, 0.7977]`、灯 `[1.4, 0.6652]`、
+     相机 `toneMapping = 3`、`gammaCorrection = 1`；
+   - **色调映射** ACES↔LINEAR：**675 670** 像素变化（均值差 11.9、最大 28）——整幅都动，是两项里影响最大的；
+   - **色空间补偿**（补偿值 ↔ 照抄 three 的数字）：**18 748** 像素（模型与受光面），均值差 16.4、最大 48；
+   - 截图：`.tmp/pc-panes/three-parity-p-mupq6eua.png`。
+
+   **残留差异（不假装相同）**：① IBL 来源编码——three 默认 `/env/sky.exr`（真 HDR），PC 兜底
+   `/env/sky.jpg`（8-bit，太阳截到 1.0）；项目自带 jpg/png 天空盒时两边读同一张，最接近。
+   ② 着色实现不同（`MeshStandardMaterial` vs `StandardMaterial`，含 gloss/roughness 取反映射），
+   逐像素不可能相同。③ 两边**默认机位本来就不同**（PC 是"看得全"的总览机位、three 是 `ORBIT_CAMERA`），
+   所以这一轮没有做"逐像素一致"的验收——要做得先把相机摆到同一机位。
+
+   单测：`sceneLighting.test.ts` +3（可逆传输函数、环境光反解回 0.6、光强 ≥1 / <1 两条路）、
+   `enginePanes.test.ts` +1（相机拿到 `TONEMAP_ACES`）。
+
 3. 接 `live` + `onTransformCommit`（`selectionTransform` 的回调已就位）+ history 按钮；
    选中/悬浮接 `selectionWireframe`；G/R/S 接 `transformKeys`。
 4. 之后再补：skybox / world splat / 材质覆盖 / 检查图（`inspectionCapture`）/ 第一人称。
