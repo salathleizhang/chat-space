@@ -15,6 +15,8 @@ import { runWithGeneratedModelInfo } from "./modelInfo";
 export type Ark3dProvider = "hyper3d-volc" | "hi3d-volc";
 
 export interface Ark3dGenOptions {
+  /** 当前会话开始时刻；兜底取图时的归属判据（见 referenceResolution） */
+  sessionStartedAt?: number;
   apiKey: string;
   faceCount?: number;
   taPose?: boolean;
@@ -54,7 +56,13 @@ export async function runArk3dImageTo3d(
   options: Ark3dGenOptions,
 ) {
   await requireProject(storage, projectSlug);
-  const imagePath = await resolveSingleImage(storage, projectSlug, assetSlug, explicitImage);
+  const imagePath = await resolveSingleImage(
+    storage,
+    projectSlug,
+    assetSlug,
+    explicitImage,
+    options.sessionStartedAt,
+  );
   const image = provider === "hi3d-volc"
     ? await findVolcImageUrl(storage, imagePath)
     : await readAsDataUri(storage, imagePath);

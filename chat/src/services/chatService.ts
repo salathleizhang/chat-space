@@ -31,12 +31,26 @@ type AgentMessage =
   | { role: "assistant"; content: string }
   | { role: "user"; content: string | AgentContentPart[] };
 
-/** 让中断后的下一轮仍能看到已生成参考图、但尚未发布模型的目标。 */
+/**
+ * 让中断后的下一轮仍能看到已生成参考图、但尚未发布模型的目标。
+ *
+ * **只给本会话登记的目标**。`candidates.json` 是项目级单例，新建会话时上一轮留下的
+ * 未完成对象会一并被读出来；把它们喂给模型，模型就会拿着上一轮的参考图直接开工，
+ * 而用户要的是"新会话从零开始，想复用先问过我"。判据是登记时间与会话开始时间
+ * （客户端随请求带来；缺省表示旧客户端，不做本轮判断）。
+ */
 export async function listPendingGenerationTargets(
   storage: AssetStorage,
   projectSlug: string,
+  sessionStartedAt?: number,
 ) {
-  return (await readCandidates(storage, projectSlug)).objects;
+  const objects = (await readCandidates(storage, projectSlug)).objects;
+  if (sessionStartedAt === undefined) return objects;
+  return objects.filter((object) => {
+    const registeredAt = object.createdAt ?? "";
+    const registeredMs = Date.parse(registeredAt);
+    return Number.isFinite(registeredMs) && registeredMs >= sessionStartedAt;
+  });
 }
 
 /**
@@ -323,6 +337,7 @@ export function buildChatRequestContext(
     volcengineApiKey: request.volcengineApiKey,
     threeDModel: request.threeDModel,
     imageGenerateModel: request.imageGenerateModel,
+    sessionStartedAt: request.sessionStartedAt,
   });
 }
 
@@ -360,7 +375,11 @@ export async function* streamChat(
   });
   const storage = getAssetStorage();
   const state = await getProjectState(storage, request.projectSlug);
-  const pendingTargets = await listPendingGenerationTargets(storage, request.projectSlug);
+  const pendingTargets = await listPendingGenerationTargets(
+    storage,
+    request.projectSlug,
+    request.sessionStartedAt,
+  );
   const currentPlan = request.plan ?? state.plan;
   const threeDSelection = threeDModelFor(request.threeDModel);
   const assetNamesBySlug = new Map(
@@ -385,7 +404,7 @@ export async function* streamChat(
               .join("、")
           : "无"
       }。`,
-      `待生成对象（尚未成为正式资产）：${
+      `待生成对象（尚未成为正式资产，只列**本会话**登记的目标）：${
         pendingTargets.length > 0
           ? pendingTargets
               .map(
@@ -394,7 +413,24 @@ export async function* streamChat(
               )
               .join("、")
           : "无"
-      }。已有参考图的待生成对象可直接用同一 slug 调 start-3d-batch，不要重新生成或分析图片。`,
+      }。`,
+      /*
+        参考图的复用纪律必须写在这里：项目 source/ 目录里可能还留着上一轮会话生成的
+        参考图，Agent 在资产名录里看不到它们的"归属"，只看到"有张图"。旧措辞是
+        「已有参考图的待生成对象可直接用同一 slug 调 start-3d-batch，不要重新生成」，
+        那等于教它拿旧图开工（用户报的正是这条）。现在改成分两步：新对象自己重新生成，
+        要复用先问。
+      */
+      pendingTargets.length > 0
+        ? "这些是本次会话刚确认的目标：可以直接用同一 slug 调 start-3d-batch；" +
+          "它们的参考图就是本轮的产物，不必重新生成。"
+        : "本次会话还没有登记过生成目标。",
+      "**参考图不许跨会话自动复用**：项目 source/ 里可能还留着更早会话生成的参考图，" +
+        "它们不是本轮产物。要拿其中任何一张去生成/编辑，必须先用 ask-user 卡片向用户" +
+        "确认（写清是哪张图、为什么合适、以及接下来要做的付费操作），得到同意后再把该" +
+        "路径显式传给工具；用户没同意就不要用。新对象请用 generate-reference-images" +
+        "重新生成参考图，不要拿旧图顶替。服务端也会拦：靠兜底（没有显式传图）取到旧图时" +
+        "会直接报错并把可选清单给你。",
       ...(currentPlan ? [planContextText(currentPlan)] : []),
       "若用户消息带有“本条消息明确选中的资产”，它们是该条指令的主要目标，代词优先指向它们；" +
         "未带资产附件时，再根据完整资产名录和对话判断，无法唯一确定才向用户确认。",

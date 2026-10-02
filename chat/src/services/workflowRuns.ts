@@ -14,6 +14,11 @@ export interface RunKeys {
   imageGenerateModel?: ChatStreamRequest["imageGenerateModel"];
   /** AgentDock 当前 3D 模型选择；start-3d-batch 直接消费，不暴露为工具参数。 */
   threeDModel?: ChatStreamRequest["threeDModel"];
+  /**
+   * 当前会话开始的时刻（epoch ms）；参考图能否自动复用按它判断
+   * （见 mastra/tools/referenceResolution.ts）。缺省 = 不做本轮判断。
+   */
+  sessionStartedAt?: ChatStreamRequest["sessionStartedAt"];
   worldLabsApiKey?: string;
   tripo3dApiKey?: string;
   hunyuanApiKey?: string;
@@ -33,6 +38,8 @@ export function buildRequestContext(keys: RunKeys): RequestContext {
   if (keys.referenceAnalysisAllowed) ctx.set("referenceAnalysisAllowed", true);
   if (keys.imageGenerateModel) ctx.set("imageGenerateModel", keys.imageGenerateModel);
   if (keys.threeDModel) ctx.set("threeDModel", keys.threeDModel);
+  // 0 是合法时刻（epoch），所以按 undefined 判而不是真值判。
+  if (keys.sessionStartedAt !== undefined) ctx.set("sessionStartedAt", keys.sessionStartedAt);
   if (keys.worldLabsApiKey) ctx.set("worldLabsApiKey", keys.worldLabsApiKey);
   if (keys.tripo3dApiKey) ctx.set("tripo3dApiKey", keys.tripo3dApiKey);
   if (keys.hunyuanApiKey) ctx.set("hunyuanApiKey", keys.hunyuanApiKey);

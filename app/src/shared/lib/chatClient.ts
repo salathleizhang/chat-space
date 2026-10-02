@@ -115,6 +115,12 @@ export interface ChatTurnOptions {
   resume?: ChatResume;
   /** ask-user 卡片的点选结果；同样不进 messages，界面只在卡片里显示。 */
   answer?: AskUserAnswer;
+  /**
+   * 当前会话开始的时刻（epoch ms）。服务端不知道会话边界，而"上一轮生成的参考图
+   * 不许静默复用"必须按会话判断（见 chat 侧 referenceResolution.ts）。新建会话是按下
+   * 按钮那一刻，恢复出来的会话是它的 `createdAt`。
+   */
+  sessionStartedAt?: number;
 }
 
 /**

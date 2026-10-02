@@ -195,6 +195,8 @@ async function bindReferenceImages(
         ...createTarget,
         sourceImages: images,
         ...(referenceViews ? { referenceViews } : {}),
+        // 第一次登记的时刻：新建会话只列本会话登记的目标（见 ConfirmedObjectSchema）
+        createdAt: new Date().toISOString(),
       },
     ],
     updatedAt: new Date().toISOString(),

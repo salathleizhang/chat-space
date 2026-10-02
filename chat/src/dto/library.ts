@@ -126,6 +126,15 @@ export type ReferenceImageViews = z.infer<typeof ReferenceImageViewsSchema>;
 export const ConfirmedObjectSchema = ObjectCandidateSchema.extend({
   sourceImages: z.array(LogicalPathSchema).optional(),
   referenceViews: ReferenceImageViewsSchema.optional(),
+  /**
+   * 这个待生成对象**第一次被登记**的时刻。给 Agent 上下文用：新建会话时只列本会话
+   * 登记的目标，上一轮留下的未完成对象不再自动继承（与参考图同一条纪律：看得见，
+   * 要接着做先问用户，见 mastra/tools/referenceResolution.ts 头注）。
+   *
+   * 旧 candidates.json 没有这个字段——读取时按注册表的 `updatedAt` 兜底，因此它们
+   * 一律被当作"早就有的"，不会倒进新会话。
+   */
+  createdAt: z.iso.datetime().optional(),
 });
 export type ConfirmedObject = z.infer<typeof ConfirmedObjectSchema>;
 

@@ -245,6 +245,11 @@ interface UseAgentChatOptions {
   sessionPlan?: ProjectPlan | null;
   /** update-plan 工具返回完整计划后直接保存当前会话快照。 */
   onPlanUpdated?: (plan: ProjectPlan) => void;
+  /**
+   * 当前会话开始的时刻（epoch ms）。随每轮请求发给服务端，用于判断参考图是不是
+   * "本会话的产物"——上一轮生成的图不许静默复用。
+   */
+  sessionStartedAt?: number;
 }
 
 /**
@@ -278,7 +283,16 @@ export function useAgentChat({
   bumpRefresh,
   sessionPlan,
   onPlanUpdated,
+  sessionStartedAt,
 }: UseAgentChatOptions) {
+  /*
+    会话边界随每一轮请求带上：`startStream` 是闭包，若直接从参数读会在会话切换后
+    仍用旧值（切换不重挂载 hook），所以走 ref 取"此刻"的值。
+  */
+  const sessionStartedAtRef = useRef(sessionStartedAt);
+  useLayoutEffect(() => {
+    sessionStartedAtRef.current = sessionStartedAt;
+  }, [sessionStartedAt]);
   const sessionPlanRef = useRef(sessionPlan ?? null);
   useLayoutEffect(() => {
     sessionPlanRef.current = sessionPlan ?? null;
@@ -1510,6 +1524,9 @@ export function useAgentChat({
         imageGenerateModel:
           loadImageGenerateModelSettings().model || undefined,
         plan: sessionPlanRef.current ?? undefined,
+        ...(sessionStartedAtRef.current !== undefined
+          ? { sessionStartedAt: sessionStartedAtRef.current }
+          : {}),
         ...(resume ? { resume } : {}),
         ...(answer ? { answer } : {}),
       },

@@ -316,6 +316,8 @@ describe("runReferenceImageGeneration", () => {
         name: "胡桃木餐桌",
         description: "圆角胡桃木四人餐桌",
         sourceImages: result.images,
+        // 登记时刻：新建会话只列本会话登记的目标（旧 candidates.json 允许没有这个字段）
+        createdAt: expect.any(String),
       },
     ]);
   });

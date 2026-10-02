@@ -96,6 +96,20 @@ export function currentThreeDModel(
   return threeDModelFor(readContextValue(context, "threeDModel"));
 }
 
+/**
+ * 当前会话开始的时刻（epoch ms）；客户端没带时返回 undefined。
+ *
+ * 用途只有一个：判断某张参考图是不是"本会话的产物"。undefined 表示**做不了这个
+ * 判断**，调用方必须按"保持原行为"处理，而不是当成"所有图都是旧的"——那会让同一
+ * 会话里的正常复用也每次都要用户点头。
+ */
+export function currentSessionStartedAt(
+  context: ToolContextLike | undefined,
+): number | undefined {
+  const value = readContextValue(context, "sessionStartedAt");
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 export function requireContextString(
   context: ToolContextLike | undefined,
   key: ProviderKeyName,

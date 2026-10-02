@@ -59,6 +59,10 @@ import {
   requireContextString,
   requireCurrentProject,
 } from "./requestContext";
+import {
+  assertSelectedReferenceUsable,
+  type ReferenceResolutionOptions,
+} from "./referenceResolution";
 
 /**
  * Tripo 直连能力（链式设计）：后处理任务只收 original_model_task_id。
@@ -75,6 +79,7 @@ async function resolveTripoImages(
   assetSlug: string,
   explicitImage?: string,
   explicitViews?: ReferenceImageViews,
+  sessionStartedAt?: number,
 ): Promise<{ image: string; referenceViews?: ReferenceImageViews }> {
   if (explicitImage) {
     if (!(await storage.exists(explicitImage))) {
@@ -82,15 +87,26 @@ async function resolveTripoImages(
     }
     return { image: explicitImage, ...(explicitViews ? { referenceViews: explicitViews } : {}) };
   }
+  /*
+    Tripo 的取图顺序比通用兜底多一档（多视角的 front 视图优先），所以不能直接复用
+    resolveSessionReferenceImage 的顺序；但**归属纪律是同一套**——每一档选出来的图
+    都要过闸门，上一轮会话生成的图不许静默复用（见 referenceResolution.ts 头注）。
+  */
+  const gate: ReferenceResolutionOptions = {
+    ...(sessionStartedAt !== undefined ? { sessionStartedAt } : {}),
+    operation: "Tripo 图生 3D",
+  };
   const identityPath = assetIdentityFile(projectSlug, assetSlug);
   if (await storage.exists(identityPath)) {
     const identity = await readJson(storage, identityPath, AssetIdentitySchema);
     const views = explicitViews ?? identity.referenceViews;
     if (views?.front && await storage.exists(views.front)) {
+      await assertSelectedReferenceUsable(storage, projectSlug, views.front, gate);
       return { image: views.front, referenceViews: views };
     }
     for (const image of identity.sourceImages) {
       if (await storage.exists(image)) {
+        await assertSelectedReferenceUsable(storage, projectSlug, image, gate);
         return { image, ...(views ? { referenceViews: views } : {}) };
       }
     }
@@ -104,7 +120,9 @@ async function resolveTripoImages(
       "reference_image_missing",
     );
   }
-  return { image: `${sourceDir}/${latest}`, ...(explicitViews ? { referenceViews: explicitViews } : {}) };
+  const latestPath = `${sourceDir}/${latest}`;
+  await assertSelectedReferenceUsable(storage, projectSlug, latestPath, gate);
+  return { image: latestPath, ...(explicitViews ? { referenceViews: explicitViews } : {}) };
 }
 
 export interface TripoOpResult {
@@ -159,6 +177,8 @@ export async function runTripoImageTo3d(
   storage: AssetStorage,
   rawParams: TripoGenParams,
   callOptions: TripoCallOptions,
+  /** 当前会话开始时刻；兜底取到的那张图能不能自动用（见 referenceResolution） */
+  sessionStartedAt?: number,
 ): Promise<TripoOpResult> {
   const params = TripoGenParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
@@ -168,6 +188,7 @@ export async function runTripoImageTo3d(
     params.assetSlug,
     params.image,
     params.referenceViews,
+    sessionStartedAt,
   );
   const availableViews = params.generationMode === "single"
     ? []
@@ -503,6 +524,8 @@ export function startTripo3dBatch(
     tripo3dApiKey: string;
     imageModel?: string;
     generationMode?: "auto" | "single" | "multiview";
+    /** 当前会话开始时刻；兜底取图时的归属判据（见 referenceResolution） */
+    sessionStartedAt?: number;
   },
 ) {
   return objects.map((object) =>
@@ -528,6 +551,7 @@ export function startTripo3dBatch(
                 generationMode: options.generationMode ?? "auto",
               },
               { apiKey: options.tripo3dApiKey, imageModel: options.imageModel },
+              options.sessionStartedAt,
             ),
           ),
         ),

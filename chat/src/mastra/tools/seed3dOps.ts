@@ -1,11 +1,7 @@
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
-import {
-  formatRequestSidecarName,
-  nextIndex,
-  pickLatestSourceImage,
-} from "../../common/indexedFiles";
-import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
+import { formatRequestSidecarName, nextIndex } from "../../common/indexedFiles";
+import { assetDir, assetIdentityFile } from "../../common/libraryPaths";
 import {
   AssetIdentitySchema,
   LogicalPathSchema,
@@ -30,6 +26,7 @@ import {
 import { runAndPublishGeneratedModel, type GenerationObject } from "../../services/modelPublishing";
 import { startCustomTask } from "../../services/tasks";
 import { requireProject } from "./projectTools";
+import { resolveSessionReferenceImage } from "./referenceResolution";
 import { downloadAndLandSeed3dOutput } from "./seed3dOutput";
 import { runWithGeneratedModelInfo } from "./modelInfo";
 
@@ -66,43 +63,38 @@ export interface Seed3dOpResult {
   taskId: string;
 }
 
-/** 参考图优先级：显式 > 身份绑定 > 最新源图。 */
+/**
+ * 参考图优先级：显式 > 身份绑定 > 最新源图。
+ *
+ * 后两档会过**会话归属闸门**（见 referenceResolution.ts）：上一轮会话生成的图不许
+ * 静默复用，要复用得先问用户。`sessionStartedAt` 来自请求上下文（客户端带来的会话
+ * 开始时刻）；省略时不做本轮判断，保持原行为。
+ */
 export async function resolveSingleImage(
   storage: AssetStorage,
   projectSlug: string,
   assetSlug: string,
   explicit?: string,
+  sessionStartedAt?: number,
 ): Promise<string> {
-  if (explicit) {
-    if (!(await storage.exists(explicit))) {
-      throw new ChatServiceError(`参考图不存在：${explicit}`, 404, "input_image_missing");
-    }
-    return explicit;
-  }
   const identityPath = assetIdentityFile(projectSlug, assetSlug);
-  if (await storage.exists(identityPath)) {
-    const identity = await readJson(storage, identityPath, AssetIdentitySchema);
-    for (const image of identity.sourceImages) {
-      if (await storage.exists(image)) return image;
-    }
-  }
-  const sourceDir = projectSourceDir(projectSlug);
-  const latest = pickLatestSourceImage(await storage.list(sourceDir));
-  if (!latest) {
-    throw new ChatServiceError(
-      `项目「${projectSlug}」没有可用参考图，请先上传源图或用 generate-reference-images 生成`,
-      409,
-      "reference_image_missing",
-    );
-  }
-  return `${sourceDir}/${latest}`;
+  const boundCandidates =
+    !explicit && (await storage.exists(identityPath))
+      ? (await readJson(storage, identityPath, AssetIdentitySchema)).sourceImages
+      : [];
+  return resolveSessionReferenceImage(storage, projectSlug, {
+    explicit,
+    boundCandidates,
+    ...(sessionStartedAt !== undefined ? { sessionStartedAt } : {}),
+    operation: "3D 生成",
+  });
 }
-
-/** Seed3D 直连图生 3D：图片以 data URI 提交，产物全部落盘 + 侧写 */
 export async function runSeed3dImageTo3d(
   storage: AssetStorage,
   rawParams: Seed3dGenParams,
   callOptions: Seed3dCallOptions,
+  /** 当前会话开始时刻；判断兜底取到的那张图能不能自动用（见 referenceResolution） */
+  sessionStartedAt?: number,
 ): Promise<Seed3dOpResult> {
   const params = Seed3dGenParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
@@ -111,6 +103,7 @@ export async function runSeed3dImageTo3d(
     params.projectSlug,
     params.assetSlug,
     params.image,
+    sessionStartedAt,
   );
 
   const dir = assetDir(params.projectSlug, params.assetSlug);
@@ -216,6 +209,8 @@ export function startSeed3d3dBatch(
     fileFormat?: "glb" | "obj" | "usd" | "usdz";
     /** 供应商模型 ID；缺省用 SEED3D_MODEL */
     model?: string;
+    /** 当前会话开始时刻；兜底取图时的归属判据（见 referenceResolution） */
+    sessionStartedAt?: number;
   },
 ) {
   return objects.map((object) =>
@@ -238,6 +233,7 @@ export function startSeed3d3dBatch(
               model: options.model,
             },
             { apiKey: options.seed3dApiKey },
+            options.sessionStartedAt,
           ),
         ),
       ), {

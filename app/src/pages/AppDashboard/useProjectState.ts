@@ -5,6 +5,7 @@ import {
   fetchProjectState,
   type AssetMaterial,
   type AssetTransform,
+  type GeneratedReference,
   type LibraryAsset,
   type ProjectPlan,
 } from "../../shared/lib/libraryApi";
@@ -46,7 +47,7 @@ export function useProjectState(
     projectError: string | null;
     plan: ProjectPlan | null;
     assets: LibraryAsset[];
-    referenceImages: string[];
+    referenceImages: GeneratedReference[];
     currentSkybox?: string;
     currentWorld?: string;
     sceneTransforms: Record<string, AssetTransform>;

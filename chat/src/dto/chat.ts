@@ -131,6 +131,16 @@ export const ChatStreamRequestSchema = z.object({
   messages: z.array(ChatMessageSchema).min(1),
   /** 当前会话自己的计划快照；防止恢复旧会话时误用项目里另一会话的最新计划。 */
   plan: ProjectPlanSchema.optional(),
+  /**
+   * 当前会话开始的时刻（epoch ms）。服务端**无法自己知道**会话边界（`source/` 是项目级
+   * 目录，没有任何"这一轮"的标记），而"参考图能不能自动复用"必须按它会话判断：上一轮
+   * 生成的参考图不许静默复用，要复用得先问用户。客户端本来就有这个值（会话的
+   * `createdAt`，新建会话则是按下按钮那一刻），直接带过来即可。
+   *
+   * 省略 = 客户端没带（旧客户端）。此时服务端**不**做本轮判断，保持原行为——
+   * "不知道会话边界"不等于"所有图都是上一轮的"。
+   */
+  sessionStartedAt: z.number().int().nonnegative().optional(),
   /** Agent 自发续跑的本轮上下文；不进入 messages，因此不落会话历史。 */
   resume: ChatResumeSchema.optional(),
   /** ask-user 卡片的点选结果；与 resume 同款，只活在本轮上下文里。 */

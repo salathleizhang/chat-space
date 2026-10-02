@@ -209,8 +209,13 @@ export interface AssetState {
 export interface ProjectState {
   project: Project;
   sources: string[];
-  /** 只含 referenceImage 工具生成/编辑成功的 3D 参考图。 */
-  generatedReferences: string[];
+  /**
+   * 只含 referenceImage 工具生成/编辑成功的 3D 参考图；`generatedAt` 是侧写的创建
+   * 时刻（ISO）。**工作台要靠它判断"这张图是不是本会话产生的"**——只列路径的话，
+   * 界面只能靠"第一次扫到它"猜，而项目状态会在每个后台任务落盘时重扫，猜错就把
+   * 上一轮会话的参考图倒进新会话（见 useReferenceImageSurfacing 头注）。
+   */
+  generatedReferences: { path: string; generatedAt: string }[];
   nextSourceIndex: number;
   hasAnalysis: boolean;
   /** agent 的当前计划（plan.json，无则省略） */
@@ -335,7 +340,7 @@ export async function getProjectState(
     });
   }
 
-  const generatedReferences: { index: number; path: string }[] = [];
+  const generatedReferences: { index: number; path: string; generatedAt: string }[] = [];
   for (const fileName of sources) {
     if (!fileName.startsWith(".") || !fileName.endsWith("-request.json")) continue;
     try {
@@ -350,7 +355,11 @@ export async function getProjectState(
       if (!isReferenceRequest || sidecar.status !== "succeeded") continue;
       for (const output of sidecar.outputs) {
         if (/\.(?:png|jpe?g|webp)$/i.test(output.path)) {
-          generatedReferences.push({ index: sidecar.index, path: output.path });
+          generatedReferences.push({
+            index: sidecar.index,
+            path: output.path,
+            generatedAt: sidecar.createdAt,
+          });
         }
       }
     } catch {
@@ -364,7 +373,10 @@ export async function getProjectState(
   return {
     project,
     sources,
-    generatedReferences: generatedReferences.map((entry) => entry.path),
+    generatedReferences: generatedReferences.map(({ path, generatedAt }) => ({
+      path,
+      generatedAt,
+    })),
     nextSourceIndex: nextIndex(sources),
     hasAnalysis: await storage.exists(projectAnalysisFile(slug)),
     ...((await storage.exists(planPath))

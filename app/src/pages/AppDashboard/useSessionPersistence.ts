@@ -14,6 +14,17 @@ function sessionErrorMessage(prefix: string, err: unknown) {
   return `${prefix}: ${err instanceof Error ? err.message : String(err)}`;
 }
 
+/**
+ * 会话开始时刻（epoch ms）。服务端给的 `createdAt` 解析不出来（历史会话文件没有该
+ * 字段）时返回 undefined，而不是拿"现在"顶替——那会把项目历史上的参考图全判成
+ * "本会话产生的"。
+ */
+function sessionStartMs(createdAt: string | undefined): number | undefined {
+  if (!createdAt) return undefined;
+  const parsed = Date.parse(createdAt);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function restoredMessages(session: StoredSession): ChatMessage[] {
   return session.messages.map((message) => ({
     ...message,
@@ -67,6 +78,14 @@ export function useSessionPersistence(
   const [sessionPlan, setSessionPlan] = useState<ProjectPlan | null>(null);
   const sessionIdRef = useRef(`s-${projectSlug}-${Date.now().toString(36)}`);
   const [activeSessionId, setActiveSessionId] = useState(sessionIdRef.current);
+  /**
+   * 当前会话开始的时刻（epoch ms）。参考图归属靠它判定（见 useReferenceImageSurfacing）：
+   * 新建会话是按下按钮那一刻，恢复出来的会话是它的 `createdAt`。缺省（历史会话文件
+   * 没有 createdAt）时保持 undefined，由消费方按"全部算历史"处理。
+   */
+  const [activeSessionStartedAt, setActiveSessionStartedAt] = useState<number | undefined>(
+    () => Date.now(),
+  );
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -106,6 +125,7 @@ export function useSessionPersistence(
       if (session && session.messages.length > 0 && liveMessagesRef.current.length === 0) {
         sessionIdRef.current = session.id;
         setActiveSessionId(session.id);
+        setActiveSessionStartedAt(sessionStartMs(session.createdAt));
         setSessionPlan(session.plan ?? null);
         const restored = restoredMessages(session);
         liveMessagesRef.current = restored;
@@ -219,6 +239,8 @@ export function useSessionPersistence(
     pendingSaveRef.current = null;
     sessionIdRef.current = `s-${projectSlug}-${Date.now().toString(36)}`;
     setActiveSessionId(sessionIdRef.current);
+    // 新会话的基线就是按下按钮这一刻：早于它的参考图属于上一轮，一律不进新会话。
+    setActiveSessionStartedAt(Date.now());
     sessionRestoredRef.current = true;
     liveMessagesRef.current = [];
     setSessionPlan(null);
@@ -269,6 +291,7 @@ export function useSessionPersistence(
       pendingSaveRef.current = null;
       sessionIdRef.current = session.id;
       setActiveSessionId(session.id);
+      setActiveSessionStartedAt(sessionStartMs(session.createdAt));
       const restored = restoredMessages(session);
       liveMessagesRef.current = restored;
       setMessages(restored);
@@ -281,6 +304,7 @@ export function useSessionPersistence(
 
   return {
     activeSessionId,
+    activeSessionStartedAt,
     sessions,
     sessionsLoading,
     sessionsError,

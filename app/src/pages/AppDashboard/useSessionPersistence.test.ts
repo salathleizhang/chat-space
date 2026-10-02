@@ -37,6 +37,7 @@ function session(
   slug: string,
   messages: ChatMessage[],
   plan?: ProjectPlan,
+  createdAt = "2026-08-01T05:00:00.000Z",
 ): StoredSession {
   return {
     id: `s-${slug}`,
@@ -44,6 +45,7 @@ function session(
     title: slug,
     messages,
     ...(plan ? { plan } : {}),
+    createdAt,
     updatedAt: "",
   };
 }
@@ -272,6 +274,59 @@ describe("useSessionPersistence", () => {
     await flush();
 
     expect(h.result.current.sessionPlan).toEqual(SESSION_PLAN);
+    await h.unmount();
+  });
+
+  /**
+   * 会话开始时间是参考图归属的唯一判据（见 useReferenceImageSurfacing）：新建会话要
+   * 拿到"按下按钮那一刻"，恢复出来的会话要拿到它自己的 createdAt。两者都不能缺省，
+   * 否则新会话会把上一轮生成的参考图当成自己的。
+   */
+  test("恢复出来的会话：开始时间取服务端的 createdAt", async () => {
+    fetchLatestSession.mockImplementation(async () =>
+      session(
+        "restored",
+        [{ id: "m1", role: "user", content: "旧消息" }],
+        undefined,
+        "2026-08-01T05:00:00.000Z",
+      ),
+    );
+    const p = parent();
+    const h = await p.mount("restored");
+    await flush();
+    await h.rerender("restored");
+
+    expect(h.result.current.activeSessionStartedAt).toBe(
+      Date.parse("2026-08-01T05:00:00.000Z"),
+    );
+    await h.unmount();
+  });
+
+  test("新建会话：开始时间推进到按下按钮那一刻，旧会话的图不再属于本会话", async () => {
+    fetchLatestSession.mockImplementation(async () =>
+      session(
+        "handover",
+        [{ id: "m1", role: "user", content: "旧会话内容" }],
+        undefined,
+        "2026-08-01T05:00:00.000Z",
+      ),
+    );
+    const p = parent();
+    const h = await p.mount("handover");
+    await flush();
+    await h.rerender("handover");
+    expect(h.result.current.activeSessionStartedAt).toBe(
+      Date.parse("2026-08-01T05:00:00.000Z"),
+    );
+
+    const before = Date.now();
+    await act(async () => h.result.current.startNewSession());
+    const startedAt = h.result.current.activeSessionStartedAt!;
+
+    expect(startedAt).toBeGreaterThanOrEqual(before);
+    // 旧会话的 createdAt 必须严格早于新会话起点，否则旧的参考图会被判成本会话的
+    expect(startedAt).toBeGreaterThan(Date.parse("2026-08-01T05:00:00.000Z"));
+
     await h.unmount();
   });
 

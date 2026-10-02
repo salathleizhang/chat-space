@@ -55,6 +55,7 @@ export interface StoredSession {
   messages: SessionMessage[];
   /** 这条会话最后一次看到的 Agent 计划快照；不与同项目其他会话共享。 */
   plan?: ProjectPlan;
+  createdAt: string;
   updatedAt: string;
 }
 

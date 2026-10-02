@@ -189,6 +189,80 @@ describe("listPendingGenerationTargets", () => {
       { slug: "table", sourceImages: ["projects/demo/source/0-table-ref.png"] },
     ]);
   });
+
+  /**
+   * `candidates.json` 是项目级单例：新建会话时上一轮的未完成对象会被一起读出来。
+   * 若原样交给模型，模型就会拿着上一轮的参考图开工——用户报的正是这条。所以只列
+   * 本会话登记的；判据是登记时刻 vs 会话开始时刻。
+   */
+  test("新会话只列本会话登记的目标，上一轮留下的不再继承", async () => {
+    const sessionStart = Date.parse("2026-10-02T12:00:00.000Z");
+    await writeJson(storage, projectCandidatesFile("scoped"), CandidateRegistrySchema, {
+      schemaVersion: 1,
+      objects: [
+        {
+          slug: "old-chair",
+          name: "上一轮的椅子",
+          description: "旧目标",
+          sourceImages: ["projects/scoped/source/0-chair-ref.png"],
+          createdAt: new Date(sessionStart - 3_600_000).toISOString(),
+        },
+        {
+          slug: "new-table",
+          name: "本轮的桌子",
+          description: "新目标",
+          sourceImages: ["projects/scoped/source/1-table-ref.png"],
+          createdAt: new Date(sessionStart + 60_000).toISOString(),
+        },
+      ],
+      updatedAt: new Date(sessionStart + 60_000).toISOString(),
+    });
+
+    const targets = await listPendingGenerationTargets(storage, "scoped", sessionStart);
+    expect(targets.map((target) => target.slug)).toEqual(["new-table"]);
+  });
+
+  test("旧 candidates.json 没有 createdAt：一律算早就有的，不倒进新会话", async () => {
+    await writeJson(storage, projectCandidatesFile("legacy"), CandidateRegistrySchema, {
+      schemaVersion: 1,
+      objects: [
+        {
+          slug: "table",
+          name: "胡桃木餐桌",
+          description: "圆角餐桌",
+          sourceImages: ["projects/legacy/source/0-table-ref.png"],
+        },
+      ],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(
+      await listPendingGenerationTargets(
+        storage,
+        "legacy",
+        Date.parse("2026-10-02T12:00:00.000Z"),
+      ),
+    ).toEqual([]);
+  });
+
+  test("客户端没带会话时间：保持原行为（不误伤同会话的正常续跑）", async () => {
+    await writeJson(storage, projectCandidatesFile("legacy-b"), CandidateRegistrySchema, {
+      schemaVersion: 1,
+      objects: [
+        {
+          slug: "table",
+          name: "胡桃木餐桌",
+          description: "圆角餐桌",
+          sourceImages: ["projects/legacy-b/source/0-table-ref.png"],
+        },
+      ],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(
+      (await listPendingGenerationTargets(storage, "legacy-b")).map((target) => target.slug),
+    ).toEqual(["table"]);
+  });
 });
 
 describe("toResumeMessage", () => {

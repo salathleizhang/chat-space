@@ -333,7 +333,11 @@ export async function runConfirmReferenceAssets(
       schemaVersion: 1,
       objects: [
         ...previousCandidates.objects,
-        ...resolved.map((object) => ({ ...object, sourceImages: [pending.image] })),
+        ...resolved.map((object) => ({
+          ...object,
+          sourceImages: [pending.image],
+          createdAt: now,
+        })),
       ],
       updatedAt: now,
     };

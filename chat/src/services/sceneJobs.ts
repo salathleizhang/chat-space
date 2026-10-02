@@ -419,6 +419,11 @@ export async function reviseSceneSpecAndJob(
         ...(object.heightMeters ? { heightMeters: object.heightMeters } : {}),
         sourceImages: old?.sourceImages ?? [spec.sourceImage],
         ...(old?.referenceViews ? { referenceViews: old.referenceViews } : {}),
+        /*
+          新增对象才算"本会话登记"；已有对象保留它原来的 createdAt（拿不到就用注册表
+          的 updatedAt——那一定早于本会话，于是不会被新会话继承，符合预期）。
+        */
+        createdAt: old?.createdAt ?? registry.updatedAt,
       });
     }
     for (const slug of remove) bySlug.delete(slug);

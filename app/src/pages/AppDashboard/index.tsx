@@ -141,6 +141,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
 
   const {
     activeSessionId,
+    activeSessionStartedAt,
     sessions,
     sessionsLoading,
     sessionsError,
@@ -161,6 +162,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     ready: sessionReady,
     loaded: projectLoaded,
     referenceImages,
+    sessionStartedAt: activeSessionStartedAt,
     messages,
     updateMessage,
   });
@@ -282,10 +284,18 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     },
     [history, inspectorAsset],
   );
-  /** 换贴图能挑的工程图片：生成的参考图 + 这个资产自己的源图（去重，源图常与参考图重合） */
+  /**
+   * 换贴图能挑的工程图片：生成的参考图 + 这个资产自己的源图（去重，源图常与参考图重合）。
+   * 参考图条目带生成时间（给 useReferenceImageSurfacing 判归属用），这里只要路径。
+   */
   const inspectorImages = useMemo(() => {
     if (!inspectorAsset) return [];
-    return [...new Set([...referenceImages, ...inspectorAsset.sourceImages])];
+    return [
+      ...new Set([
+        ...referenceImages.map((reference) => reference.path),
+        ...inspectorAsset.sourceImages,
+      ]),
+    ];
   }, [inspectorAsset, referenceImages]);
 
   const { tasks, pollTasks, onThumbnailGenerated } = useTaskPolling({
@@ -377,6 +387,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
       bumpRefresh,
       sessionPlan,
       onPlanUpdated: handlePlanUpdated,
+      sessionStartedAt: activeSessionStartedAt,
     });
 
   useEffect(() => {
@@ -479,7 +490,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
       */}
       <div className="absolute top-4 bottom-24 left-4 z-10 flex animate-chrome-enter items-start">
         {section === "images" ? (
-          <ImageGallery images={referenceImages} />
+          <ImageGallery images={referenceImages.map((reference) => reference.path)} />
         ) : (
           <ModelList
             projectSlug={projectSlug}

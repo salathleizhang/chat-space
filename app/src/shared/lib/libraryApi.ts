@@ -139,11 +139,21 @@ export interface AssetMaterial {
   textures: Partial<Record<MaterialTextureSlot, string>>;
 }
 
+export interface GeneratedReference {
+  path: string;
+  /**
+   * 这张图落盘的时刻（ISO，来自生成请求的侧写）。**判"它属不属于本会话"只能用
+   * 它**：项目状态会在每个后台任务落盘时重扫，把"第一次扫到"当基线的话，重扫
+   * 顺序一变就把上一轮会话的参考图倒进新会话。
+   */
+  generatedAt: string;
+}
+
 export interface ProjectState {
   project: ProjectSummary;
   sources: string[];
   /** 由图片模型生成或编辑、专门用于 3D 生成的参考图，最新在前。 */
-  generatedReferences: string[];
+  generatedReferences: GeneratedReference[];
   hasAnalysis: boolean;
   plan?: ProjectPlan;
   scene?: SceneLayout;

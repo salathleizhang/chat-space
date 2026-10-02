@@ -187,7 +187,7 @@ describe("projectTools", () => {
     );
 
     expect((await getProjectState(storage, "reference-list")).generatedReferences).toEqual([
-      referencePath,
+      { path: referencePath, generatedAt: createdAt },
     ]);
   });
 });
