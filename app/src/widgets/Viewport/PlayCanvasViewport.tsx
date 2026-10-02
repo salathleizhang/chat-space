@@ -40,7 +40,20 @@ import { applyWireframeShading, collectMeshInstances, restoreWireframeShading } 
 import { computeSceneLayout } from "./scenePlacement";
 import { LAYOUTS } from "./paneLayouts";
 import { rigForPaneCamera } from "../../shared/rendering/playcanvas/paneRigPresets";
+import type { TransformMode, TransformSpace } from "./transformMode";
+import { ViewportChrome } from "./ViewportChrome";
 import type { ViewportProps } from "./index";
+
+/**
+ * 已挂上场景的资产（chrome 与诊断读它）：`world` 决定它算不算"物件"、参不参与变换工具组。
+ * 记的是**真实挂载结果**（`SceneAssetsHandle.ids()`），不是 `props.assets` 的意愿清单——
+ * 加载失败的资产不该出现在"几件物件"里，也不该让变换工具组冒出来。
+ */
+interface MountedAsset {
+  id: string;
+  kind: "model" | "splat";
+  world: boolean;
+}
 
 /**
  * PlayCanvas 版视口——**§五.5 的第一个增量**（只有 `?pcViewport=1` 时才挂载，three 仍是默认）。
@@ -100,9 +113,9 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
   const applyOptionsRef = useRef<{ perspective: number; orthographic: number } | null>(null);
 
   /*
-    布局与网格显隐是**视口自己的状态**（`props.layout` 只作初值）：这样工具栏可以直接长在这个
-    组件里，而不必改动 three 分支那一大段 hooks 与 JSX——**默认路径零风险**。
-    与 three 侧共用同一套 `aria-label` 文案，探针/可信点击都按它找按钮。
+    布局与网格显隐是**视口自己的状态**（`props.layout` 只作初值）：chrome 由 `ViewportChrome`
+    渲染（**与 three 分支同一个组件**，见那个文件头），状态仍住在这里——默认路径零风险。
+    `aria-label` 与 three 侧同一套文案，探针/可信点击都按它找按钮。
   */
   const [layoutMode, setLayoutMode] = useState<1 | 2 | 4>(props.layout ?? 1);
   const [gridVisible, setGridVisible] = useState(true);
@@ -114,10 +127,22 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
   /** 线框着色（对齐 three 侧 `Shift+Z`）：换材质实例，不改标志位。 */
   const [wireframe, setWireframe] = useState(false);
   /*
-    **已挂上的资产 id**。存在的理由：材质/线框这些 effect 需要"资产已就绪"这个信号——
-    它们**同步**跑在资产 effect（异步）前面，那时 `ids()` 还是空的，于是"什么都没做、也不报错"。
-    （同一族踩过三次：gizmo 轴心、线框、材质覆盖。）
+    变换模式/参考系：**React 状态是权威**，再由 2b-2 那个 effect 推给各格的引擎 gizmo。
+    以前只有 G/R/S 一条路直接写引擎（`gizmos.setMode`），于是工具栏没有按钮可点、也没有地方
+    读"当前是哪个模式"。口径与 three 侧一致（`translate/rotate/scale` × `world/local`）；
+    缩放模式下引擎强制走 local，所以参考系按钮在那时要禁用（`ViewportChrome` 里那条）。
   */
+  const [transformMode, setTransformMode] = useState<TransformMode>("translate");
+  const [transformSpace, setTransformSpace] = useState<TransformSpace>("world");
+  /** gizmo 是**异步**建好的：创建那一刻要按"当前"模式摆好，而创建期间状态可能已经变了 */
+  const transformStateRef = useRef({ mode: transformMode, space: transformSpace });
+  /*
+    **已挂上的资产**（见 `MountedAsset`）。存在的理由有两个，都是"必须有这个信号"：
+    ① 材质/线框这些 effect **同步**跑在资产 effect（异步）前面，那时 `ids()` 还是空的，
+       于是"什么都没做、也不报错"（同一族踩过三次：gizmo 轴心、线框、材质覆盖）；
+    ② chrome 要按**真实挂载结果**决定出不出变换工具组、徽章写几件、有没有点云背景。
+  */
+  const [mountedAssets, setMountedAssets] = useState<readonly MountedAsset[]>([]);
   /** 第一人称：进入即请求指针锁定（挂在 `pointerdown` 上，见硬约束），退出回到台架 */
   const [firstPerson, setFirstPerson] = useState(false);
   /** 检查图（`inspect`）只拍一次：记住已处理过的请求 id */
@@ -342,6 +367,14 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       if (cancelled) { next.dispose(); return; }
       assetsRef.current?.dispose();
       assetsRef.current = next;
+      // chrome 读的是**真实挂载结果**：种类用来分"点云背景 / 物件"，world 用来把它排除在物件数外
+      const kinds = new Map(specs.map((spec) => [spec.id, spec.kind]));
+      const worldIds = new Set(props.assets.filter((asset) => asset.kind === "world").map((asset) => asset.id));
+      setMountedAssets(next.ids().map((id) => ({
+        id,
+        kind: kinds.get(id) ?? "model",
+        world: worldIds.has(id),
+      })));
       /*
         **资产是异步挂上的，而 gizmo/控制器那个 effect 是同步跑在它前面的**：那一刻
         `members()` 还是空集（实体不存在）→ 轴心为 null → gizmo 无处可挂、"拖手柄"永远不触发。
@@ -478,6 +511,15 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         }
       }
       void layerIdsChanged;
+      /*
+        引擎里新建的 gizmo 一律是 `translate`/`world`；把**当前**模式与参考系推一遍，
+        免得"工具栏上写着 rotate、手柄却是移动"。读 ref 而不是闭包里的状态：这段是异步的，
+        从 effect 起跑到这里已经过了好几个 await。
+      */
+      for (const spec of paneSpecs) {
+        gizmos.setMode(spec.id, transformStateRef.current.mode);
+        gizmos.setSpace(spec.id, transformStateRef.current.space);
+      }
 
       /*
         G/R/S 切变换模式（对齐 three 侧 `index.tsx:570-586` 的四道闸门，契约在 `transformKeys`）：
@@ -490,7 +532,8 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         const next = modeForKey(event);
         if (!next) return;
         event.preventDefault();
-        for (const spec of paneSpecs) gizmos?.setMode(spec.id, next);
+        // **只改 React 状态**：引擎那侧由 2b-2 的 effect 统一推（工具栏按钮走同一条路）
+        setTransformMode(next);
       };
       window.addEventListener("keydown", onModeKey);
       /*
@@ -558,6 +601,8 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         pivotScreen,
         /** 当前变换模式（诊断/判据用） */
         mode: () => gizmos?.modeFor(paneSpecs[0]!.id) ?? null,
+        /** 当前变换参考系（诊断/判据用）：chrome 上的"世界/局部"按钮写的就是它 */
+        space: () => gizmos?.spaceFor(paneSpecs[0]!.id) ?? null,
         /** 引擎内部的 hover 轴（`_hoverAxis`）；只给探针用 */
         hoverAxis: () => {
           const gizmo = gizmos?.gizmoFor(paneSpecs[0]!.id, "translate") as unknown as { _hoverAxis?: string } | null;
@@ -588,6 +633,20 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     };
     // `props.selectedIds` 变化由下面那个 effect 调 `syncSelection`（避免整块重建）
   }, [ready, session.app, paneSpecs, rectFor, props]);
+
+  /*
+    2b-2) 变换模式/参考系 → 引擎 gizmo 的**唯一写入点**（工具栏按钮、G/R/S、布局切换都汇到这里）。
+    状态与引擎两边必须同向：`transformStateRef` 给"创建那一刻"用，这个 effect 给"之后的变化"用。
+  */
+  useLayoutEffect(() => {
+    transformStateRef.current = { mode: transformMode, space: transformSpace };
+    const gizmos = gizmoHostRef.current;
+    if (!ready || !gizmos) return;
+    for (const spec of paneSpecs) {
+      gizmos.setMode(spec.id, transformMode);
+      gizmos.setSpace(spec.id, transformSpace);
+    }
+  }, [ready, paneSpecs, transformMode, transformSpace]);
 
   // 2c) 选中集合变化：只复位轴心与线框，不重建引擎资源
   useLayoutEffect(() => {
@@ -1000,6 +1059,17 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     return () => window.removeEventListener("resize", onResize);
   }, [ready, paneRects, paneSpecs]);
 
+  /*
+    chrome 的取值全部来自**真实状态**（见 `MountedAsset`），口径与 three 侧一致：
+    `objectCount` = 已挂载的非 world 资产、`selectedCount` = 选中集合大小、
+    `splatBackground` = 真的挂上了一片点云（没挂上就不写这个徽章，免得描述一个不存在的背景）。
+  */
+  const mountedObjects = mountedAssets.filter((asset) => !asset.world);
+  const hasSelection = mountedObjects.some((asset) => props.selectedIds.has(asset.id));
+  const splatBackground = mountedAssets.some((asset) => asset.kind === "splat");
+  const hasContent = mountedAssets.length > 0;
+  const singlePane = layoutMode === 1;
+
   const status = fatal ?? (session.error ? session.error.message : null);
   return (
     /*
@@ -1022,125 +1092,46 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         style={{ display: "block", width: "100%", height: "100%" }}
       />
       {/*
-        最小工具栏（**内联样式**：探针页没有样式表，用 Tailwind 类会全部失效——增量 1 的教训）。
-        与 three 侧那套带图标/提示的悬浮面板共用同一批 `aria-label` 文案；把它抽成两版共用的组件
-        是下一步（§三之十四 增量 6 的遗留）。
+        视口 chrome（右下角控制簇 + 底部徽章 + 第一人称提示）：**与 three 分支共用同一个组件**
+        （`ViewportChrome`）。这里只把 PlayCanvas 这侧的状态喂进去，"长什么样"一个字都不在本组件里。
+        `data-pc-toolbar="1"` 是探针/驱动的挂载点（驱动按它判断工具栏在不在），产品 DOM 里没有它。
       */}
-      <div
+      <ViewportChrome
         data-pc-toolbar="1"
-        style={{ position: "absolute", right: 12, bottom: 12, display: "flex", gap: 6, zIndex: 10 }}
-      >
-        {([1, 2, 4] as const).map((n) => (
-          <button
-            key={n}
-            type="button"
-            aria-label={n === 1 ? "Single view" : n === 2 ? "Two views" : "Four views (Blender layout)"}
-            aria-pressed={layoutMode === n}
-            onClick={() => setLayoutMode(n)}
-            style={{
-              minWidth: 30,
-              padding: "4px 8px",
-              borderRadius: 999,
-              border: "1px solid rgba(255,255,255,0.18)",
-              background: layoutMode === n ? "rgba(120,170,255,0.35)" : "rgba(20,20,22,0.72)",
-              color: "#e8e8ea",
-              fontSize: 12,
-              cursor: "pointer",
-            }}
-          >
-            {n}
-          </button>
-        ))}
-        <button
-          type="button"
-          aria-label={firstPerson ? "Return to orbit view" : "Enter first-person view"}
-          aria-pressed={firstPerson}
-          onClick={() => {
-            setFirstPerson((value) => {
-              if (!value) setLayoutMode(1); // 第一人称只在单窗格下有意义（three 侧同样强制 1 格）
-              return !value;
-            });
-          }}
-          style={{
-            padding: "4px 8px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)",
-            background: firstPerson ? "rgba(120,170,255,0.35)" : "rgba(20,20,22,0.72)",
-            color: "#e8e8ea", fontSize: 12, cursor: "pointer",
-          }}
-        >
-          {firstPerson ? "回到轨道" : "第一人称"}
-        </button>
-        {layoutMode === 1 ? (
-          <button
-            type="button"
-            aria-label="Toggle perspective/orthographic view"
-            onClick={() => setProjection((value) => ((value ?? rigForPaneCamera(paneSpecs[0]!.camera).projection) === "perspective" ? "orthographic" : "perspective"))}
-            style={{
-              padding: "4px 8px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)",
-              background: "rgba(20,20,22,0.72)", color: "#e8e8ea", fontSize: 12, cursor: "pointer",
-            }}
-          >
-            投影
-          </button>
-        ) : null}
-        <button
-          type="button"
-          aria-label={wireframe ? "Solid shading (Shift+Z)" : "Wireframe shading (Shift+Z)"}
-          aria-pressed={wireframe}
-          onClick={() => setWireframe((value) => !value)}
-          style={{
-            padding: "4px 8px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)",
-            background: wireframe ? "rgba(120,170,255,0.35)" : "rgba(20,20,22,0.72)",
-            color: "#e8e8ea", fontSize: 12, cursor: "pointer",
-          }}
-        >
-          线框
-        </button>
-        <button
-          type="button"
-          aria-label={gridVisible ? "Hide grid" : "Show grid"}
-          aria-pressed={gridVisible}
-          onClick={() => setGridVisible((value) => !value)}
-          style={{
-            padding: "4px 8px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)",
-            background: gridVisible ? "rgba(120,170,255,0.35)" : "rgba(20,20,22,0.72)",
-            color: "#e8e8ea", fontSize: 12, cursor: "pointer",
-          }}
-        >
-          网格
-        </button>
-        {props.history ? (
-          <>
-            <button
-              type="button"
-              aria-label="Undo"
-              disabled={!props.history.canUndo}
-              title={props.history.undoLabel ? `Undo: ${props.history.undoLabel}` : "Undo"}
-              onClick={() => props.history?.undo()}
-              style={{
-                padding: "4px 8px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)",
-                background: "rgba(20,20,22,0.72)", color: "#e8e8ea", fontSize: 12,
-                opacity: props.history.canUndo ? 1 : 0.45, cursor: props.history.canUndo ? "pointer" : "default",
-              }}
-            >
-              撤销
-            </button>
-            <button
-              type="button"
-              aria-label="Redo"
-              disabled={!props.history.canRedo}
-              title={props.history.redoLabel ? `Redo: ${props.history.redoLabel}` : "Redo"}
-              onClick={() => props.history?.redo()}
-              style={{
-                padding: "4px 8px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)",
-                background: "rgba(20,20,22,0.72)", color: "#e8e8ea", fontSize: 12,
-                opacity: props.history.canRedo ? 1 : 0.45, cursor: props.history.canRedo ? "pointer" : "default",
-              }}
-            >
-              重做
-            </button>
-          </>
-        ) : null}
-      </div>
+        history={props.history}
+        transform={!firstPerson && hasSelection ? {
+          mode: transformMode,
+          onMode: setTransformMode,
+          space: transformSpace,
+          onSpace: setTransformSpace,
+        } : null}
+        layout={firstPerson ? null : { value: layoutMode, onChange: setLayoutMode }}
+        projection={!firstPerson && singlePane ? {
+          // `projection` 为 null = 还没被切过：显示该格机位的默认投影（与 three 侧 defaultProjectionFor 同口径）
+          value: projection ?? rigForPaneCamera(paneSpecs[0]!.camera).projection,
+          onToggle: () => setProjection((value) =>
+            ((value ?? rigForPaneCamera(paneSpecs[0]!.camera).projection) === "perspective" ? "orthographic" : "perspective")),
+        } : null}
+        grid={firstPerson ? null : { visible: gridVisible, onToggle: () => setGridVisible((v) => !v) }}
+        wireframe={{ on: wireframe, onToggle: () => setWireframe((v) => !v) }}
+        /*
+          地形参照层（world 的 collider 网格）：**这条渲染路径在 PlayCanvas 分支还不存在**
+          （three 侧挂的是 `WorldColliderMesh`，它 100% 透明、一个像素都不画）。传 `null` ⇒
+          按钮不出现，而不是留一个点了没反应的按钮。见 PLAYCANVAS_MIGRATION.md 的未接清单。
+        */
+        worldCollider={null}
+        firstPerson={hasContent ? {
+          active: firstPerson,
+          onToggle: () => setFirstPerson((value) => {
+            if (!value) setLayoutMode(1); // 第一人称只在单窗格下有意义（three 侧同样强制 1 格）
+            return !value;
+          }),
+        } : null}
+        hasContent={hasContent}
+        objectCount={mountedObjects.length}
+        selectedCount={props.selectedIds.size}
+        splatBackground={splatBackground}
+      />
       {status ? (
         <div className="absolute inset-0 grid place-items-center bg-surface/80 text-xs text-ink-subtle">
           PlayCanvas 视口初始化失败：{status}

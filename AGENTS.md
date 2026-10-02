@@ -321,8 +321,13 @@ bun run check                        # typecheck + test + build
   （=15，半高 7.5）。`paneRegistry` 以前默认写成**像素半高**（`pane.viewport.height`）→ 正交格
   "看得极远"、画面里只剩一个小方块（实测俯视格只剩 94 个亮像素）。已改 + 回归测试。
 - **工具栏按钮按 `aria-label` 找**（与 three 侧同一套文案：`Single view` / `Two views` /
-  `Four views (Blender layout)` / `Hide grid` / `Show grid` / `Undo` / `Redo`），
-  探针用 CDP 可信点击驱动它。**按钮样式必须内联**——探针页没有样式表，Tailwind 类会全失效。
+  `Four views (Blender layout)` / `Hide grid` / `Show grid` / `Undo` / `Redo` /
+  `Toggle world/local coordinates` / `…shading (Shift+Z)`），探针用 CDP 可信点击驱动它。
+  **两版共用 `widgets/Viewport/ViewportChrome.tsx`**（设计系统 `Panel`/`ToolbarButton` + Tailwind）：
+  "PC 自带一版内联样式最小工具栏"已经删掉，观感与 three 版同源。**能没有的控件一律传 `null`**
+  （没有选中 / 不是单窗格 / 渲染层还没有这条路径），不许留点了没反应的按钮。真机 A/B 判据是
+  两版的 `aria-label` 顺序与按钮盒子逐项一致（PC 现少一个"地形参照层"按钮＝那条渲染路径 PC 还没有，
+  以及"点云背景"徽章——PC 还没画世界泼溅，见 §四之二）。
 - **PlayCanvas 的线框不是材质标志位**：`StandardMaterial` 上**没有** `wireframe`；正确做法是
   `meshInstance.renderStyle = RENDERSTYLE_WIREFRAME`（引擎为每个 mesh 备了线框索引缓冲，
   setter 里 `mesh.prepareRenderState()` 会挑对那份）。**已真机验证**：27/27 个 mesh instance 切过去、

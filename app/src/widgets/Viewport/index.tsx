@@ -1,20 +1,3 @@
-import { ArrowUUpLeftIcon } from "@phosphor-icons/react/ArrowUUpLeft";
-import { ArrowUUpRightIcon } from "@phosphor-icons/react/ArrowUUpRight";
-import { ArrowsClockwiseIcon } from "@phosphor-icons/react/ArrowsClockwise";
-import { ArrowsOutCardinalIcon } from "@phosphor-icons/react/ArrowsOutCardinal";
-import { ArrowsOutIcon } from "@phosphor-icons/react/ArrowsOut";
-import { BoundingBoxIcon } from "@phosphor-icons/react/BoundingBox";
-import { CubeIcon } from "@phosphor-icons/react/Cube";
-import { CubeTransparentIcon } from "@phosphor-icons/react/CubeTransparent";
-import { GlobeSimpleIcon } from "@phosphor-icons/react/GlobeSimple";
-import { GridFourIcon } from "@phosphor-icons/react/GridFour";
-import { MountainsIcon } from "@phosphor-icons/react/Mountains";
-import { PerspectiveIcon } from "@phosphor-icons/react/Perspective";
-import { PersonSimpleWalkIcon } from "@phosphor-icons/react/PersonSimpleWalk";
-import { SquareIcon } from "@phosphor-icons/react/Square";
-import { SquareSplitHorizontalIcon } from "@phosphor-icons/react/SquareSplitHorizontal";
-import { SquaresFourIcon } from "@phosphor-icons/react/SquaresFour";
-import { VideoCameraIcon } from "@phosphor-icons/react/VideoCamera";
 import { Environment } from "@react-three/drei/core/Environment";
 import { WebGPUView } from "./WebGPUView";
 import { ProjectRenderRuntime, FirstPersonView } from "./ProjectRenderRuntime";
@@ -43,7 +26,6 @@ import { useEnvironmentTexture } from "../../shared/lib/envTexture";
 import type { AssetMaterial, AssetTransform, LibraryAsset } from "../../shared/lib/libraryApi";
 import { libraryUrl, selectProjectSkybox } from "../../shared/lib/libraryApi";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
-import { Badge, Panel, ToolbarButton, Tooltip } from "../../shared/ui";
 import type { CameraTarget } from "./CameraRig";
 import { FirstPersonRig } from "./FirstPersonRig";
 import { ModelMesh } from "./ModelMesh";
@@ -56,11 +38,11 @@ import type { InspectionRequest } from "../../shared/lib/inspection";
 import type { LiveTransforms } from "./liveTransforms";
 import {
   TransformGizmo,
-  TRANSFORM_MODES,
   type GizmoMember,
   type TransformMode,
   type TransformSpace,
 } from "./TransformGizmo";
+import { ViewportChrome } from "./ViewportChrome";
 import { ViewportPane } from "./ViewportPane";
 import WorldColliderMesh from "./WorldColliderMesh";
 
@@ -123,29 +105,6 @@ const ORBIT_CAMERA = { position: [5, 4.5, 5] as [number, number, number], fov: 4
 const DEFAULT_LOOK_AT: [number, number, number] = [0, 0, 0];
 /** 聚焦某个对象时，相机相对该对象网格坐标的固定偏移 */
 const FOCUS_CAMERA_OFFSET: [number, number, number] = [3, 2, 3];
-
-const LAYOUT_ICON = {
-  1: SquareIcon,
-  2: SquareSplitHorizontalIcon,
-  4: SquaresFourIcon,
-} as const;
-const TRANSFORM_ICON = {
-  translate: ArrowsOutCardinalIcon,
-  rotate: ArrowsClockwiseIcon,
-  scale: ArrowsOutIcon,
-} as const;
-/** 快捷键跟 Blender 对齐（G/R/S），写进 tooltip 里让用户发现得到 */
-const TRANSFORM_LABEL: Record<TransformMode, string> = {
-  translate: "Move (G)",
-  rotate: "Rotate (R)",
-  scale: "Scale (S)",
-};
-
-const LAYOUT_LABEL: Record<LayoutMode, string> = {
-  1: "Single view",
-  2: "Two views",
-  4: "Four views (Blender layout)",
-};
 
 /** 窗格默认投影：透视机位默认透视，其余轴向预设机位默认正交——用户可随时切换，与 kind 解耦 */
 function defaultProjectionFor(camera: CameraKind): Projection {
@@ -750,182 +709,44 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
         )}
       </div>
 
-      {/* 右下角悬浮控件：撤销/重做、变换工具与视图控制是三件事，各自一个面板并排（变换那组只在有选中时出现） */}
-      <div className="absolute bottom-4 right-4 z-10 flex items-center gap-2">
-        {/*
-          撤销/重做：栈在上层（两张表都归它管），这里只出按钮。
-          空栈时保持禁用而不是隐藏——按钮忽隐忽现会让这一排控件整体位移。
-        */}
-        {history && (
-          <Panel className="flex items-center gap-1 rounded-full! p-1 animate-chrome-enter">
-            <Tooltip
-              content={history.undoLabel ? `Undo: ${history.undoLabel} (Cmd/Ctrl+Z)` : "Undo (Cmd/Ctrl+Z)"}
-              side="top"
-            >
-              <ToolbarButton
-                disabled={!history.canUndo}
-                icon={ArrowUUpLeftIcon}
-                aria-label="Undo"
-                onClick={history.undo}
-              />
-            </Tooltip>
-            <Tooltip
-              content={history.redoLabel ? `Redo: ${history.redoLabel} (Cmd/Ctrl+Shift+Z)` : "Redo (Cmd/Ctrl+Shift+Z)"}
-              side="top"
-            >
-              <ToolbarButton
-                disabled={!history.canRedo}
-                icon={ArrowUUpRightIcon}
-                aria-label="Redo"
-                onClick={history.redo}
-              />
-            </Tooltip>
-          </Panel>
-        )}
+      {/*
+        右下角控制簇 + 底部徽章 + 第一人称提示：**与 PlayCanvas 分支共用同一个组件**
+        （`ViewportChrome`）。两版只有状态来源不同，DOM 与样式一个字都不许分叉——
+        `?pcViewport=1` 那条路以前自带过一版"最小工具栏"，用户一眼就看出两样。
+      */}
+      <ViewportChrome
+        history={history}
+        transform={!firstPerson && gizmoMembers.length > 0 ? {
+          mode: transformMode,
+          onMode: setTransformMode,
+          space: transformSpace,
+          onSpace: setTransformSpace,
+        } : null}
+        layout={firstPerson ? null : { value: paneLayout, onChange: setPaneLayout }}
+        projection={!firstPerson && singlePane ? {
+          value: projectionFor(singlePane),
+          onToggle: () => toggleProjection(singlePane),
+        } : null}
+        grid={firstPerson ? null : { visible: showGrid, onToggle: () => setShowGrid((g) => !g) }}
+        wireframe={{ on: wireframe, onToggle: () => setWireframe((on) => !on) }}
+        worldCollider={!firstPerson && worldAsset?.modelPath && worldAsset.worldSemantics ? {
+          visible: showWorldCollider,
+          onToggle: () => setShowWorldCollider((v) => !v),
+        } : null}
+        firstPerson={hasContent ? {
+          active: firstPerson,
+          onToggle: () => setMode((m) => {
+            const next = m === "orbit" ? "firstPerson" : "orbit";
+            if (next === "firstPerson") setPaneLayout(1);
+            return next;
+          }),
+        } : null}
+        hasContent={hasContent}
+        objectCount={placedAssets.length}
+        selectedCount={selectedIds.size}
+        splatBackground={worldAsset != null}
+      />
 
-        {/* 变换工具只在选中了东西时出现——没有作用对象的移动/旋转/缩放按钮是空按钮 */}
-        {!firstPerson && gizmoMembers.length > 0 && (
-          <Panel className="flex items-center gap-1 rounded-full! p-1 animate-chrome-enter">
-            {TRANSFORM_MODES.map((m) => (
-              <Tooltip key={m} content={TRANSFORM_LABEL[m]} side="top">
-                <ToolbarButton
-                  selected={transformMode === m}
-                  icon={TRANSFORM_ICON[m]}
-                  aria-label={TRANSFORM_LABEL[m]}
-                  onClick={() => setTransformMode(m)}
-                />
-              </Tooltip>
-            ))}
-            <Tooltip
-              content={
-                transformMode === "scale"
-                  ? "Scale uses the object's local axes"
-                  : transformSpace === "world"
-                    ? "Current: world coordinates (click for local)"
-                    : "Current: local coordinates (click for world)"
-              }
-              side="top"
-            >
-              <ToolbarButton
-                // 缩放模式下 TransformControls 内部强制走 local，按钮留着可点会是句谎话
-                disabled={transformMode === "scale"}
-                icon={transformSpace === "world" ? GlobeSimpleIcon : BoundingBoxIcon}
-                aria-label="Toggle world/local coordinates"
-                onClick={() => setTransformSpace((s) => (s === "world" ? "local" : "world"))}
-              />
-            </Tooltip>
-          </Panel>
-        )}
-
-        {/* 视图控制：分屏布局 + 透视/正交 + 网格开关 + 第一人称切换 */}
-        <Panel className="flex items-center gap-1 rounded-full! p-1 animate-chrome-enter">
-          {!firstPerson && (
-            <div className="flex items-center gap-1">
-              {([1, 2, 4] as const).map((n) => (
-                <Tooltip key={n} content={LAYOUT_LABEL[n]} side="top">
-                  <ToolbarButton
-                    selected={paneLayout === n}
-                    icon={LAYOUT_ICON[n]}
-                    aria-label={LAYOUT_LABEL[n]}
-                    onClick={() => setPaneLayout(n)}
-                  />
-                </Tooltip>
-              ))}
-            </div>
-          )}
-          {!firstPerson && singlePane && (
-            <Tooltip
-              content={projectionFor(singlePane) === "perspective" ? "Switch to orthographic view" : "Switch to perspective view"}
-              side="top"
-            >
-              <ToolbarButton
-                icon={projectionFor(singlePane) === "perspective" ? PerspectiveIcon : CubeIcon}
-                aria-label="Toggle perspective/orthographic view"
-                onClick={() => toggleProjection(singlePane)}
-              />
-            </Tooltip>
-          )}
-          {!firstPerson && (
-            <Tooltip content={showGrid ? "Hide grid" : "Show grid"} side="top">
-              <ToolbarButton
-                selected={showGrid}
-                icon={GridFourIcon}
-                aria-label={showGrid ? "Hide grid" : "Show grid"}
-                onClick={() => setShowGrid((g) => !g)}
-              />
-            </Tooltip>
-          )}
-          {/*
-            线框着色模式：第一人称里也留着（看的是同一条场景，没有理由只在轨道模式下可用）。
-            它只改模型的画法，泼溅世界/天空盒/网格/HUD 都不动——见 wireframeMaterial.ts。
-          */}
-          <Tooltip content={wireframe ? "Solid shading (Shift+Z)" : "Wireframe shading (Shift+Z)"} side="top">
-            <ToolbarButton
-              selected={wireframe}
-              icon={CubeTransparentIcon}
-              aria-label={wireframe ? "Solid shading (Shift+Z)" : "Wireframe shading (Shift+Z)"}
-              onClick={() => setWireframe((on) => !on)}
-            />
-          </Tooltip>
-          {!firstPerson && worldAsset?.modelPath && worldAsset.worldSemantics && (
-            <Tooltip
-              content={
-                showWorldCollider
-                  ? "Hide world terrain (collider mesh)"
-                  : "Show world terrain (collider mesh)"
-              }
-              side="top"
-            >
-              <ToolbarButton
-                selected={showWorldCollider}
-                icon={MountainsIcon}
-                aria-label={
-                  showWorldCollider
-                    ? "Hide world terrain (collider mesh)"
-                    : "Show world terrain (collider mesh)"
-                }
-                onClick={() => setShowWorldCollider((v) => !v)}
-              />
-            </Tooltip>
-          )}
-          {hasContent && (
-            <Tooltip
-              content={firstPerson ? "Return to orbit top view" : "First-person navigation (WASD to move)"}
-              side="top"
-            >
-              <ToolbarButton
-                selected={firstPerson}
-                icon={firstPerson ? VideoCameraIcon : PersonSimpleWalkIcon}
-                aria-label={firstPerson ? "Return to orbit view" : "Enter first-person view"}
-                onClick={() =>
-                  setMode((m) => {
-                    const next = m === "orbit" ? "firstPerson" : "orbit";
-                    if (next === "firstPerson") setPaneLayout(1);
-                    return next;
-                  })
-                }
-              />
-            </Tooltip>
-          )}
-        </Panel>
-      </div>
-
-      {hasContent && (
-        <>
-          {firstPerson && (
-            <Panel className="pointer-events-none absolute top-16 left-1/2 -translate-x-1/2 px-3 py-1.5 text-xs text-ink-subtle">
-              Click the viewport to lock view · WASD to move · Shift to sprint · Esc to release mouse
-            </Panel>
-          )}
-
-          <div className="pointer-events-none absolute bottom-24 left-1/2 flex -translate-x-1/2 items-center gap-2">
-            <Badge>{placedAssets.length} objects</Badge>
-            {selectedIds.size > 0 && <Badge>Selected: {selectedIds.size}</Badge>}
-            {wireframe && <Badge>Wireframe</Badge>}
-            {worldAsset && <Badge>Gaussian splat background</Badge>}
-          </div>
-        </>
-      )}
 
     </div>
   );

@@ -1310,8 +1310,11 @@ HUD 的逐格隔离失败、gizmo 的"本格变了"失败，而**每个模式单
    | 组件暴露的 aria-label | `Single view` / `Two views` / `Four views (Blender layout)` / `Enter first-person view` / `Toggle perspective/orthographic view` / `…shading (Shift+Z)` / `Hide grid` |
    | `ok` / JS 错误 | **true** / 0 |
 
-   **three 侧暂未改用**：那会把产品工具栏的观感从"带图标/提示的 Tailwind 面板"换成内联样式版——
-   属**视觉决策**，留给用户拍板（PC 分支与探针现在共用这个组件）。
+   **three 侧当时暂未改用**（那会把产品工具栏的观感从"带图标/提示的 Tailwind 面板"换成内联样式版）。
+   ⚠️ **2026-10-02 更正**：这一版的接线**并没有留在工作区里**——`ViewportToolbar.tsx` 后来跟着
+   意外删除一起被"按会话日志重放"恢复成了**没人 import 的死文件**（`f25ba6e` 只带回了文件本体，
+   没有带回那处替换），PC 分支实际跑的仍是自己那 115 行内联 JSX。**该文件在增量 17 里被
+   `ViewportChrome.tsx` 取代并删除**（见下）。
 
 21. ✅ **增量 16：把散落的诊断口收敛成一个开关**（`shared/rendering/playcanvas/viewportDebug.ts`，4 条单测）。
    原先 10 个 `window.__PC_VIEWPORT_*` 活口是**无条件**装的——**真实业务页面也被装上** ✗。
@@ -1332,11 +1335,63 @@ HUD 的逐格隔离失败、gizmo 的"本格变了"失败，而**每个模式单
    | **不带** `pcDebug=1`（**真实页面**） | 挂载 ✓、轨道拖动像素变（7104→7688）、**点选后像素变（选中线框）** ✓、`ok: true`；`modes` 全 `null`＝钩子确实没装 |
    | **带** `pcDebug=1`（真实页面） | 10 件资产、`membersAfterClick: 1`、`modes` 四段序列 ✓ |
 
-22. 🔴 增量 1–16 **刻意没接**：**把工具栏抽成两版共用的组件**（现在 PC 分支是自带的最小版：
-   没有图标/提示面板，也没有**线框着色**按钮）、skybox**工具栏 UI**（布局切换 / 网格开关 / 线框着色 / history 撤销重做按钮——
-   那是应用外壳的事，现在 `?pcViewport=1` 这条分支**没有工具栏**）、**逐格的机位预设**
+22. 🔴 增量 1–16 **刻意没接**（**工具栏那条已在增量 17 归零**）：**逐格的机位预设**
    （`CameraKind` 的 top/front/right 正交机位：现在所有格都是同一份透视默认机位）、
-   skybox / world 背景 splat、材质覆盖、检查图、第一人称——**"能渲染"不等于"已迁移"**。
+   skybox / world 背景 splat、**地形参照层（world collider）**、材质覆盖、检查图、第一人称——
+   **"能渲染"不等于"已迁移"**。
+23. ✅ **增量 17：视口 chrome 两版合一**（2026-10-02，用户报"PC 模式右下角 UI 跟别处不一样"）。
+
+   **做了什么**
+   - 新增 `widgets/Viewport/ViewportChrome.tsx`：**three 侧原来那段右下角 chrome 的原样搬家**
+     （撤销/重做面板 + 变换工具面板 + 视图控制面板 + 底部徽章 + 第一人称提示），纯展示、无引擎依赖。
+   - three 分支（`index.tsx`）与 PC 分支（`PlayCanvasViewport.tsx`）**都用它**；
+     PC 那 115 行内联样式 JSX 与死文件 `ViewportToolbar.tsx` 一起删掉。
+   - PC 补上此前只有快捷键、没有按钮的东西：**变换模式（G/R/S → 三个按钮）**、**世界/局部参考系**
+     （`gizmos.setSpace`，缩放模式下禁用——与 three 侧 `TransformControls` 同款口径）、
+     **底部徽章**（`N objects` / `Selected: n` / `Wireframe`）、第一人称提示条。
+   - PC 的变换模式/参考系**改为 React 状态是权威**（新增 2b-2 effect 统一推给引擎，
+     `transformStateRef` 供 gizmo 异步创建那一刻读取）：以前只有 G/R/S 一条路直接写引擎，
+     工具栏没有按钮可点、也没有地方读"现在是哪个模式"。
+   - PC 新增 `mountedAssets` 状态（**真实挂载结果**：id + kind + 是否 world），
+     chrome 的物件数/选中/点云徽章、以及第一人称按钮的可见性都读它——不再拿 `props.assets` 数数。
+   - `viewportDebug` 的 transform 活口补 `space()`（判据要能读引擎事实）。
+
+   > 增量 9 里"页面文本含 `1 2 4 投影 线框 网格 撤销 重做`"那条判据**就此作废**：
+   > 工具栏改成与 three 侧同一套图标 + `aria-label` 之后，页面上不再有这些中文文案，
+   > 驱动要按 `aria-label` 找按钮（`drive-app.mjs` 本来只判"工具栏在不在"，不受影响）。
+
+   **真机 A/B 判据**（`.tmp/chrome-parity/probe.mjs`，1500×950、真实项目 `p-muo3u17c`、
+   同一次会话里先 three 后 `?pcViewport=1`，逐项读 DOM + 引擎事实）：
+
+   | 断言 | three 分支 | PC 分支 |
+   | --- | --- | --- |
+   | 按钮 `aria-label` 顺序 | `Undo, Redo, Single/Two/Four views, 投影, Hide grid, 线框, 地形, 第一人称` | 同前，**少"地形"**（PC 没有这条渲染路径） |
+   | 按钮盒子 `[left,top,w,h]` | 32×32、`top=662`、右端对齐 `right-4` | **同**（32×32、`top=662`；少一个 38px 宽的地形按钮） |
+   | 徽章 | `10 objects` + `Gaussian splat background` | `10 objects`（**没有**点云徽章：世界是 legacy SPZ，PC 没画） |
+   | 可信点击线框按钮 | — | 引擎 `wireframe=true`、**10/10 个 mesh 切过去**、再点回 `false` |
+   | 可信点击"四窗格/单窗格" | — | `aria-pressed` 跟着走、四象限亮像素 `[2594,3913,994,633]` |
+   | 可信点击网格/投影 | — | `Hide grid`↔`Show grid` 文案与 `aria-pressed` 跟着走；投影切换后画面变 |
+   | 选中后出现的变换面板 | 三个模式 + 参考系 | 同；可信点击参考系 → 引擎 `space: world → local` |
+   | 键盘 `G/R/S` | — | 引擎 `mode` `translate → scale`（与按钮走同一条状态→引擎路径） |
+   | JS 错误 | 0 | 0 |
+
+   单测：`widgets/Viewport/ViewportChrome.test.ts` **13 条**（顺序与文案、`null` 控件不出现、
+   `aria-pressed`、徽章、`data-pc-toolbar` 钩子、点击回调参数、缩放模式禁用参考系按钮）。
+
+   **两处仍然不同，且都故意不假装相同**
+   - 🔴 **地形参照层按钮**：three 挂 `WorldColliderMesh`（world 的 collider GLB，100% 透明、
+     一个像素都不画），PC 这条渲染路径不存在。传 `null` ⇒ 按钮不出现，
+     而不是留一个点了没反应的按钮。要它有，得先决定 PC 要不要也下一份几十万面的 collider。
+   - 🔴 **`Gaussian splat background` 徽章**：PC 还没画世界泼溅（真实项目的世界是 legacy SPZ，
+     引擎只认 v4——见 §Splat）。徽章只在**真的挂上了点云**时才出现，不描述不存在的背景。
+
+   **验证时发现的既有问题（与本次改动无关，两版同病）**：1500 px 宽的窗口下，
+   应用外壳的 AgentDock（`flex items-center justify-between gap-2`）与 chat 面板
+   **压在视口 chrome 左半截之上**——`document.elementFromPoint()` 在
+   `Move (G)`/`Rotate (R)`/`Scale (S)`/`Undo`/`Redo` 的按钮中心返回的是外壳的 DIV，
+   **这几个按钮点不动**（`Space` 参考系、布局、网格、线框、第一人称都在外壳之外，正常）。
+   两版位置同源，所以 three 分支同样点不动——不是这次引入的。修法要么给 chrome 抬 z-index
+   （会把工具栏画到 chat 面板之上，属视觉决策），要么让视口不要伸到 chat 面板下面（`pages/` 是冻结集）。
 24. ✅ **增量 18：默认光照 + 环境贴图兜底**（2026-10-02，用户报"`?pcViewport=1` 打开项目场景是黑的、
    贴图也显示不出来"）。
 
