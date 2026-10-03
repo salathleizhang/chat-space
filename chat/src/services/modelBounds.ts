@@ -45,17 +45,28 @@ export function finiteVec3(value: readonly number[]): value is Vec3 {
   return value.length === 3 && value.every(Number.isFinite);
 }
 
+/**
+ * 摆放（T·R·S）对应的世界矩阵。欧拉序固定 **XYZ、弧度**，与 `scene.json` 的
+ * `AssetTransform` 契约一致；app 侧 `<group position rotation scale>` 也是同一套。
+ *
+ * 单独抽出来是因为"量包围盒"和"把网格顶点搬到世界空间"必须用**同一份**合成顺序：
+ * 采样表面高度时只要这两处差一点，落点就会偏出物体。
+ */
+export function placementMatrix(transform: AssetTransform): Matrix4 {
+  return new Matrix4().compose(
+    new Vector3(...transform.position),
+    new Quaternion().setFromEuler(new Euler(...transform.rotation, "XYZ")),
+    new Vector3(...transform.scale),
+  );
+}
+
 /** 把局部包围盒按摆放（T·R·S，XYZ 欧拉序）变换成世界包围盒。 */
 export function transformBounds(
   min: Vec3,
   max: Vec3,
   transform: AssetTransform,
 ): ModelBounds {
-  const matrix = new Matrix4().compose(
-    new Vector3(...transform.position),
-    new Quaternion().setFromEuler(new Euler(...transform.rotation, "XYZ")),
-    new Vector3(...transform.scale),
-  );
+  const matrix = placementMatrix(transform);
   const box = new Box3();
   for (const x of [min[0], max[0]]) {
     for (const y of [min[1], max[1]]) {

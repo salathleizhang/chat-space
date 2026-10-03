@@ -15,6 +15,7 @@ import {
   inspectTool,
   listGenerationTasksTool,
   getSceneJobTool,
+  placeObjectTool,
   placeSceneObjectsTool,
   repairAssetsTool,
   retopologizeTool,
@@ -50,6 +51,7 @@ export function createCreatorAgent(
       "generate-texture": generateTextureTool,
       "analyze-scene": analyzeSceneTool,
       "place-scene-objects": placeSceneObjectsTool,
+      "place-object": placeObjectTool,
       ...(options.enableAnalyzeReference
         ? { "analyze-reference": analyzeReferenceTool }
         : {}),

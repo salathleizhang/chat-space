@@ -1,11 +1,18 @@
 import { NodeIO, Primitive, type Node as GltfNode } from "@gltf-transform/core";
 import { Matrix4 } from "three";
-import type { Vec3 } from "../dto/library";
+import type { AssetTransform, Vec3 } from "../dto/library";
 import type { WorldSemantics } from "../models/worldlabs";
 import type { AssetStorage } from "./assetStorage";
+import { placementMatrix } from "./modelBounds";
 
 /**
- * 从 World Labs 的 collider 网格里取"某个 (x, z) 处的地面高度"。
+ * 从一个三角网格里取"某个 (x, z) 处的高度"。两个调用场景：
+ *
+ * - **世界地形**：World Labs 的 collider 网格，用 `loadWorldGroundMesh` 做世界对齐后
+ *   取最接近地面的那一层（`sampleGroundHeight`）；
+ * - **资产表面**：把物体放到另一个模型上面（"小熊放在沙发坐垫上"）时，用
+ *   `loadModelSurfaceMesh` 把该资产评估的摆放一起烘进顶点，再取最高的那一层
+ *   （`sampleHighestSurface`）。
  *
  * 为什么需要它：模型默认被摆在 y=0 的平面上，而生成出来的世界地面并不总是恰好
  * 在 0——有台阶、地台、地毯或倾斜地面时，家具会浮空或陷进地里。有了这张真实
@@ -67,18 +74,17 @@ export function alignGroundMesh(mesh: GroundMesh, semantics: WorldSemantics): Gr
 }
 
 /**
- * (x, z) 处的地面高度；命中不到（网格不覆盖该点）返回 `null`。
- * `reference` 是"哪一层更像地面"的判据，默认 0（世界对齐后的地面平面）。
+ * 遍历所有在 (x, z) 上不退化的三角形，回调它在该点的插值高度。
+ * 两个采样器共用这一份投影与插值：地面要"最接近参考平面"的那层，资产表面要
+ * "最高的"那层，差别只在挑哪一个。
  */
-export function sampleGroundHeight(
+function forEachSurfaceHeight(
   mesh: GroundMesh,
   x: number,
   z: number,
-  reference = 0,
-): number | null {
+  visit: (y: number) => void,
+): void {
   const positions = mesh.positions;
-  let best: number | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
   for (let triangle = 0; triangle < mesh.triangleCount; triangle += 1) {
     const offset = triangle * 9;
     const ax = positions[offset]!;
@@ -105,13 +111,51 @@ export function sampleGroundHeight(
     const u = (px * v1z - v1x * pz) / denominator;
     const v = (v0x * pz - px * v0z) / denominator;
     if (u < -EPSILON || v < -EPSILON || u + v > 1 + EPSILON) continue;
-    const y = ay + u * (by - ay) + v * (cy - ay);
+    visit(ay + u * (by - ay) + v * (cy - ay));
+  }
+}
+
+/**
+ * (x, z) 处的地面高度；命中不到（网格不覆盖该点）返回 `null`。
+ * `reference` 是"哪一层更像地面"的判据，默认 0（世界对齐后的地面平面）。
+ */
+export function sampleGroundHeight(
+  mesh: GroundMesh,
+  x: number,
+  z: number,
+  reference = 0,
+): number | null {
+  let best: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  forEachSurfaceHeight(mesh, x, z, (y) => {
     const distance = Math.abs(y - reference);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = y;
     }
-  }
+  });
+  return best;
+}
+
+/**
+ * (x, z) 处**最高**的那一层表面；命中不到返回 `null`。
+ *
+ * 用来把物体放到另一个模型上面：在目标资产的 AABB 中心取一道竖直射线，最高的
+ * 面通常就是坐垫/桌面/床垫——底部那一层是同一个零件的背面（比如坐垫的下沿）。
+ * 竖直面在 `forEachSurfaceHeight` 里已经被投影退化挡掉了，墙面不会冒充台面。
+ *
+ * 它是**启发式**：目标形状特殊时（靠背正上方、镂空、多层架子）最高层未必是想要
+ * 的那层，调用方要用 `offset` 把采样点挪开，或干脆传显式坐标。
+ */
+export function sampleHighestSurface(
+  mesh: GroundMesh,
+  x: number,
+  z: number,
+): number | null {
+  let best: number | null = null;
+  forEachSurfaceHeight(mesh, x, z, (y) => {
+    if (best === null || y > best) best = y;
+  });
   return best;
 }
 
@@ -122,28 +166,61 @@ export function buildGroundSampler(mesh: GroundMesh | null): (x: number, z: numb
 }
 
 /**
- * 读世界资产的 collider GLB 并做世界对齐。读不出、不是 GLB、面数超限、
- * 或位置属性不是 Float32（量化过的网格）都返回 `null`，交由调用方退回平面。
+ * 读一个 GLB 的三角形。`root` 是可选的外层矩阵（资产评估的摆放），在节点矩阵之前
+ * 乘进去。读不出、不是 GLB、面数超限、或位置属性不是 Float32（量化过的网格）
+ * 都返回 `null`。
+ */
+async function loadGlbTriangles(
+  storage: AssetStorage,
+  modelPath: string,
+  root?: Matrix4,
+): Promise<GroundTriangle[] | null> {
+  if (!modelPath.toLowerCase().endsWith(".glb")) return null;
+  try {
+    const document = await new NodeIO().readBinary(await storage.readBytes(modelPath));
+    const triangles: GroundTriangle[] = [];
+    const base = root ?? new Matrix4();
+    for (const scene of document.getRoot().listScenes()) {
+      for (const node of scene.listChildren()) {
+        collectNodeTriangles(node, base, triangles);
+      }
+    }
+    if (triangles.length === 0 || triangles.length > MAX_TRIANGLES) return null;
+    return triangles;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 读世界资产的 collider GLB 并做世界对齐。失败一律返回 `null`，
+ * 交由调用方退回平面 y=0。
  */
 export async function loadWorldGroundMesh(
   storage: AssetStorage,
   modelPath: string,
   semantics: WorldSemantics,
 ): Promise<GroundMesh | null> {
-  if (!modelPath.toLowerCase().endsWith(".glb")) return null;
-  try {
-    const document = await new NodeIO().readBinary(await storage.readBytes(modelPath));
-    const triangles: GroundTriangle[] = [];
-    for (const scene of document.getRoot().listScenes()) {
-      for (const node of scene.listChildren()) {
-        collectNodeTriangles(node, new Matrix4(), triangles);
-      }
-    }
-    if (triangles.length === 0 || triangles.length > MAX_TRIANGLES) return null;
-    return alignGroundMesh(groundMeshFromTriangles(triangles), semantics);
-  } catch {
-    return null;
-  }
+  const triangles = await loadGlbTriangles(storage, modelPath);
+  return triangles ? alignGroundMesh(groundMeshFromTriangles(triangles), semantics) : null;
+}
+
+/**
+ * 读一个**模型资产**的 GLB，把该资产当前的摆放烘进顶点，得到"世界空间里的表面网格"。
+ * 之后用 `sampleHighestSurface` 就能回答"这个资产在某个 (x,z) 处的上表面有多高"。
+ *
+ * 摆放必须烘进去：资产的 `position/rotation/scale` 存在 `scene.json` 里，GLB 本身
+ * 是局部坐标；不烘就等于在问"模型原始文件的上表面"，而用户看到的、以及另一个物体
+ * 要落上去的那个面，是世界空间里的那一份。用 `placementMatrix` 与量包围盒共用同一
+ * 份合成顺序（差一点落点就偏出物体）。
+ */
+export async function loadModelSurfaceMesh(
+  storage: AssetStorage,
+  modelPath: string,
+  transform: AssetTransform,
+): Promise<GroundMesh | null> {
+  const triangles = await loadGlbTriangles(storage, modelPath, placementMatrix(transform));
+  return triangles ? groundMeshFromTriangles(triangles) : null;
 }
 
 /** 遍历节点树，把每个三角形的三个顶点乘上累积节点矩阵。 */

@@ -54,6 +54,11 @@ async function addModelAsset(
   await storage.writeBytes(`${dir}/${thumbnailFileName(modelFile)}`, PNG_BYTES);
   await writeJson(storage, assetIdentityFile(projectSlug, slug), AssetIdentitySchema, {
     schemaVersion: 1,
+    /*
+      **稳定 id 与 slug 不同**是刻意的：scene.json 的表按 id 索引，夹具如果只写 slug，
+      "查表查错键"这个 bug 会被夹具自己遮住（老夹具就是这么绿的）。
+    */
+    id: `asset-${slug}`,
     slug,
     kind: "model",
     name,
@@ -86,13 +91,23 @@ beforeAll(async () => {
   await addModelAsset("layout", "chair", "椅子", "2026-01-01T00:00:00.000Z");
   await addModelAsset("layout", "table", "桌子", "2026-01-02T00:00:00.000Z");
   await writeSceneTransforms(storage, "layout", {
-    chair: {
+    "asset-chair": {
       position: [10, 0, 0],
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
     },
   });
   await createProject(storage, { name: "Empty", slug: "empty-scene" });
+  // 只有 slug 键的 v3 文档：老的写入口曾经这么写，查表必须**不认**它。
+  await createProject(storage, { name: "LegacyKeys", slug: "legacy-keys" });
+  await addModelAsset("legacy-keys", "chair", "椅子", "2026-01-01T00:00:00.000Z");
+  await writeSceneTransforms(storage, "legacy-keys", {
+    chair: {
+      position: [9, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    },
+  });
 });
 
 afterAll(async () => {
@@ -130,5 +145,16 @@ describe("analyze-scene", () => {
     expect(
       runAnalyzeCurrentScene("empty-scene", {}, { apiKey: "sk-test" }),
     ).rejects.toThrow("没有可分析的模型资产");
+  });
+
+  /**
+   * 这条钉住的是"查表按哪个键"。scene.json 从 v3 起按资产**稳定 id** 索引，而
+   * `analyze-scene` 曾经用 slug 查表：手动摆过的资产永远命中不到，报给模型的坐标
+   * 一直是网格默认位——"把玩偶放到沙发上"这类请求就建立在一份错的位置上。
+   */
+  test("存在 slug 键下的旧记录不被采纳，退回与视口一致的网格默认位", async () => {
+    await runAnalyzeCurrentScene("legacy-keys", {}, { apiKey: "sk-test" });
+    expect(captured?.assets[0]?.transform.position).toEqual([0, 0, 0]);
+    expect(captured?.assets[0]?.transform.position).not.toEqual([9, 0, 0]);
   });
 });

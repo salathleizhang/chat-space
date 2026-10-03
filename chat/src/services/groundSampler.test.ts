@@ -4,6 +4,7 @@ import {
   buildGroundSampler,
   groundMeshFromTriangles,
   sampleGroundHeight,
+  sampleHighestSurface,
   type GroundTriangle,
 } from "./groundSampler";
 
@@ -50,6 +51,34 @@ describe("sampleGroundHeight", () => {
   test("竖直墙面不会被当成地面", () => {
     const mesh = groundMeshFromTriangles([WALL]);
     expect(sampleGroundHeight(mesh, 0, 0)).toBeNull();
+  });
+});
+
+describe("sampleHighestSurface", () => {
+  /**
+   * "把物体放到另一个模型上面"用的就是这个：在目标资产上取**最高**的一层。
+   * 与 `sampleGroundHeight` 的差别是判据——那个要"最接近参考面"（天花板不参与），
+   * 这个要最高（坐垫的下沿与桌面都能取到，取上面那一层）。
+   */
+  test("同一点有多层时取最高的一层", () => {
+    const mesh = groundMeshFromTriangles([...plane(0), ...plane(2.5)]);
+    expect(sampleHighestSurface(mesh, 0, 0)).toBeCloseTo(2.5, 6);
+    expect(sampleHighestSurface(mesh, 0.5, -0.5)).toBeCloseTo(2.5, 6);
+  });
+
+  test("竖直墙面在 XZ 上退化，不冒充台面；点落在网格外给 null", () => {
+    expect(sampleHighestSurface(groundMeshFromTriangles([WALL]), 0, 0)).toBeNull();
+    const mesh = groundMeshFromTriangles(plane(1));
+    expect(sampleHighestSurface(mesh, 4, 4)).toBeNull();
+  });
+
+  test("倾斜面按三角形插值取高度", () => {
+    // 平面 y = z + 1：z=0 处是 1，而顶点高度只有 0 和 2。
+    const slope: GroundTriangle[] = [
+      [[-1, 0, -1], [1, 0, -1], [1, 2, 1]],
+      [[-1, 0, -1], [1, 2, 1], [-1, 2, 1]],
+    ];
+    expect(sampleHighestSurface(groundMeshFromTriangles(slope), 0, 0)).toBeCloseTo(1, 6);
   });
 });
 

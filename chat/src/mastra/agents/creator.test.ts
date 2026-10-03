@@ -61,6 +61,18 @@ describe("creator 工具可用性", () => {
     expect(Object.keys(tools)).not.toContain("generate-plate");
     expect(Object.keys(tools)).not.toContain("edit-reference-image");
     expect(tools["analyze-scene"]).toBeDefined();
+    /*
+      摆放有两条路，都要常驻：place-scene-objects 按参考图重算整套布局（要求项目已有
+      已确认场景），place-object 按显式位置/目标表面摆单个对象（不需要 SceneSpec）。
+      少了后者，"给小熊找个地方放"在没跑过完整场景的项目里就没有任何工具可用。
+    */
+    expect(tools["place-scene-objects"]).toBeDefined();
+    expect(tools["place-object"]).toBeDefined();
+    const placeObjectSchema = z.toJSONSchema(
+      (tools["place-object"] as unknown as { inputSchema: z.ZodType }).inputSchema,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown> };
+    expect(Object.keys(placeObjectSchema.properties ?? {})).toEqual(["items"]);
     expect(tools["analyze-reference"]).toBeUndefined();
     /*
       检查工具只有 inspect 一个（target 区分模型/场景）；旧的 inspect-asset 已并入它。

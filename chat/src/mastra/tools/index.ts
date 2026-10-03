@@ -18,6 +18,7 @@ export {
 } from "./sceneJobOps";
 export { analyzeSceneTool } from "./sceneAnalysis";
 export { placeSceneObjectsTool } from "./placement";
+export { placeObjectTool } from "./placeObject";
 export { generateReferenceImagesTool } from "./referenceImage";
 export { generateCharacterTool, segmentPartsTool } from "./tripoOps";
 export { resumeGenerationTool } from "./resumeGeneration";

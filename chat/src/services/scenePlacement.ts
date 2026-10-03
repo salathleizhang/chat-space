@@ -118,7 +118,18 @@ export function computePlacement(
   };
 }
 
-function placementScale(subject: PlacementSubject): number {
+/**
+ * 模型缩放：给了真实高度就按 `heightMeters / 量到的高度` 归一，否则 1。
+ * 生成器普遍把模型归一化到"最长边 = 1 单位"（Tripo / Hyper3D 都是这样），所以不归一
+ * 时不同资产之间的比例毫无意义——一只玩偶会和一张沙发一样大。
+ *
+ * 导出给显式摆放（`objectPlacement`）复用：两条路必须按同一个判据缩放，否则同一个
+ * `heightMeters` 在"按参考图摆"和"手动摆"下会得到不同大小。
+ */
+export function placementScale(subject: {
+  heightMeters?: number;
+  bounds?: { size: Vec3 };
+}): number {
   const target = subject.heightMeters;
   const measured = subject.bounds?.size[1];
   if (target === undefined || measured === undefined) return 1;

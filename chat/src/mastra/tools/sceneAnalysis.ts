@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ChatServiceError } from "../../common/errors";
 import { assetDir } from "../../common/libraryPaths";
 import type { LlmConfig } from "../../dto/chat";
-import type { AssetTransform, Vec3 } from "../../dto/library";
+import { assetStableId } from "../../dto/library";
 import {
   getAssetStorage,
   readAsDataUri,
@@ -14,6 +14,7 @@ import {
   getCurrentSceneAnalyzer,
   type CurrentSceneSnapshot,
 } from "../../services/sceneAnalysis";
+import { comparePlaceable, computeSceneLayout } from "../../services/sceneLayout";
 import {
   getProjectState,
   thumbnailFileName,
@@ -24,39 +25,13 @@ import {
   requireCurrentProject,
 } from "./requestContext";
 
-const GRID_CELL_SIZE = 3;
-const GRID_MAX_COLUMNS = 3;
-const ZERO: Vec3 = [0, 0, 0];
-const ONE: Vec3 = [1, 1, 1];
-
 interface SceneModelAsset {
   asset: AssetState;
   modelFile: string;
-}
-
-function defaultPosition(index: number, total: number): Vec3 {
-  const columns = Math.min(GRID_MAX_COLUMNS, Math.max(1, total));
-  const column = index % columns;
-  const row = Math.floor(index / columns);
-  return [
-    (column - (columns - 1) / 2) * GRID_CELL_SIZE,
-    0,
-    row === 0 ? 0 : row * -GRID_CELL_SIZE,
-  ];
-}
-
-function effectiveTransform(
-  saved: AssetTransform | undefined,
-  index: number,
-  total: number,
-): AssetTransform {
-  return (
-    saved ?? {
-      position: defaultPosition(index, total),
-      rotation: ZERO,
-      scale: ONE,
-    }
-  );
+  /** 资产稳定 id——scene.json 的表就是按它索引的。 */
+  id: string;
+  slug: string;
+  createdAt?: string;
 }
 
 async function buildCurrentSceneSnapshot(
@@ -65,17 +40,18 @@ async function buildCurrentSceneSnapshot(
 ): Promise<CurrentSceneSnapshot> {
   const state = await getProjectState(storage, projectSlug);
   const models: SceneModelAsset[] = state.assets
-    .map((asset) => ({ asset, modelFile: latestModelFile(asset.files) }))
+    .map((asset) => ({
+      asset,
+      modelFile: latestModelFile(asset.files),
+      id: assetStableId(asset.identity, asset.slug),
+      slug: asset.slug,
+      ...(asset.identity?.createdAt ? { createdAt: asset.identity.createdAt } : {}),
+    }))
     .filter(
       (entry): entry is SceneModelAsset =>
         Boolean(entry.modelFile) && entry.asset.identity?.kind !== "world",
     )
-    .sort((a, b) => {
-      const ac = a.asset.identity?.createdAt ?? "";
-      const bc = b.asset.identity?.createdAt ?? "";
-      if (ac !== bc) return ac < bc ? -1 : 1;
-      return a.asset.slug.localeCompare(b.asset.slug);
-    });
+    .sort(comparePlaceable);
 
   if (models.length === 0) {
     throw new ChatServiceError(
@@ -85,15 +61,19 @@ async function buildCurrentSceneSnapshot(
     );
   }
 
+  /*
+    摆放必须按**资产稳定 id**查（scene.json 从 v3 起就是这么索引的），不能用 slug：
+    用 slug 查表时手动摆过的资产永远命中不到，于是这里会把网格默认位当成当前坐标
+    报给模型——"把玩偶放到沙发上"这类请求就建立在一份错的位置上。
+    默认位与视口共用 `computeSceneLayout`，两边给出同一组坐标。
+  */
+  const layout = computeSceneLayout(models, state.scene?.transforms ?? {});
+
   const assets = await Promise.all(
-    models.map(async ({ asset, modelFile }, index) => {
+    models.map(async ({ asset, modelFile, id }, index) => {
       const dir = assetDir(projectSlug, asset.slug);
       const modelPath = `${dir}/${modelFile}`;
-      const transform = effectiveTransform(
-        state.scene?.transforms[asset.slug],
-        index,
-        models.length,
-      );
+      const transform = layout.get(id)!;
       const thumbFile = thumbnailFileName(modelFile);
       const thumbPath = `${dir}/${thumbFile}`;
       return {
