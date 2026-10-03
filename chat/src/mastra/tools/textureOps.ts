@@ -30,7 +30,7 @@ export const generateTextureTool = createTool({
       "texture",
       projectSlug,
       `贴图生成（Tripo）：${input.assetSlug}`,
-      () => runTripoTexture(
+      (task) => runTripoTexture(
         getAssetStorage(),
         {
           projectSlug,
@@ -40,7 +40,9 @@ export const generateTextureTool = createTool({
           textureQuality: input.textureQuality,
           delight: input.delight,
         },
-        { apiKey: tripoKey },
+        // 阶段必须落盘：贴图是「提交 → 轮询 → 下载几十 MB」，不报阶段时任务全程停在 queued、
+        // updatedAt 一动不动，看板上与卡死无法区分（2026-10-02 就是这么挂掉一次）。
+        { apiKey: tripoKey, onPhase: (phase) => task.setPhase(phase) },
       ),
       { assetSlug: input.assetSlug },
     );

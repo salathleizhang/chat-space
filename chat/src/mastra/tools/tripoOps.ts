@@ -23,6 +23,7 @@ import {
   type ReferenceImageViews,
   type RequestSidecar,
 } from "../../dto/library";
+import type { GenerationPhase } from "../../dto/tasks";
 import { convertModel } from "../../services/modelConvert";
 import {
   DEFAULT_TRIPO_IMAGE_MODEL,
@@ -71,6 +72,14 @@ import {
  */
 
 const TRIPO_PROVIDER = "tripo";
+
+/**
+ * Tripo 的轮询状态 → 任务阶段。
+ * 终态之前的每一查都算"在生成"（`running` / `queued` / `processing` …），拿到终态才是"在下产物"。
+ */
+export function tripoStatusPhase(status: string): GenerationPhase {
+  return status === "success" ? "downloading" : "generating";
+}
 
 /** 单图与已标注多视角一起解析；普通的多张 sourceImages 不会被误判为四视图。 */
 async function resolveTripoImages(
@@ -483,6 +492,7 @@ export async function runTripoSegmentation(
       updatedAt: now(),
     });
   await saveSidecar();
+  const onPhase = callOptions.onPhase;
 
   try {
     const { files, taskId } = await runTripoTask(
@@ -492,8 +502,16 @@ export async function runTripoSegmentation(
         sidecar.providerTaskId = taskId;
         sidecar.status = "running";
         await saveSidecar();
+        await onPhase?.("generating");
 
-        const data = await waitForTripoTask(taskId, callOptions);
+        const data = await waitForTripoTask(taskId, {
+          ...callOptions,
+          onStatus: async (status) => {
+            await callOptions.onStatus?.(status);
+            await onPhase?.(tripoStatusPhase(status));
+          },
+        });
+        await onPhase?.("downloading");
         const files = await landTripoOutputs(
           storage,
           dir,
@@ -595,11 +613,11 @@ export const segmentPartsTool = createTool({
       "segment",
       projectSlug,
       `部件分割：${input.assetSlug}`,
-      () =>
+      (task) =>
         runTripoSegmentation(
           getAssetStorage(),
           { projectSlug, assetSlug: input.assetSlug },
-          { apiKey },
+          { apiKey, onPhase: (phase) => task.setPhase(phase) },
         ),
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };
@@ -919,7 +937,7 @@ export const generateCharacterTool = createTool({
       "character",
       projectSlug,
       `3D 人物生成（Tripo）：${input.assetSlug}`,
-      () =>
+      (task) =>
         runTripoCharacter(
           getAssetStorage(),
           {
@@ -929,7 +947,7 @@ export const generateCharacterTool = createTool({
             spec: input.spec,
             rigModel: input.tripoRigModel,
           },
-          { apiKey },
+          { apiKey, onPhase: (phase) => task.setPhase(phase) },
         ),
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };
@@ -970,6 +988,7 @@ async function runTripoV3Job(
       updatedAt: now(),
     });
   await saveSidecar();
+  const onPhase = callOptions.onPhase;
 
   try {
     const { files, taskId } = await runTripoTask(
@@ -979,7 +998,17 @@ async function runTripoV3Job(
         sidecar.providerTaskId = taskId;
         sidecar.status = "running";
         await saveSidecar();
-        const data = await waitForTripoTask(taskId, callOptions);
+        await onPhase?.("generating");
+        const data = await waitForTripoTask(taskId, {
+          ...callOptions,
+          // 每查一次都推一次阶段：任务时间戳跟着走，卡死看门狗才分得出"在动"和"没动"
+          // （与世界生成同一口径，见 tasks.ts 的 onStatus 注释）
+          onStatus: async (status) => {
+            await callOptions.onStatus?.(status);
+            await onPhase?.(tripoStatusPhase(status));
+          },
+        });
+        await onPhase?.("downloading");
         const files = await landTripoOutputs(
           storage,
           dir,

@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import type { GenerationPhase } from "../../dto/tasks";
 import { SlugSchema } from "../../dto/library";
 import { TRIPO_DECIMATE_FACES } from "../../models/tripo";
 import { getAssetStorage } from "../../services/assetStorage";
@@ -22,7 +23,11 @@ function startTripoTask(
   context: unknown,
   kind: MeshOperation,
   subject: string,
-  run: (projectSlug: string, apiKey: string) => Promise<unknown>,
+  run: (
+    projectSlug: string,
+    apiKey: string,
+    onPhase: (phase: GenerationPhase) => Promise<void>,
+  ) => Promise<unknown>,
 ) {
   const projectSlug = requireCurrentProject(context as never);
   const apiKey = requireContextString(
@@ -30,8 +35,9 @@ function startTripoTask(
     "tripo3dApiKey",
     "本机 chat/.env 未配置 TRIPO_KEY",
   );
-  const task = startCustomTask(kind, projectSlug, subject, () =>
-    run(projectSlug, apiKey),
+  const task = startCustomTask(kind, projectSlug, subject, (task) =>
+    // 绑骨/降面同样是「提交 → 轮询 → 下载」，阶段必须落盘（否则全程停在 queued）
+    run(projectSlug, apiKey, (phase) => task.setPhase(phase)),
   );
   return { task: { id: task.id, subject: task.subject, status: task.status } };
 }
@@ -54,7 +60,7 @@ export const retopologizeTool = createTool({
     bake: z.boolean().optional(),
   }),
   execute: async (input, context) =>
-    startTripoTask(context, "retopo", `重拓扑：${input.assetSlug}`, (projectSlug, apiKey) =>
+    startTripoTask(context, "retopo", `重拓扑：${input.assetSlug}`, (projectSlug, apiKey, onPhase) =>
       // 结果里也带 modelInfo：交付时能如实报出"现在多少面"（降面任务本身不再触发降面卡片）
       runWithGeneratedModelInfo(getAssetStorage(), projectSlug, input.assetSlug, () =>
         runTripoRetopology(
@@ -67,7 +73,7 @@ export const retopologizeTool = createTool({
             model: input.tripoModel,
             bake: input.bake,
           },
-          { apiKey },
+          { apiKey, onPhase },
         ),
       ),
     ),
@@ -86,7 +92,7 @@ export const rigModelTool = createTool({
     tripoRigModel: z.enum(["v1.0-20240301", "v2.5-20260210"]).optional(),
   }),
   execute: async (input, context) =>
-    startTripoTask(context, "rig", `绑骨蒙皮：${input.assetSlug}`, (projectSlug, apiKey) =>
+    startTripoTask(context, "rig", `绑骨蒙皮：${input.assetSlug}`, (projectSlug, apiKey, onPhase) =>
       runTripoRig(
         getAssetStorage(),
         {
@@ -96,7 +102,7 @@ export const rigModelTool = createTool({
           spec: input.spec,
           model: input.tripoRigModel,
         },
-        { apiKey },
+        { apiKey, onPhase },
       ),
     ),
 });

@@ -8,8 +8,11 @@ import { TRIPO_P2_MODEL } from "../../models/tripo";
 import {
   LocalFileStorage,
   readJson,
+  setAssetStorage,
   writeJson,
 } from "../../services/assetStorage";
+import { clearTasks, listTasks } from "../../services/tasks";
+import { generateTextureTool } from "./textureOps";
 import { createProject, getProjectState } from "./projectTools";
 import {
   runTripoAnimationRetarget,
@@ -19,6 +22,7 @@ import {
   runTripoRig,
   runTripoSegmentation,
   runTripoTexture,
+  tripoStatusPhase,
 } from "./tripoOps";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-tripo-test-"));
@@ -30,10 +34,14 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 假 Tripo：v3 上传 → file_token；STS + S3 直传；v3 能力端点 → task_id → success + CDN */
-function makeFakeTripoFetch() {
+/**
+ * 假 Tripo：v3 上传 → file_token；STS + S3 直传；v3 能力端点 → task_id → success + CDN。
+ * `pendingPolls` 让前 N 次状态查询先回 `running`（用来验证任务阶段随轮询推进）。
+ */
+function makeFakeTripoFetch(options: { pendingPolls?: number } = {}) {
   const calls: { url: string; body?: unknown }[] = [];
   let uploadCount = 0;
+  let pendingPolls = options.pendingPolls ?? 0;
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith("https://cdn.fake/")) {
@@ -105,6 +113,16 @@ function makeFakeTripoFetch() {
       // 批量查询：一次请求回答一批 task_id（官方 POST /tasks/list 的形状）
       const ids = (JSON.parse(String(init?.body)) as { task_ids: string[] }).task_ids;
       calls.push({ url, body: { task_ids: ids } });
+      if (pendingPolls > 0) {
+        pendingPolls -= 1;
+        return jsonResponse({
+          code: 0,
+          data: {
+            tasks: Object.fromEntries(ids.map((id) => [id, { status: "running", progress: 40 }])),
+            missed: [],
+          },
+        });
+      }
       return jsonResponse({
         code: 0,
         data: {
@@ -237,6 +255,109 @@ describe("runTripoTexture", () => {
       delight: false,
     });
   });
+});
+
+describe("Tripo 任务的阶段推进", () => {
+  test("状态映射：终态之前都算生成，拿到产物才是下载", () => {
+    expect(tripoStatusPhase("queued")).toBe("generating");
+    expect(tripoStatusPhase("running")).toBe("generating");
+    expect(tripoStatusPhase("processing")).toBe("generating");
+    expect(tripoStatusPhase("success")).toBe("downloading");
+  });
+
+  test("runTripoTexture 全程报阶段：提交后 generating、每次轮询再刷、产物落地前 downloading", async () => {
+    const dir = assetDir("tp", "phase-crate");
+    await writeJson(storage, assetIdentityFile("tp", "phase-crate"), AssetIdentitySchema, {
+      schemaVersion: 1,
+      slug: "phase-crate",
+      kind: "model",
+      name: "Phase crate",
+      intent: "A crate for the phase test",
+      sourceImages: [],
+      createdAt: new Date().toISOString(),
+    });
+    await storage.writeBytes(`${dir}/0-phase-crate.glb`, GLB_BYTES);
+
+    // 两次 running 之后才 success：阶段必须被反复推进，任务时间戳才跟着走
+    const { fetchFn } = makeFakeTripoFetch({ pendingPolls: 2 });
+    const phases: string[] = [];
+    const result = await runTripoTexture(
+      storage,
+      { projectSlug: "tp", assetSlug: "phase-crate", prompt: "green fabric" },
+      {
+        apiKey: "tsk-1",
+        fetchFn,
+        pollIntervalMs: 1,
+        onPhase: (phase) => {
+          phases.push(phase);
+        },
+      },
+    );
+
+    expect(phases[0]).toBe("generating");
+    // 提交 1 次 + 两次 running 轮询：世界里"卡死"和"在动"的区别就靠这个
+    expect(phases.filter((phase) => phase === "generating").length).toBeGreaterThanOrEqual(3);
+    expect(phases.at(-1)).toBe("downloading");
+    const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
+    expect(sidecar.status).toBe("succeeded");
+  });
+});
+
+describe("generateTextureTool 的任务接线", () => {
+  test(
+    "贴图任务不再停在 queued：阶段随轮询推进并最终成功",
+    async () => {
+      setAssetStorage(storage);
+      const dir = assetDir("tp", "tool-crate");
+      await writeJson(storage, assetIdentityFile("tp", "tool-crate"), AssetIdentitySchema, {
+        schemaVersion: 1,
+        slug: "tool-crate",
+        kind: "model",
+        name: "Tool crate",
+        intent: "A crate for the tool-level wiring test",
+        sourceImages: [],
+        createdAt: new Date().toISOString(),
+      });
+      await storage.writeBytes(`${dir}/0-tool-crate.glb`, GLB_BYTES);
+
+      // 第一次轮询回 running，第二次才 success。**故意不注入测试专用的轮询间隔**：
+      // Tripo 默认 10 秒，所以这一条比其它测试慢——它钉住的正是"忘了把 setPhase 接上"
+      // 这个静默缺陷（2026-10-02 的绿色贴图就是这么全程停在 queued 的）。
+      const { fetchFn } = makeFakeTripoFetch({ pendingPolls: 1 });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = fetchFn;
+      try {
+        const started = (await generateTextureTool.execute!(
+          { assetSlug: "tool-crate", stylePrompt: "medium green fabric", enablePbr: true },
+          {
+            requestContext: new Map([
+              ["projectSlug", "tp"],
+              ["tripo3dApiKey", "tsk-1"],
+            ]),
+          } as never,
+        )) as { task: { id: string } };
+
+        const phases = new Set<string>();
+        let task = (await listTasks("tp")).find((entry) => entry.id === started.task.id);
+        const deadline = Date.now() + 25_000;
+        while (task && task.status === "running") {
+          phases.add(task.phase);
+          if (Date.now() > deadline) throw new Error("贴图任务在 25 秒内没有收敛");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          task = (await listTasks("tp")).find((entry) => entry.id === started.task.id);
+        }
+
+        expect(phases.has("generating")).toBe(true);
+        expect(task?.status).toBe("succeeded");
+        expect(task?.phase).toBe("completed");
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearTasks();
+        setAssetStorage(undefined);
+      }
+    },
+    { timeout: 40_000 },
+  );
 });
 
 afterAll(() => rm(root, { recursive: true, force: true }));

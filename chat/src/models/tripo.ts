@@ -9,6 +9,7 @@ import {
 } from "../common/http";
 import { pollProviderTask } from "../common/polling";
 import { currentTaskPump } from "../common/taskPump";
+import type { GenerationPhase } from "../dto/tasks";
 import { tripoCategoryFor, tripoGate } from "./tripoConcurrency";
 import { tripoTaskQuerierFor } from "./tripoTaskQuery";
 
@@ -69,6 +70,12 @@ export interface TripoCallOptions {
   /** 贴图模型版本；缺省按几何模型推导（v2.5 → v2.5，其余 → 最新 v3.5） */
   textureModel?: string;
   onStatus?: (status: string) => void | Promise<void>;
+  /**
+   * 阶段推进：Tripo 后处理全是长流程（提交 → 轮询 → 下载几十 MB），不报阶段时任务会全程停在
+   * `queued`，看板上跟"卡死"一模一样、`updatedAt` 也不动（2026-10-02 的贴图任务就这样挂了 20 分钟，
+   * 而供应商 43 秒就完成了）。调用方把它接到 `TaskExecutionContext.setPhase` 上。
+   */
+  onPhase?: (phase: GenerationPhase) => void | Promise<void>;
 }
 
 function authHeader(apiKey: string): Record<string, string> {
