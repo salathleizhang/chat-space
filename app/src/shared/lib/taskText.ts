@@ -19,3 +19,17 @@ export function taskSubjectLabel(subject: string): string {
     .replace(/^UV 展开：/, "UV unwrapping: ")
     .replace(/^续跑：/, "Resume: ");
 }
+
+/**
+ * `running` 但长时间没有进展 → 一行诊断文案。
+ *
+ * 时长分两档（秒 / 分钟），避免 1 Hz 的看板把一串数字刷在列表里；
+ * `pumpActive=false` 是另一层意思：本机已经没有推进闸门照看它（见 chat 侧 `common/taskPump.ts`），
+ * 那才需要续跑或重试，而"慢了"只需要继续等。
+ */
+export function taskStallLabel(stall: { silentForMs: number; pumpActive: boolean }): string {
+  const seconds = Math.max(1, Math.round(stall.silentForMs / 1000));
+  // 两分钟以内按秒（90 秒的告警阈值刚过时要看到"90s"，而不是四舍五入成"2 min"）
+  const waited = seconds < 120 ? `${seconds}s` : `${Math.round(seconds / 60)} min`;
+  return stall.pumpActive ? `no progress for ${waited}` : `no local driver for ${waited}`;
+}

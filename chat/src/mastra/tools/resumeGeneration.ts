@@ -254,6 +254,23 @@ async function scanDir(
   }
 }
 
+/**
+ * 单个任务的 work 目录里有没有**已提交**（有 providerTaskId）的可续跑侧写。
+ *
+ * 重启自动续跑走这条路，不为此扫整个项目：事故恢复发生在任务列表这条 1 Hz 的读路径上，
+ * 一次 readdir 与整个项目几十个目录的扫描是两种开销。没提交过的侧写（连 providerTaskId
+ * 都没有）不算可续跑——续跑它等于重新付费，必须由用户/Agent 决定。
+ */
+export async function resumableSidecarForTask(
+  storage: AssetStorage,
+  projectSlug: string,
+  taskId: string,
+): Promise<ResumableEntry | undefined> {
+  const found: ResumableEntry[] = [];
+  await scanDir(storage, projectTaskWorkDir(projectSlug, taskId), found);
+  return found.find((entry) => entry.hasProviderTaskId);
+}
+
 /** 扫描项目里所有可续跑的侧写（queued/running，或已提交但失败的 failed） */
 export async function listResumableSidecars(
   storage: AssetStorage,

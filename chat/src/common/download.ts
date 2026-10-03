@@ -6,6 +6,7 @@ import {
   readBodyWithTimeout,
   sleep,
 } from "./http";
+import { currentTaskPump } from "./taskPump";
 
 /**
  * 产物下载：有限重试 + 断点续传。
@@ -21,6 +22,9 @@ import {
  *      全丢，那样重试只能从头再来。
  *
  * 只在拿到完整字节后才交给调用方落盘，正式路径上不会出现半截文件。
+ *
+ * 退避等待同样走任务闸门（`common/taskPump.ts`）：本进程定时器停摆时，
+ * 工作台每秒一次的 `GET /api/tasks` 会把重试推着走，而不是把下载永远停在那里。
  */
 export interface DownloadBytesOptions {
   fetchFn?: typeof fetch;
@@ -148,7 +152,8 @@ export async function downloadBytesWithRetry(
       // 明确回错（404 等）不重试，原样冒泡，保留它自己的错误码与文案。
       if (!isRetryableDownloadError(error)) throw error;
       if (attempt === maxAttempts) break;
-      await sleep(backoffMs(attempt, backoffBaseMs));
+      await (currentTaskPump()?.wait(backoffMs(attempt, backoffBaseMs)) ??
+        sleep(backoffMs(attempt, backoffBaseMs)));
     }
   }
 

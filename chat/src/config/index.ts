@@ -64,6 +64,24 @@ export const configuredProviders = {
 } as const;
 export const configuredEnvLlmProviders = env.VOLC_KEY ? ["volcengine"] : [];
 
+/**
+ * 进程内自动续跑（重启自愈，见 `services/tasks.ts`）取本机凭证的口子。
+ * 与 HTTP 入口的 `withServerCredentials` 是**同一份来源**，不另存一份、也不从请求里拿。
+ */
+export function serverResumeKeys(): {
+  tripo3dApiKey?: string;
+  seed3dApiKey?: string;
+  worldLabsApiKey?: string;
+  hunyuanApiKey?: string;
+} {
+  return {
+    ...(serverKeys.tripo3dApiKey ? { tripo3dApiKey: serverKeys.tripo3dApiKey } : {}),
+    ...(serverKeys.seed3dApiKey ? { seed3dApiKey: serverKeys.seed3dApiKey } : {}),
+    ...(serverKeys.worldLabsApiKey ? { worldLabsApiKey: serverKeys.worldLabsApiKey } : {}),
+    ...(serverKeys.hunyuanApiKey ? { hunyuanApiKey: serverKeys.hunyuanApiKey } : {}),
+  };
+}
+
 export const config = {
   port: env.CHAT_PORT,
   library: { root: env.CHATSPACE_LIBRARY_DIR ?? defaultLibraryRoot() },

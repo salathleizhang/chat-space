@@ -1,5 +1,6 @@
 import { ChatServiceError } from "../common/errors";
 import { API_REQUEST_TIMEOUT_MS, fetchWithTimeout, readBodyWithTimeout } from "../common/http";
+import { onTaskPumpTick } from "../common/taskPump";
 
 /**
  * Tripo 任务状态查询：走官方的**批量**端点 `POST /tasks/list`
@@ -60,7 +61,9 @@ export class TripoTaskQuerier {
   /** 发出去的批量请求次数（测试与诊断用） */
   private requestCount = 0;
 
-  constructor(private readonly options: TripoTaskQuerierOptions) {}
+  constructor(private readonly options: TripoTaskQuerierOptions) {
+    liveQueriers.add(this);
+  }
 
   get sentRequestCount(): number {
     return this.requestCount;
@@ -81,7 +84,7 @@ export class TripoTaskQuerier {
     });
   }
 
-  /** 立刻发出当前排队的查询（测试用；生产由合并窗口的定时器驱动）。 */
+  /** 立刻发出当前排队的查询（测试与外部推进都用它，见文件末尾 flushAllTripoQueriers）。 */
   flushNow(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
@@ -90,47 +93,64 @@ export class TripoTaskQuerier {
     return this.flush();
   }
 
+  /**
+   * 排一个合并窗口。
+   *
+   * ⚠️ 这里**不能**按 `this.running` 早退：排空期间到达的查询如果既进不了定时器、
+   * 又被排空循环的最后一次 `waiters.size` 检查错过，就会永远留在队列里
+   * （症状：整个查询器从此一个请求都不发）。定时器只是「保证有人来收尾」，
+   * 真正的合并在 `drain()` 的 while 循环里；多排一次定时器是无害的空跑。
+   */
   private schedule(): void {
-    if (this.timer || this.running) return;
+    if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.flush();
     }, this.options.coalesceWindowMs ?? TRIPO_QUERY_COALESCE_WINDOW_MS);
   }
 
+  /**
+   * 立刻发出当前排队的查询（测试与外部推进都用它）。
+   *
+   * ⚠️ `drain()` 在没有等待者时会**同步**跑完（自己把 running 清掉），所以这里
+   * 必须用 settle 回调来收尾，不能 `this.running = run` 之后就撒手：那样 running
+   * 会被一个已经 resolved 的 promise 永久占住，`schedule()` 从此永远早退，
+   * 查询器再也不发请求——外部每秒冲刷一次的路径会立刻踩中这一条。
+   */
   private flush(): Promise<void> {
     if (this.running) return this.running;
     const run = this.drain();
     this.running = run;
+    const settle = () => {
+      if (this.running === run) this.running = null;
+      // 排空期间到达、且被上面的定时器兜住的查询，这里补一次收尾。
+      if (this.waiters.size > 0) this.schedule();
+    };
+    void run.then(settle, settle);
     return run;
   }
 
+  /** 排空队列直到没有等待者。`running` 的生命周期由 `flush()` 的 settle 回调收尾。 */
   private async drain(): Promise<void> {
-    try {
-      while (this.waiters.size > 0) {
-        const batch = this.waiters;
-        this.waiters = new Map();
-        // 超过单请求上限的留在队列里，下一轮再发（不丢、也不超官方 100 的限制）
-        const ids: string[] = [];
-        for (const [id, list] of batch) {
-          if (ids.length >= TRIPO_BATCH_QUERY_MAX_IDS) this.waiters.set(id, list);
-          else ids.push(id);
-        }
-        const budget = Math.min(
-          ...ids.map((id) => batch.get(id)?.[0]?.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS),
-        );
-        for (const [id, outcome] of await this.resolveBatch(ids, budget)) {
-          for (const waiter of batch.get(id) ?? []) {
-            if (outcome instanceof Error) waiter.reject(outcome);
-            else waiter.resolve(outcome);
-          }
+    while (this.waiters.size > 0) {
+      const batch = this.waiters;
+      this.waiters = new Map();
+      // 超过单请求上限的留在队列里，下一轮再发（不丢、也不超官方 100 的限制）
+      const ids: string[] = [];
+      for (const [id, list] of batch) {
+        if (ids.length >= TRIPO_BATCH_QUERY_MAX_IDS) this.waiters.set(id, list);
+        else ids.push(id);
+      }
+      const budget = Math.min(
+        ...ids.map((id) => batch.get(id)?.[0]?.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS),
+      );
+      for (const [id, outcome] of await this.resolveBatch(ids, budget)) {
+        for (const waiter of batch.get(id) ?? []) {
+          if (outcome instanceof Error) waiter.reject(outcome);
+          else waiter.resolve(outcome);
         }
       }
-    } finally {
-      this.running = null;
     }
-    // 排空期间 `running` 挡住了 schedule()，这里补一次
-    if (this.waiters.size > 0) this.schedule();
   }
 
   /**
@@ -231,6 +251,20 @@ export class TripoTaskQuerier {
     return (payload.data ?? {}) as Record<string, unknown>;
   }
 }
+
+/** 进程里所有活着的查询器：外部推进要冲刷它们的合并窗口（见 common/taskPump.ts）。 */
+const liveQueriers = new Set<TripoTaskQuerier>();
+
+/**
+ * 冲刷所有查询器的合并窗口。
+ * 合并窗口是个 25 ms 定时器；本进程定时器停摆时它是链路里最后一处「必须有人来推」的地方，
+ * 所以挂到任务闸门的 tick 上（工作台 1 Hz 的 `GET /api/tasks`）。
+ */
+export function flushAllTripoQueriers(): void {
+  for (const querier of [...liveQueriers]) void querier.flushNow();
+}
+
+onTaskPumpTick(flushAllTripoQueriers);
 
 /** 服务端在 `missed` 里点名（id 非法 / key 不对 / 已过期）时用这个错误，别混成"还在跑" */
 function taskNotFound(taskId: string): ChatServiceError {

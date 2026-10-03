@@ -245,16 +245,22 @@ export const startWorldTaskTool = createTool({
 
 export const listGenerationTasksTool = createTool({
   id: "list-generation-tasks",
-  description: "查看当前项目的生成任务状态（running / succeeded / failed）与产物路径",
+  description:
+    "查看当前项目的生成任务状态（running / succeeded / failed）与产物路径。" +
+    "任务带 `stall` 表示它 running 但长时间没有进展：`pumpActive=true` 说明本机时钟仍在照看它" +
+    "（继续等即可，不要重复提交），`pumpActive=false` 才需要先 resume-generation（凭侧写续跑、不重复付费）再考虑重试",
   inputSchema: z.object({}),
   execute: async (_input, context) => ({
     tasks: (await listTasks(requireCurrentProject(context))).map(
-      ({ id, subject, status, error, result }) => ({
+      ({ id, subject, status, phase, error, result, stall }) => ({
         id,
         subject,
         status,
+        phase,
         error,
         result,
+        // 只在真的停顿时出现，不刷屏：它是"running 且静默超过 90 秒"的读时派生诊断
+        ...(stall ? { stall } : {}),
       }),
     ),
   }),

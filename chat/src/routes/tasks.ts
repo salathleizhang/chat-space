@@ -6,10 +6,7 @@ import {
   StartWorldTaskRequestSchema,
 } from "../dto/tasks";
 import { LogicalPathSchema, SlugSchema } from "../dto/library";
-import {
-  listResumableSidecars,
-  resumeGeneration,
-} from "../mastra/tools/resumeGeneration";
+import { listResumableSidecars } from "../mastra/tools/resumeGeneration";
 import { startSeed3d3dBatch } from "../mastra/tools/seed3dOps";
 import { startTripo3dBatch } from "../mastra/tools/tripoOps";
 import { startArk3dBatch } from "../mastra/tools/ark3dOps";
@@ -19,6 +16,7 @@ import {
   getTask,
   resolve3dObjects,
   startCustomTask,
+  startResumeTask,
   startWorldTask,
 } from "../services/tasks";
 
@@ -143,28 +141,14 @@ const ResumeTaskRequestSchema = z.object({
   seed3dApiKey: z.string().min(1).optional(),
 });
 
-/** 凭侧写续跑（不重新提交）：任务化 202 */
+/**
+ * 凭侧写续跑（不重新提交）：任务化 202。
+ * 与「重启自动续跑」共用 `startResumeTask`——两条入口的凭证来源、判重字段、阶段推进
+ * 必须是同一份，否则自动续跑会变成没人测过的第二条实现。
+ */
 taskRoutes.post("/resume", async (c) => {
   const req = ResumeTaskRequestSchema.parse(withServerCredentials(await c.req.json()));
-  const task = startCustomTask(
-    "resume",
-    req.projectSlug,
-    `续跑：${req.sidecarPath.split("/").pop()}`,
-    async (context) => {
-      // 续跑同样是长流程（轮询 + 下载几十 MB）：报阶段，别让看板只看到 queued。
-      await context.setPhase("generating");
-      return resumeGeneration(
-        getAssetStorage(),
-        req.sidecarPath,
-        {
-          worldLabsApiKey: req.worldLabsApiKey,
-          tripo3dApiKey: req.tripo3dApiKey,
-          seed3dApiKey: req.seed3dApiKey,
-        },
-        (phase) => context.setPhase(phase),
-      );
-    },
-  );
+  const task = startResumeTask(req.projectSlug, req.sidecarPath);
   return c.json({ task }, 202);
 });
 

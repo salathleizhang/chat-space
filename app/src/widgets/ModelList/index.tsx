@@ -7,7 +7,7 @@ import { UploadSimpleIcon } from "@phosphor-icons/react/UploadSimple";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { triggerBlobDownload } from "../../shared/lib/download";
-import { taskSubjectLabel } from "../../shared/lib/taskText";
+import { taskStallLabel, taskSubjectLabel } from "../../shared/lib/taskText";
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_FORMATS,
@@ -683,6 +683,11 @@ export const ModelList = memo(function ModelList({
                 <span className="truncate text-xs text-ink">{taskSubjectLabel(task.subject)}</span>
                 <span className="truncate text-[11px] text-ink-subtle">
                   {task.phase ? TASK_PHASE_LABEL[task.phase] : TASK_STATUS_LABEL[task.status]}
+                  {/* running 但长时间没进展：把"静默"摆出来，别让看板一直显示成正常等待
+                      （服务端读时派生，见 chat/src/common/taskPump.ts） */}
+                  {task.status === "running" && task.stall
+                    ? ` · ${taskStallLabel(task.stall)}`
+                    : ""}
                   {task.status === "failed" && task.error ? ` · ${task.error}` : ""}
                 </span>
               </span>

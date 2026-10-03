@@ -51,6 +51,14 @@ export interface GenerationTask {
   retry?: { kind: "3d" };
   result?: unknown;
   error?: string;
+  /**
+   * 只读诊断，服务端在 `running` 且长时间没有进展时代入（见 chat 侧 `services/tasks.ts`
+   * 的 `STALLED_TASK_WARN_MS`）：`pumpActive=false` 说明本机已经没有推进闸门照看它。
+   */
+  stall?: {
+    silentForMs: number;
+    pumpActive: boolean;
+  };
 }
 
 async function postJsonOrThrow<T>(path: string, body: unknown): Promise<T> {

@@ -1,5 +1,6 @@
 import { ChatServiceError, toErrorMessage } from "../common/errors";
 import { randomUUID } from "node:crypto";
+import { runWithTaskPump, taskPumpStatus, tickTaskPumps } from "../common/taskPump";
 import {
   assetDir,
   assetIdentityFile,
@@ -10,8 +11,13 @@ import {
 import { SceneAnalysisSchema } from "../dto/library";
 import { GenerationTaskSchema, type GenerationTask } from "../dto/tasks";
 import { getProjectState } from "../mastra/tools/projectTools";
+import {
+  resumableSidecarForTask,
+  resumeGeneration,
+} from "../mastra/tools/resumeGeneration";
 import { runSkyboxGeneration } from "../mastra/tools/skyboxGen";
 import { runProjectWorldGeneration } from "../mastra/tools/worldGen";
+import { serverResumeKeys } from "../config";
 import { getAssetStorage, readJson, writeJson } from "./assetStorage";
 import { readCandidates } from "./candidateRegistry";
 import { mutateSceneJob, readSceneJob } from "./sceneJobs";
@@ -44,6 +50,35 @@ const BOOT_ID: string = (() => {
  * 预算取 60 分钟，高于任何一条供应商轮询 deadline（最长 30 分钟）加上产物下载的合法耗时。
  */
 export const STALLED_TASK_TIMEOUT_MS = 60 * 60_000;
+
+/**
+ * 「还在跑、但一直没有进展」的**可见**口径：90 秒。
+ *
+ * 2026-10-03 的事故里，16 个已付费任务的文件停在提交那一毫秒十几分钟，而唯一的判据是
+ * 上面那条 60 分钟的「卡死」——期间看板、Agent、用户看到的一切都是"正常等待"。
+ * 90 秒足够把「供应商慢」（轮询间隔 10 秒）和「没人推了」分开，所以它不是失败判据：
+ * 任务照旧 running，只是多带一个读时派生的 `stall` 字段（见 dto/tasks.ts），
+ * 而 `GET /api/tasks` 那条路径本身就会顺手把它推着走（`tickTaskPumps`）。
+ */
+export const STALLED_TASK_WARN_MS = 90_000;
+
+/**
+ * 读时派生 `stall`：running 且静默超过 `STALLED_TASK_WARN_MS` 才带上，不落盘。
+ * `pumpActive` 是关键分野——进程里还有闸门照看它，说明下一次外部 tick 就能推动；
+ * 没有闸门（进程重启过、或链路整条丢了）就只能靠续跑/重试。
+ */
+function withStallDiagnostics(task: GenerationTask, now: number): GenerationTask {
+  if (task.status !== "running") {
+    return task.stall ? { ...task, stall: undefined } : task;
+  }
+  const updated = Date.parse(task.updatedAt);
+  const silentForMs = Number.isFinite(updated) ? Math.max(0, now - updated) : 0;
+  if (silentForMs <= STALLED_TASK_WARN_MS) return task;
+  return {
+    ...task,
+    stall: { silentForMs, pumpActive: taskPumpStatus(task.id, now) !== undefined },
+  };
+}
 
 /** 运行中但长期没有更新的任务 → 判定卡死；未卡死返回 undefined。 */
 function asStalledFailure(task: GenerationTask): GenerationTask | undefined {
@@ -97,6 +132,8 @@ interface StartTaskMetadata {
   assetSlug?: string;
   batchId?: string;
   retry?: GenerationTask["retry"];
+  /** 续跑任务的来源侧写；重启自动续跑与路由共用，用来判重 */
+  resumeSidecar?: string;
 }
 
 /** 任何长操作统一任务化：先持久化 queued，再启动 executor。 */
@@ -122,14 +159,18 @@ export function startCustomTask(
     updatedAt: now,
   };
   tasks.set(id, task);
-  void persistTask(task)
-    .then(() =>
+  // 闸门必须**先于 executor** 建立：executor 里的每一次等待都要能认出自己的闸门，
+  // 这样本进程定时器停摆时，工作台每秒一次的 GET /api/tasks 仍能把链路推着走
+  // （见 common/taskPump.ts 的事故记录）。
+  void runWithTaskPump(id, projectSlug, () =>
+    persistTask(task).then(() =>
       executor({
         id,
         setPhase: (phase) => updateTask(id, { phase }),
         setAssetSlug: (assetSlug) => updateTask(id, { assetSlug }),
       }),
-    )
+    ),
+  )
     .then((result) => updateTask(id, { status: "succeeded", phase: "completed", result }))
     .catch((error) =>
       updateTask(id, {
@@ -258,7 +299,40 @@ export function startSkyboxTask(
   });
 }
 
+/**
+ * 凭侧写续跑（不重新提交、不重复付费）。HTTP 路由与「重启自动续跑」共用这一条。
+ */
+export function startResumeTask(projectSlug: string, sidecarPath: string): GenerationTask {
+  return startCustomTask(
+    "resume",
+    projectSlug,
+    `续跑：${sidecarPath.split("/").pop()}`,
+    async (context) => {
+      // 续跑同样是长流程（轮询 + 下载几十 MB）：报阶段，别让看板只看到 queued。
+      await context.setPhase("generating");
+      return resumeGeneration(
+        getAssetStorage(),
+        sidecarPath,
+        serverResumeKeys(),
+        (phase) => context.setPhase(phase),
+      );
+    },
+    { resumeSidecar: sidecarPath },
+  );
+}
+
+/**
+ * 已经自动接上续跑的任务记录（本进程内）。判重放在 `await` **之前**同步占位，
+ * 因为工作台 1 Hz 的读路径与 Agent 的工具调用可能并发走到同一份 running 记录，
+ * 各起一个续跑会让同一份产物被下载/发布两次。
+ */
+const autoResumedTasks = new Set<string>();
+
 export async function listTasks(projectSlug?: string): Promise<GenerationTask[]> {
+  // **外部时钟**：工作台每 1 秒调一次这个接口（useTaskPolling），那条心跳来自浏览器进程，
+  // 与本进程定时器的死活无关。生成链路的等待由它放行、超预算的在飞请求由它中止。
+  // 放在这里而不是路由里：读任务列表的每一条路径（路由、Agent 工具、测试）都该推动任务。
+  tickTaskPumps(projectSlug);
   const merged = new Map<string, GenerationTask>();
   if (projectSlug) {
     for (const name of await getAssetStorage().list(projectTasksDir(projectSlug))) {
@@ -356,6 +430,32 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
                   "先用 resume-generation 凭侧写续跑（不重复付费），再考虑重试",
                 updatedAt: new Date().toISOString(),
               };
+          // **重启自愈**：进程重启不该让用户去点"续跑"。侧写里有 providerTaskId
+          // （已提交 = 已付费）就直接接着轮询，不重新提交。没有 providerTaskId 的
+          // 侧写不算可续跑——续跑它等于重新付费，必须由用户/Agent 决定。
+          if (task.status === "failed" && !autoResumedTasks.has(task.id)) {
+            autoResumedTasks.add(task.id);
+            try {
+              const resumable = await resumableSidecarForTask(
+                storage,
+                task.projectSlug,
+                task.id,
+              );
+              if (resumable) {
+                const resumeTask = startResumeTask(task.projectSlug, resumable.sidecarPath);
+                task = {
+                  ...task,
+                  error:
+                    "本地服务曾在任务运行时中断；已自动按侧写续跑（不重复付费），" +
+                    `续跑任务 ${resumeTask.id}`,
+                };
+              }
+            } catch (error) {
+              // 自动续跑失败不该让任务列表读不出来：任务照旧是 failed，人工可再续跑。
+              autoResumedTasks.delete(task.id);
+              task = { ...task, error: `${task.error ?? ""}（自动续跑未启动：${toErrorMessage(error)}）` };
+            }
+          }
           await persistTask(task);
         }
         merged.set(task.id, task);
@@ -376,7 +476,10 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
     }
     merged.set(task.id, task);
   }
-  return [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const now = Date.now();
+  return [...merged.values()]
+    .map((task) => withStallDiagnostics(task, now))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function getTask(

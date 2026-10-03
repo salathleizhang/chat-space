@@ -8,6 +8,7 @@ import {
   sleep,
 } from "../common/http";
 import { pollProviderTask } from "../common/polling";
+import { currentTaskPump } from "../common/taskPump";
 import { tripoCategoryFor, tripoGate } from "./tripoConcurrency";
 import { tripoTaskQuerierFor } from "./tripoTaskQuery";
 
@@ -334,7 +335,9 @@ export async function runTripoTask<T>(
         ? tripoRetryPolicy.concurrencyMaxAttempts
         : tripoRetryPolicy.rateMaxAttempts;
       if (attempt >= maxAttempts) throw error;
-      await sleep(error.waitMs(attempt));
+      // 退避等待同样交给任务闸门：本进程定时器停摆时由工作台的外部心跳放行。
+      const backoffMs = error.waitMs(attempt);
+      await (currentTaskPump()?.wait(backoffMs) ?? sleep(backoffMs));
       continue;
     }
     try {

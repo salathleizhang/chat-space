@@ -54,6 +54,20 @@ bun run check                        # typecheck + test + build
 13. 锁定 three **0.186.1** / @types/three **0.186.0** / gaussian-splat-lite **1.1.5**（root `overrides` + `patchedDependencies`）。**升级任一者都必须重新验证 `patches/` 下两个补丁**，并重跑浏览器压力测试。
 14. `patches/` 改的是**释放路径**，不是渲染、投影、排序或画质。改补丁时同步更新 `patches/README.md`，并跑 `app/src/shared/rendering/attributeDisposal.test.ts`。
 
+### 生成任务（chat 侧）
+
+15. **生成任务的推进不许把正确性押在本进程的 `setTimeout` 上。** 2026-10-03 事故：一个跑了 22 小时的 chat 进程定时器不再派发回调（25 ms 查询合并窗口、10 s 轮询间隔、15 分钟 deadline、60 分钟看门狗**一个都没响**），HTTP 接口却一直正常；16 个已付费 Tripo 任务停在 `running` 十几分钟，供应商侧其实 49 秒就做完了。**所有防线都是定时器，所以它们一起死**，进程外只有"发一个 HTTP 请求"能碰到它 → 只能重启。
+
+   现在的口径：等待与超时走 **`chat/src/common/taskPump.ts`** 的任务闸门。健康时仍由内部定时器精确唤醒（行为与改造前一致）；定时器停摆时由**外部时钟**放行——工作台每 1 秒调一次 `GET /api/tasks`（`app/src/pages/AppDashboard/useTaskPolling.ts` 的 `TASK_POLL_INTERVAL_MS = 1_000`，心跳在浏览器进程里），`listTasks()` 顶部的 `tickTaskPumps()` 就是外部时钟。两条纪律：**到期时刻用 `Date.now()` 记**（1 Hz 心跳不会把 10 秒轮询改写成 1 秒，否则撞供应商限流）；**在飞请求超预算时由 tick 中止**（`withHardTimeout` 的定时器不响时它是唯一手段）。
+
+16. **任何新的等待都要接进闸门。** 加一个 provider 的轮询：用 `pollProviderTask`（它自己取 `currentTaskPump()`）就自动接上了；自己写 `setTimeout`/`sleep`/`setInterval` 的等待、以及"压着短定时器才发出去的请求"（如 `tripoTaskQuery.ts` 的合并窗口），必须挂 `onTaskPumpTick()` 或用 `currentTaskPump()?.wait()`，否则定时器一停它就是下一个永久卡死点。回归判据是**把 `setTimeout` 打瘸再驱动外部 tick**：`common/taskPump.test.ts`、`common/polling.test.ts`、`models/tripoTaskQuery.test.ts`、`services/tasksPump.test.ts`（最后一条端到端：真 `listTasks` + 真外部时钟 + 死定时器 → 任务走完）。
+
+17. **重启必须自愈，不许等人。** 服务重启后，`listTasks()` 会把上个进程留下的 `running` 记录判为中断，并**自动**对有 `providerTaskId` 的侧写起续跑（`startResumeTask`，不重新提交 = 不重复付费）。**没有 `providerTaskId` 的侧写绝不自动续跑**——那等于重新付费，只能由用户/Agent 决定。同一批产物不要起两个续跑：判重是 `autoResumedTasks` 的同步占位 + `resumeSidecar` 字段。
+
+18. **`running` 但静默超过 90 秒要能被看见**（`STALLED_TASK_WARN_MS`）：`listTasks()` 读时派生 `stall: {silentForMs, pumpActive}`，`pumpActive=false` 才说明进程里没有闸门照看它（要么续跑、要么重试）。60 分钟的 `STALLED_TASK_TIMEOUT_MS` 只是最后的兜底，不再是唯一的信号。**`stall` 是派生字段，不落盘**——落盘会让 1 Hz 的读路径不停改写任务文件、把 `updatedAt` 的语义搞坏。
+
+19. **服务不要用 `bun --hot` 长跑。** 事故就发生在这样的进程里（`chat/package.json` 的 `dev` 脚本是 `bun run --hot src/index.ts`，本机另跑的是 `bun run src/index.ts`）。真要热重载，用 `--watch`（重启进程，语义干净），并且知道重启对任务是安全的——第 17 条会把它接上。
+
 ---
 
 ## 三、文档地图：哪些能引用
@@ -402,6 +416,11 @@ bun run check                        # typecheck + test + build
 
 - `app/src/pages/`、`widgets/Inspector`、`AgentDock`、`Sidebar`、`SettingsDialog`、**`widgets/ModelList`**、
   `shared/storage` 是**冻结集**：渲染层换引擎时它们**不得改**。
+  **唯一一次例外（2026-10-03，用户明确同意）**：`widgets/ModelList/index.tsx` 的任务行多渲染了一个
+  派生字段（`taskStallLabel(task.stall)`，见 §二 第 18 条）。它只读 API 已有的数据、不碰任何渲染层，
+  文案函数在非冻结的 `shared/lib/taskText.ts`（带单测），真机验过（任务行显示
+  `Generating · no local driver for 9 min`）。**这类"给冻结集加一行展示"必须先拿到用户同意**，
+  并且优选"逻辑放非冻结文件、冻结文件只调用"的形状。
 - `app/src/pages/editingLayerBoundary.test.ts` 用真实模块依赖图守这条线（规则 A/B/C）。
   它有三张例外表，**语义各不相同，不要合并**（规则 D 会拦住重叠）：
   `SEAMS`（跨集目标）、`FROZEN_IMPORTERS`（集内直接导入渲染库，属**待消除的越界**）、

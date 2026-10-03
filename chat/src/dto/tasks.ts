@@ -47,6 +47,21 @@ export const Retryable3dTaskSchema = z.object({
   options: z.record(z.string(), z.unknown()).default({}),
 });
 
+/**
+ * 「还在跑、但一直没有进展」的诊断口径（读取时派生，不落盘）。
+ *
+ * 为什么要有它：2026-10-03 的定时器停摆事故里，任务文件停在提交那一毫秒十几分钟，
+ * 而唯一的判据是 60 分钟后的「卡死」。现在 90 秒就能从工作台的 `GET /api/tasks` 里看到，
+ * 并且带上「进程里还有没有推进闸门照看它」——`pumpActive: false` 才需要续跑/重试。
+ */
+export const TaskStallSchema = z.object({
+  /** 距上次进展过去多久（毫秒） */
+  silentForMs: z.number().int().nonnegative(),
+  /** 进程里是否还有在照看它的推进闸门（见 common/taskPump.ts） */
+  pumpActive: z.boolean(),
+});
+export type TaskStall = z.infer<typeof TaskStallSchema>;
+
 export const GenerationTaskSchema = z.object({
   id: z.string(),
   workflowId: z.string(),
@@ -59,8 +74,12 @@ export const GenerationTaskSchema = z.object({
   /** 创建该任务的进程身份；热重载不变、进程重启才变，用于区分「服务重启」和「模块重载」 */
   bootId: z.string().optional(),
   retry: Retryable3dTaskSchema.optional(),
+  /** 续跑任务的来源侧写（逻辑路径）；重启后的自动续跑靠它判重 */
+  resumeSidecar: z.string().optional(),
   result: z.unknown().optional(),
   error: z.string().optional(),
+  /** 只读诊断：仅当 running 且长时间没有进展时出现 */
+  stall: TaskStallSchema.optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
