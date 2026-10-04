@@ -905,7 +905,7 @@ export async function runGenerateReferenceImages(
 export const generateReferenceImagesTool = createTool({
   id: "generate-reference-images",
   description:
-    "统一参考图生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent。mode=edit 是图生图：既编辑目标已有的参考图，也能把用户上传的场景照隔离成新的单物体参考图（此时 assetSlug 给新对象的 slug，sourceImage 省略则用本条消息附带的那张图；目标不存在会一并登记）。mode=multiview 使用 Tripo 把目标已有的一张干净参考图扩展为前/左/后/右四视图。mode=plate 仅为旧调用兼容；新的独立底板请求使用 generate-clean-plate，完整场景用 start-scene-job。**若用户上传的图本身就是干净的单物体照片，不要用本工具重画一张，改用免费的 attach-source-image 直接登记它。**",
+    "统一参考图生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent。mode=edit 是图生图：既编辑目标已有的参考图，也能把用户上传的场景照隔离成新的单物体参考图（此时 assetSlug 给新对象的 slug，sourceImage 省略则用本条消息附带的那张图；目标不存在会一并登记）。mode=multiview 使用 Tripo 把目标已有的一张干净参考图扩展为前/左/后/右四视图。mode=plate 仅为旧调用兼容；新的独立底板请求使用 generate-clean-plate，完整场景用 start-scene-job。**两种情况下不要用本工具**：① 用户上传的图本身就是干净的单物体照片；② **用户明确说了不要生成参考图、或要求直接用他给的那张图**——后者是他的决定不是技术选择，改用免费的 attach-source-image 登记原图，把风险（构图、背景、机位、背面信息）写进 ask-user 卡片让他拍板，不要替他换成先生成一张。",
   inputSchema: GenerateReferenceImagesToolSchema,
   execute: async (input, context) =>
     runGenerateReferenceImages(
@@ -1060,8 +1060,17 @@ export async function runAttachSourceImage(
 
   // 与非模型正式资产撞名时不能悄悄改写它——与文生图那条预检同一口径。
   await assertReferenceTargetWritable(storage, params.projectSlug, params.assetSlug);
-  const name = params.assetName ?? fallbackAssetName(params.assetSlug);
-  const intent = params.assetIntent ?? name;
+  /*
+    目标已经是资产时**只换 sourceImages，不动它的名字与意图**（`bindReferenceImages`
+    就是这么写的）。所以回执里要报资产自己的 name/intent，不能报我们按 slug 编的兜底名
+    ——否则 Agent 会把"victorian playhouse"这种 slug 变形当成资产真名讲给用户听。
+  */
+  const identityPath = assetIdentityFile(params.projectSlug, params.assetSlug);
+  const existing = (await storage.exists(identityPath))
+    ? await readJson(storage, identityPath, AssetIdentitySchema)
+    : null;
+  const name = existing?.name ?? params.assetName ?? fallbackAssetName(params.assetSlug);
+  const intent = existing?.intent ?? params.assetIntent ?? name;
   await bindReferenceImages(storage, params.projectSlug, params.assetSlug, [image], {
     name,
     description: intent,
@@ -1078,10 +1087,11 @@ export const attachSourceImageTool = createTool({
   description:
     "把**用户上传的原图**直接登记为 3D 生成的参考图——免费、本地、不调用任何供应商，**不需要用户同意**。" +
     "用在「把这个/这张照片做成 3D 模型」这类请求上，并且这条消息本身带了图片时：图已经是用户给的输入，" +
-    "不要再花钱生成一张参考图。省略 image 即使用本条消息附带的图（必须只有一张）。" +
+    "不要再花钱生成一张参考图。**用户明确说了不要生成参考图、或要求直接用他给的那张图时，本工具是他的决定的唯一正确落点——照做，不要改换成先生成一张。**" +
+    "省略 image 即使用本条消息附带的图（必须只有一张）。" +
     "只接受用户上传的原图；AI 生成或编辑出来的参考图会被拒绝（那些走 start-3d-batch 的既有复用路径）。" +
-    "只有传了 assetSlug 才会登记成待生成目标、start-3d-batch 才认得出它；建议同时给 assetName 与 assetIntent。" +
-    "本工具不产生费用，但调用之后的 3D 生成仍然要先用 ask-user 取得付费同意。" +
+    "只有传了 assetSlug 才会登记成待生成目标、start-3d-batch 才认得出它；目标已是资产就直接用它的 slug，建议同时给 assetName 与 assetIntent。" +
+    "本工具不产生费用，但调用之后的 3D 生成仍然要先用 ask-user 取得付费同意，并把「直接使用你上传的原图」和它的风险写进卡片让用户拍板。" +
     "**注意**：用户界面里选的是数美 Hi3D 时这条通路不成立（它只吃 Seedream 产物的公网 URL），要先改用 mode=edit/generate。",
   inputSchema: AttachSourceImageParamsSchema.omit({ projectSlug: true }),
   execute: async (input, context) =>

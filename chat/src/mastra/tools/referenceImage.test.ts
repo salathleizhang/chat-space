@@ -898,6 +898,54 @@ describe("runAttachSourceImage", () => {
     expect(await storage.exists(projectCandidatesFile("attach-unbound"))).toBe(false);
   });
 
+  test("目标已是资产：只换参考图，名字与意图照旧，回执报资产真名", async () => {
+    await createProject(storage, { name: "绑定已有资产", slug: "attach-existing" });
+    const uploaded = `${projectSourceDir("attach-existing")}/0-photo.png`;
+    const previous = `${projectSourceDir("attach-existing")}/1-old-ref.png`;
+    await storage.writeBytes(uploaded, PNG_BYTES);
+    await storage.writeBytes(previous, PNG_BYTES);
+    await writeJson(
+      storage,
+      assetIdentityFile("attach-existing", "playhouse"),
+      AssetIdentitySchema,
+      {
+        schemaVersion: 1,
+        id: "keep-me",
+        slug: "playhouse",
+        kind: "model",
+        name: "维多利亚风玩具小屋",
+        intent: "照片级写实的花园玩具小屋单体模型",
+        sourceImages: [previous],
+        createdAt: new Date().toISOString(),
+      },
+    );
+
+    const result = await runAttachSourceImage(
+      storage,
+      { projectSlug: "attach-existing", assetSlug: "playhouse" },
+      [uploaded],
+    );
+
+    // 回执必须报资产真名，不能报按 slug 编出来的兜底名（Agent 会照着讲给用户听）
+    expect(result.target).toEqual({
+      assetSlug: "playhouse",
+      name: "维多利亚风玩具小屋",
+      intent: "照片级写实的花园玩具小屋单体模型",
+    });
+    const identity = await readJson(
+      storage,
+      assetIdentityFile("attach-existing", "playhouse"),
+      AssetIdentitySchema,
+    );
+    // 只换参考图：稳定身份、名字、意图都原样保留
+    expect(identity.id).toBe("keep-me");
+    expect(identity.name).toBe("维多利亚风玩具小屋");
+    expect(identity.intent).toBe("照片级写实的花园玩具小屋单体模型");
+    expect(identity.sourceImages).toEqual([uploaded]);
+    // 旧参考图留在磁盘上，不删（可回退）
+    expect(await storage.exists(previous)).toBe(true);
+  });
+
   test("目标 slug 与非模型资产冲突时拒绝，不悄悄改写它", async () => {
     await createProject(storage, { name: "绑定撞名", slug: "attach-conflict" });
     const uploaded = `${projectSourceDir("attach-conflict")}/0-photo.png`;

@@ -68,8 +68,22 @@ describe("creator 回复协议", () => {
     expect(CREATOR_INSTRUCTIONS).toContain("唯一例外");
     expect(CREATOR_INSTRUCTIONS).toContain("直接使用你上传的原图");
     expect(CREATOR_INSTRUCTIONS).toContain('不要"先生成出来看看、不行再换一张"');
-    // Hi3D 只吃 Seedream 产物的公网 URL，这一档对它不成立
-    expect(CREATOR_INSTRUCTIONS).toContain("Hi3D 时第一档不成立");
+    // Hi3D 只吃 Seedream 产物的公网 URL，原图喂不进去
+    expect(CREATOR_INSTRUCTIONS).toContain("原图喂不进去");
+  });
+
+  /**
+   * 2026-10-05：用户连着两轮说「不要生成参考图，直接用这张图来生成」，Agent 两轮都用
+   * 自己的档位判断把它换成了"更干净的参考图"（那张照片斜侧视、带草地和天空、背面没有
+   * 信息——判断本身没错）。错在**它不是决策者**：用户已经表态用哪张图，那是产品选择。
+   *
+   * 这条优先级很容易被后人改回"AI 综合判断更优"，所以把措辞钉死；服务端还会在同一
+   * 决策点注入一段更硬的话（见 chatService 的 uploadAsReferenceContextLine）。
+   */
+  test("用户点名用哪张图时，Agent 的档位判断作废", () => {
+    expect(CREATOR_INSTRUCTIONS).toContain("他的选择是最终决定，你的档位判断作废");
+    expect(CREATOR_INSTRUCTIONS).toContain("他没表态时");
+    expect(CREATOR_INSTRUCTIONS).toContain("由他拍板，不是你替他改主意");
   });
 
   /**

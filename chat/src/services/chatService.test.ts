@@ -10,6 +10,7 @@ import {
   toAnswerMessage,
   buildChatRequestContext,
   hasExplicitReferenceAnalysisIntent,
+  hasExplicitUploadAsReferenceIntent,
   imagePathsFromToolResult,
   listPendingGenerationTargets,
   planContextText,
@@ -17,6 +18,7 @@ import {
   taskIdsFromToolResult,
   toResumeMessage,
   toolErrorMessage,
+  uploadAsReferenceContextLine,
 } from "./chatService";
 import { LocalFileStorage, writeJson } from "./assetStorage";
 
@@ -97,6 +99,94 @@ describe("hasExplicitReferenceAnalysisIntent", () => {
     expect(
       hasExplicitReferenceAnalysisIntent(imageMessage("Turn this photo into 3D models")),
     ).toBe(true);
+  });
+});
+
+/**
+ * 2026-10-05 用户连着两轮说了「不要生成参考图，直接用这张图来生成」「你不能直接拿我
+ * 给你的图片来生成吗」，Agent 两轮都用自己的判断（斜侧视、带草地天空、背面没信息）
+ * 把原图换成了"更干净的参考图"。判断没错，错在它不是决策者——用户已经表态用哪张图。
+ * 所以在决策点由服务端把话说明白，而不是只写在提示词里等模型自觉。
+ *
+ * 正例直接取用户原话：这条正则要是退化，用户会第三次被同样的方式覆盖。
+ */
+describe("hasExplicitUploadAsReferenceIntent", () => {
+  test("用户原话（两轮都被无视的那两句）必须命中", () => {
+    expect(
+      hasExplicitUploadAsReferenceIntent(
+        imageMessage("不要生成参考图，直接用这张图来生成，提交模型的生成请求"),
+      ),
+    ).toBe(true);
+    expect(
+      hasExplicitUploadAsReferenceIntent(
+        imageMessage("不是，为什么还要生成图片，你不能直接拿我给你的图片来生成吗"),
+      ),
+    ).toBe(true);
+    // "我想要提交的参考图是这张"：换一种自然说法，同样是点名用哪张
+    expect(
+      hasExplicitUploadAsReferenceIntent(imageMessage("我想要提交的参考图是这张")),
+    ).toBe(true);
+    // 英文同义说法
+    expect(
+      hasExplicitUploadAsReferenceIntent(imageMessage("Don't generate a reference image, use my photo directly")),
+    ).toBe(true);
+    expect(
+      hasExplicitUploadAsReferenceIntent(imageMessage("Use the uploaded image as-is for the 3D model")),
+    ).toBe(true);
+  });
+
+  test("普通看图、设计讨论、只问模型效果都不命中", () => {
+    expect(hasExplicitUploadAsReferenceIntent(imageMessage("请查看这张图片。"))).toBe(false);
+    expect(hasExplicitUploadAsReferenceIntent(imageMessage("用这张图片看看这个设计怎么样"))).toBe(false);
+    expect(hasExplicitUploadAsReferenceIntent(imageMessage("这张图是什么？"))).toBe(false);
+    expect(hasExplicitUploadAsReferenceIntent(imageMessage("你生成的跟现在没有区别啊"))).toBe(false);
+    expect(
+      hasExplicitUploadAsReferenceIntent(imageMessage("Can you make this 3D model look better?")),
+    ).toBe(false);
+    // 没有生成类动词的"这张图"不算表态
+    expect(hasExplicitUploadAsReferenceIntent(imageMessage("直接看这张图就行"))).toBe(false);
+  });
+
+  test("整张图做完整场景是另一条路，不在本判据里抢答", () => {
+    // 场景那条走 analyze-reference，这里不能把模型往"登记成单物体参考图"上带
+    expect(
+      hasExplicitUploadAsReferenceIntent(imageMessage("直接用这张图生成完整场景")),
+    ).toBe(false);
+    expect(
+      hasExplicitUploadAsReferenceIntent(imageMessage("把这张图一键生成整个场景，不要生成参考图")),
+    ).toBe(false);
+  });
+
+  test("没有文字时一律不命中（纯图片消息不该被当成表态）", () => {
+    expect(
+      hasExplicitUploadAsReferenceIntent({
+        role: "user",
+        content: [{ type: "image", path: "projects/demo/source/0-image.png" }],
+      }),
+    ).toBe(false);
+  });
+
+  /**
+   * 注入上下文的那段话是**唯一直接压住模型判断的东西**，措辞必须硬：说"建议优先
+   * 使用原图"就等于没说，用户会第三次遇到同一件事。
+   */
+  test("上下文那句话要压住判断，且 Hi3D 走另一条", () => {
+    const line = uploadAsReferenceContextLine(
+      "projects/demo/source/6-image.png",
+      "tripo-direct",
+    );
+    expect(line).toContain("projects/demo/source/6-image.png");
+    expect(line).toContain("attach-source-image");
+    expect(line).toContain("不要");
+    expect(line).toContain("不要替他改主意");
+    // 非 Hi3D 时不该出现渠道例外，否则模型会以为可以退回先生成
+    expect(line).not.toContain("hi3d");
+
+    const hi3d = uploadAsReferenceContextLine(
+      "projects/demo/source/6-image.png",
+      "hi3d-volc",
+    );
+    expect(hi3d).toContain("原图喂不进去");
   });
 });
 
