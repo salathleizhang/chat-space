@@ -240,3 +240,25 @@ describe("拦住会打死桥接的调用", () => {
     }
   });
 });
+
+/**
+ * 项目 slug 只能来自工具上下文，**不能是工具参数**。
+ *
+ * 2026-10-05 实测：我原先给了可选的 `projectSlug` 参数并让它覆盖上下文，
+ * agent 看见就自己填了一个 —— `Failed: running blender-export tool: 项目「demo3」不存在`。
+ * 真实项目是 `p-mushtjm9`，模型编的 `demo3` 把权威来源盖掉了，导出必然失败；
+ * 而它前面的建模全对（1106 面的杯子 + 材质），整轮成果卡在最后一步。
+ *
+ * 这条测试是防止那个口子被重新打开。**它必须检查 schema，不能只检查实现**——
+ * 参数只要出现在 schema 里，模型就会去填。
+ */
+describe("工具参数里不许出现 projectSlug", () => {
+  test("8 个工具的 inputSchema 都不带 projectSlug", () => {
+    const offenders: string[] = [];
+    for (const [id, tool] of Object.entries(BLENDER_TOOLS)) {
+      const shape = (tool.inputSchema as unknown as { shape?: Record<string, unknown> }).shape;
+      if (shape && Object.hasOwn(shape, "projectSlug")) offenders.push(id);
+    }
+    expect(offenders).toEqual([]);
+  });
+});

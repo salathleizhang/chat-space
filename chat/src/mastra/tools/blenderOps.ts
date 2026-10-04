@@ -259,11 +259,27 @@ export const SAFE_CLEAR_SNIPPET = [
   "            c.remove(item)",
 ].join("\n");
 
-const ProjectSchema = { projectSlug: SlugSchema.optional() };
-
-function projectOf(context: unknown, explicit?: string): string {
-  // 工具上下文里的 projectSlug 是权威来源；显式参数只是给测试与将来多项目场景留的口子。
-  return explicit ?? requireCurrentProject(context as never);
+/**
+ * 项目 slug **只从工具上下文取**，工具参数里没有这一项。
+ *
+ * ## 为什么（2026-10-05 实测踩到）
+ *
+ * 我原先给 8 个工具都加了可选的 `projectSlug` 参数，并且让"显式参数覆盖上下文"
+ * （理由是"给测试与将来多项目场景留个口子"）。**结果是 agent 看见这个参数就自己填了一个**：
+ *
+ *     Failed: running blender-export tool: 项目「demo3」不存在
+ *
+ * 真实项目是 `p-mushtjm9`，`demo3` 是模型自己编的——它把**权威来源盖掉了**，
+ * 于是导出必然失败。而它前面的建模全对（1106 面的杯子、材质也上了），
+ * 整轮的成果卡在最后一步。
+ *
+ * 这也是本仓库的既有惯例：`place-object` 之类的工具**都不带 `projectSlug` 参数**，
+ * 项目一律由 `requireCurrentProject(context)` 决定。模型没有机会填错。
+ *
+ * `blenderOps.test.ts` 里有一条会失败的测试钉住"这 8 个工具的 schema 里不许出现 projectSlug"。
+ */
+function projectOf(context: unknown): string {
+  return requireCurrentProject(context as never);
 }
 
 interface StepOutcome {
@@ -298,7 +314,7 @@ export const blenderSessionTool = createTool({
     "检查 Blender 会话是否可用，返回 Blender 版本、当前场景概况、以及 Blender 的**连接状态**。在任何其它 blender-* 工具之前或用户问「Blender 连上了吗」时用它。\n\n" +
     "注意区分两件事：**MCP server 起来了**不代表 **Blender 连上了**——社区版的 server 在没有 Blender 时也能启动（它只会往日志里写一句连接被拒）。所以这里问的是 Blender 本身（get_addon_status），不是进程存活。\n\n" +
     "**什么时候不要用它**：不要为了「确认一下」而在每一步建模之间反复调用——blender-run 已经会带回场景事实。",
-  inputSchema: z.object(ProjectSchema),
+  inputSchema: z.object({}),
   execute: async (_input, context) => {
     projectOf(context);
     const mcp = getBlenderMcp();
@@ -352,11 +368,10 @@ export const blenderSceneTool = createTool({
     "**这是判据，不是描述。**「脚本没报错」不等于「模型建出来了」——bpy 最典型的失败是静默的：脚本成功退出但场景是空的、或者几何退化成 NaN。要判断上一步到底有没有产生东西，看这里的对象数与面数。\n\n" +
     "**什么时候不要用它**：blender-run 默认已经顺带返回一次场景事实，所以「刚跑完一步想看结果」不需要单独调它；只在「隔了几步之后要重新确认状态」或「要看某个具体对象」时单独调用。",
   inputSchema: z.object({
-    ...ProjectSchema,
     objectName: z.string().min(1).optional(),
   }),
   execute: async (input, context) => {
-    projectOf(context, input.projectSlug);
+    projectOf(context);
     const mcp = getBlenderMcp();
     if (input.objectName) {
       const result = await mcp.call("get_object_info", { object_name: input.objectName });
@@ -384,7 +399,6 @@ export const blenderRunTool = createTool({
     "想从空白开始就删对象：`for o in list(bpy.data.objects): bpy.data.objects.remove(o, do_unlink=True)`。" +
     "这一条在工具层被直接拦下，所以你会收到一条报错而不是把链路打死。",
   inputSchema: z.object({
-    ...ProjectSchema,
     /** 一段 bpy 代码。作用域里已有 bpy / bmesh / math / Matrix / Vector。 */
     code: z.string().min(1),
     /** 这一步在干什么（一句话，给用户看的状态文字；不参与逻辑） */
@@ -393,7 +407,7 @@ export const blenderRunTool = createTool({
     frame: z.boolean().optional(),
   }),
   execute: async (input, context) => {
-    projectOf(context, input.projectSlug);
+    projectOf(context);
     // 拦住会打死桥接自己的调用（见 BRIDGE_KILLING_CALLS 的实测记录）。
     // **必须在发出之前拦**：跑到一半才发现就晚了——addon 已经没了，连"报错"这条回程都没有。
     const killer = BRIDGE_KILLING_CALLS.find((name) => input.code.includes(name));
@@ -481,14 +495,13 @@ export const blenderApiTool = createTool({
     "**这是省轮次的关键工具**：查的是**活着的** RNA 注册表，所以它同时能给出**你安装的社区插件**里 operator 的真实签名（插件注册的 operator 就在 `bpy.ops` 里）。凭记忆猜参数名在 Blender 里代价很高——一次报错就是一轮往返。\n\n" +
     "**什么时候用它**：不确定某个 operator 的参数名、枚举取值，或者要用某个插件前想确认它的接口；以及 `blender-run` 报「operator not found / context is incorrect」之后。",
   inputSchema: z.object({
-    ...ProjectSchema,
     /** 类型/属性/方法/operator 路径，如 bpy.ops.mesh.primitive_cube_add */
     query: z.string().min(1).optional(),
     /** 几何节点类型的 bl_idname */
     nodeType: z.string().min(1).optional(),
   }),
   execute: async (input, context) => {
-    projectOf(context, input.projectSlug);
+    projectOf(context);
     if (!input.query && !input.nodeType) {
       throw new ChatServiceError("query 与 nodeType 至少给一个", 400, "blender_api_missing_query");
     }
@@ -513,12 +526,11 @@ export const blenderLookTool = createTool({
     "注意它的定位：**这是给 agent 自检用的，不是给用户看的**。用户看到的是实时推流（本地是 Blender 自己的窗口，云端是 KasmVNC/Selkies）。所以别把它当成「给用户展示进度」的手段。\n\n" +
     "**什么时候用它**：用户明确要求检查、或者用户对已产出的东西提出疑问、或者你要确认某个几何特征（破洞、穿模、比例）单看面数判断不了。**不要**每步都截图——它很慢，而且大部分问题看 blender-run 返回的引擎事实就够了。",
   inputSchema: z.object({
-    ...ProjectSchema,
     /** 图片长边上限（像素），默认 800；越大越慢 */
     maxSize: z.number().int().positive().max(2048).optional(),
   }),
   execute: async (input, context) => {
-    projectOf(context, input.projectSlug);
+    projectOf(context);
     const mcp = getBlenderMcp();
     const result = await mcp.call(
       "get_viewport_screenshot",
@@ -548,9 +560,9 @@ export const blenderFrameTool = createTool({
     "把 Blender 的 3D 视口对准当前场景（或某个对象），让正在看的用户能看见刚做出来的东西。\n\n" +
     "**这是这个功能能不能「看得见」的关键。** 物体建在原点之外、或者尺寸与当前视野差一个数量级时，用户盯着屏幕只会看到一片空白，会以为 agent 什么都没做。\n\n" +
     "blender-run 默认已经会做这件事（frame=true），所以通常在「agent 自己挪了相机/改了视角」或「想固定一个机位看整体」时才单独调用它。",
-  inputSchema: z.object(ProjectSchema),
+  inputSchema: z.object({}),
   execute: async (input, context) => {
-    projectOf(context, input.projectSlug);
+    projectOf(context);
     return { framed: await runOwnSnippet(FRAME_ALL_SNIPPET) };
   },
 });
@@ -565,9 +577,9 @@ export const blenderPluginsTool = createTool({
     "列出**当前 Blender 实例里已启用**的插件。\n\n" +
     "两个 MCP 都没有这个能力，而它是用社区插件的前提：查插件 operator 签名要靠 `blender-api`，而那个工具是**按名字查**的——你不知道插件叫什么，就不会去查它。所以要用某个插件（HardOps、Boxcutter、Node Wrangler…）之前，先在这里确认它确实装了并启用了。\n\n" +
     "**注意**：云端容器里的 Blender 是干净的，只有镜像里打进去的插件。这里返回的清单反映的是**Blender 所在那台机器**，不是你这台 Mac。",
-  inputSchema: z.object(ProjectSchema),
+  inputSchema: z.object({}),
   execute: async (input, context) => {
-    projectOf(context, input.projectSlug);
+    projectOf(context);
     return { plugins: await runOwnSnippet(LIST_PLUGINS_SNIPPET) };
   },
 });
@@ -577,7 +589,7 @@ export const blenderPluginsTool = createTool({
 // ---------------------------------------------------------------------------
 
 export const BlenderExportInputSchema = z.object({
-  ...ProjectSchema,
+  
   /** 资产 slug（写进 `projects/<project>/assets/<slug>/`） */
   assetSlug: SlugSchema,
   /** 资产显示名 */
@@ -794,7 +806,7 @@ export const blenderExportTool = createTool({
     "**什么时候不要用它**：只想要一张图用 blender-look；还没建完不要急着导出。",
   inputSchema: BlenderExportInputSchema,
   execute: async (input, context) => {
-    const projectSlug = projectOf(context, input.projectSlug);
+    const projectSlug = projectOf(context);
     const result = await runBlenderExport(getAssetStorage(), projectSlug, {
       assetSlug: input.assetSlug,
       ...(input.name ? { name: input.name } : {}),
