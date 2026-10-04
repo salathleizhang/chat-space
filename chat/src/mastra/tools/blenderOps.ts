@@ -16,6 +16,7 @@ import { RequestSidecarSchema, SlugSchema, type RequestSidecar } from "../../dto
 import { getBlenderMcp, addonStatusFromText } from "../../models/blenderMcp";
 import { config } from "../../config";
 import { getAssetStorage, writeJson, type AssetStorage } from "../../services/assetStorage";
+import { startCustomTask } from "../../services/tasks";
 import { publishGeneratedModel } from "../../services/modelPublishing";
 import { requireProject } from "./projectTools";
 import { requireCurrentProject } from "./requestContext";
@@ -803,19 +804,46 @@ export const blenderExportTool = createTool({
     "发布之后这个模型就有了稳定 asset id，因此：会出现在模型列表里、可以被 place-object 摆放、视口会自动加载、缩略图与检查图都能生成。\n\n" +
     "**导出前会自动应用修改器**（未应用的修改器不会进 GLB）。**产物会被校验**：0 个三角面或文件被截断都会判失败并如实报错——所以如果这一步报错，先去 blender-scene 看对象数和面数，不要在空场景上反复重试。\n\n" +
     "**不会覆盖**旧产物：每次导出都是新的一代（索引递增），旧模型保留可回溯。所以「再改一版」是安全的。\n\n" +
+    "⚠️ **这是异步的**：调用立刻返回一个后台任务，导出在后台跑完，**工作台会自动刷新并把新模型显示出来**（不用你或用户手动刷新页面）。所以**完成后不要重复调用它去「确认」**——重复调用会发布出多余的一代。\n\n" +
     "**什么时候不要用它**：只想要一张图用 blender-look；还没建完不要急着导出。",
   inputSchema: BlenderExportInputSchema,
   execute: async (input, context) => {
     const projectSlug = projectOf(context);
-    const result = await runBlenderExport(getAssetStorage(), projectSlug, {
-      assetSlug: input.assetSlug,
-      ...(input.name ? { name: input.name } : {}),
-      ...(input.intent ? { intent: input.intent } : {}),
-      ...(input.objectNames ? { objectNames: input.objectNames } : {}),
-    });
+    /*
+      **必须走后台任务，不能同步发布。** 实测（2026-10-05，用户报"导出成功但场景里没有"）：
+      同步发布时资产确实写进了库（`assets/<slug>/asset.json` 都在），但 **app 不会重新拉列表**
+      ——`refreshKey` 的触发点只有 plan 更新 / 模型导入 / 资产删除三种，
+      "某个工具同步写了一个资产"不在其中，于是用户得手动刷新页面才看得见。
+
+      而 `useTaskPolling` 里那条判据是（`AppPolling.ts:192`）：
+
+          if (task.status === "running" || reportedTasksRef.current.has(task.id)) continue;
+          bumpRefresh();
+
+      也就是**任何非 running 且尚未报告过的任务都会触发一次刷新**。所以注册一个任务，
+      app 会在 1 秒内看到它完成、自动刷新、模型就出现在列表里——这正是
+      `retopologize` / `start-3d-batch` 走的路，也是本仓库对"会产出资产的操作"的标准形状。
+
+      代价是工具不再当场回结果，改为"起任务 + 完成后由工作台通知"——
+      与其它生成器的 UX 一致，不再是一个特例。
+    */
+    const task = startCustomTask(
+      "blender",
+      projectSlug,
+      `Blender 导出：${input.name ?? input.assetSlug}`,
+      () =>
+        runBlenderExport(getAssetStorage(), projectSlug, {
+          assetSlug: input.assetSlug,
+          ...(input.name ? { name: input.name } : {}),
+          ...(input.intent ? { intent: input.intent } : {}),
+          ...(input.objectNames ? { objectNames: input.objectNames } : {}),
+        }),
+    );
     return {
-      ...result,
-      note: "已发布进资产库；用户可以继续在视口里手动调整摆放，也可以让 agent 用 place-object 摆放。",
+      task: { id: task.id, subject: task.subject, status: task.status },
+      note:
+        "导出已在后台开始，完成后工作台会自动刷新模型列表并把它显示出来。" +
+        "你不用手动刷新页面；也不要重复调用这个工具等结果。",
     };
   },
 });
