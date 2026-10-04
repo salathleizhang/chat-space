@@ -941,8 +941,6 @@ export const generateReferenceImagesTool = createTool({
  * 所以这里放行老上传图与之一致；AI 产物则必须回到既有那条需要用户点头的复用路径上去。
  */
 
-const USER_SOURCE_EXT_RE = /\.(?:png|jpe?g|webp)$/i;
-
 /**
  * 部分 OpenAI 兼容模型会把"我没这个参数"输出成字符串 `"null"` 或 `"undefined"`。
  *
@@ -1018,6 +1016,7 @@ export async function resolveAttachImage(
   conversationImages: string[] = [],
 ): Promise<string> {
   if (!explicit) {
+    // 本条消息附带的优先（他刚发的就是他要说的），本条没带才落到整场对话。
     const candidates = currentImages.length > 0 ? currentImages : conversationImages;
     if (candidates.length === 0) {
       throw new ChatServiceError(
@@ -1038,35 +1037,37 @@ export async function resolveAttachImage(
     return candidates[0]!;
   }
 
-  if (!USER_SOURCE_EXT_RE.test(explicit)) {
-    throw new ChatServiceError(
-      `不是支持的图片格式（png/jpg/webp）：${explicit}`,
-      400,
-      "unsupported_image",
-    );
-  }
-  if (!(await storage.exists(explicit))) {
-    throw new ChatServiceError(
-      `参考图不存在：${explicit}。请原样使用用户上传图片的完整逻辑路径` +
-        (conversationImages.length > 0
-          ? `（这场对话里的图片是：${conversationImages.join("、")}）`
-          : ""),
-      404,
-      "input_image_missing",
-    );
-  }
+  /*
+    两条"路径不对"的错误都带上这场对话的真实路径。模型最可能的错法就是自己拼路径
+    （2026-10-05 实测：裸文件名与 `source/` 前缀两种写法各试了一次），把正确答案
+    摆在错误旁边，它下一轮就不用再猜。
+  */
+  const pathHint =
+    conversationImages.length > 0
+      ? `。这场对话里的图片是：${conversationImages.join("、")}`
+      : "";
   const sourceDir = projectSourceDir(projectSlug);
   if (!explicit.startsWith(`${sourceDir}/`)) {
     throw new ChatServiceError(
-      `只能绑定本项目 source/ 目录里的源图：${explicit}`,
+      `只能绑定本项目 source/ 目录里的源图：${explicit}${pathHint}`,
       400,
       "not_a_project_source",
     );
   }
+  /*
+    一次 listSourceReferences 同时回答两个问题：这张图在不在、以及它是不是用户上传的
+    原图（有成功侧写 = AI 产物）。原先还叠了"扩展名"与"文件是否存在"两道各自独立的
+    预检，但 source/ 里的图本来就只可能是上传时的 png/jpg/webp 或生成的产物，两道都
+    只是更早地报出一个更差的错。
+  */
   const references = await listSourceReferences(storage, projectSlug);
   const found = references.find((reference) => reference.path === explicit);
   if (!found) {
-    throw new ChatServiceError(`source/ 里没有这张图：${explicit}`, 404, "input_image_missing");
+    throw new ChatServiceError(
+      `参考图不存在：${explicit}。请原样使用用户上传图片的完整逻辑路径${pathHint}`,
+      404,
+      "input_image_missing",
+    );
   }
   if (found.generatedAt) {
     throw new ChatServiceError(
@@ -1087,12 +1088,13 @@ export async function runAttachSourceImage(
 ): Promise<AttachSourceImageResult> {
   const params = AttachSourceImageParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
+  // 优先级只由 resolveAttachImage 一处决定，调用方不要自己再挑一遍。
   const image = await resolveAttachImage(
     storage,
     params.projectSlug,
     params.image,
     currentImages,
-    conversationImages.length > 0 ? conversationImages : currentImages,
+    conversationImages,
   );
 
   if (!params.assetSlug) return { image, note: ATTACH_UNBOUND_NOTE };

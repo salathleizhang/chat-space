@@ -99,70 +99,6 @@ export function hasExplicitReferenceAnalysisIntent(message: ChatMessage): boolea
   ].some((pattern) => pattern.test(normalized));
 }
 
-/**
- * 本条消息是否在**明确要求直接用它附带的原图**当参考图（不要生成新参考图）。
- *
- * 为什么要在服务端判一次、而不是只写在提示词里：2026-10-05 用户连着两轮说了「不要
- * 生成参考图，直接用这张图来生成」「你不能直接拿我给你的图片来生成吗」，Agent 两轮都
- * 用自己的判断把原图换成了"更干净的参考图"——它认为那张照片斜侧视、带草地和天空、
- * 背面没有信息，所以先隔离一张更稳妥。**判断本身没错，错在它不是决策者**：用户已经
- * 表态用哪张图，这就不是技术选择而是产品选择，只有他能改。at 提示词层面约束不了这种
- * "为你好"的覆盖，所以在决策点由服务端把话说明白（与 `referenceAnalysisAllowed`
- * 同一套做法：能确定性判断的东西不要交给模型猜）。
- *
- * 只在"本条消息恰好带一张图"时才被调用方使用——多张图时该问用户用哪张，不能替他挑。
- */
-export function hasExplicitUploadAsReferenceIntent(message: ChatMessage): boolean {
-  const text =
-    typeof message.content === "string"
-      ? message.content
-      : message.content
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n");
-  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
-  if (!normalized) return false;
-
-  // 把整张图拆成完整场景/世界是另一条路（analyze-reference），不是"把原图登记成
-  // 单物体参考图"。用户同时说了这两件事时按场景走，别在这条路上误导模型。
-  if (/(完整|一键|整个).{0,12}(场景|世界)|(场景|世界).{0,12}(生成|重建|还原)/.test(normalized)) {
-    return false;
-  }
-
-  /** 直接否掉"生成参考图"这件事——最强也最不容易误判的一种说法。 */
-  if (
-    /(不要|不用|不需要|无需|别再|不用再).{0,10}(生成|出|做|画).{0,10}(参考图|参考图片|新图)/.test(
-      normalized,
-    ) ||
-    /(don'?t|do not|no need to|without|skip|avoid).{0,24}(generat|creat|mak|draw)\w*.{0,24}(reference )?(image|picture|photo)/.test(
-      normalized,
-    )
-  ) {
-    return true;
-  }
-  /** "直接用/拿我这张图"这类指代 + 一个生成类动词，两者同时具备才算。 */
-  const pointsAtOwnImage =
-    /(直接|就).{0,4}(用|拿|喂给?|使?用).{0,6}(我|这|那)?(张|个|份)?(上传的?)?(原图|图片|照片|图)/.test(
-      normalized,
-    ) ||
-    /(我|你)给(我|你)的?(原图|图片|照片|图)/.test(normalized) ||
-    /(上传的|本条的?|附带的?)(原图|图片|照片)/.test(normalized) ||
-    // "我要提交的参考图是这张"：点名了是哪张，同样是明确表态
-    /参考图.{0,8}(是|用|要).{0,6}(这|那)张/.test(normalized) ||
-    /*
-      英文语序（与 hasExplicitReferenceAnalysisIntent 同一个教训：中文那几条模式套不到
-      英文上，而英文把"用哪张图"放在动词之后）。要求"指代图"与"生成类动词"同时具备，
-      所以 "Can you make this 3D model look better?" 这类普通提问仍然为假。
-    */
-    /(use|using|submit|feed|take|pass|send).{0,24}(my|this|that|the|uploaded|attached|original).{0,16}(original )?(image|photo|picture)/.test(
-      normalized,
-    ) ||
-    /(my|the|this|that) (uploaded|attached|original) (image|photo|picture)/.test(normalized);
-  const wantsGeneration =
-    /(生成|做成|创建|建模|模型|提交|转成|转换成|3d|三维)/.test(normalized) ||
-    /(3d|three-d|model|models|mesh|generat\w*|submit|convert|turn)/.test(normalized);
-  return pointsAtOwnImage && wantsGeneration;
-}
 
 /**
  * 本轮请求里**整场对话**中用户附带的图片，按出现顺序去重。
@@ -187,47 +123,7 @@ export function conversationImagePaths(messages: ChatMessage[]): string[] {
   return paths;
 }
 
-/**
- * "用户说的那张图"是哪一张。
- *
- * 本条消息附带的（恰好一张）优先——他刚发的就是他要说的；本条没有附图时落到整场对话，
- * 只有对话里也**恰好一张**才敢认定。两处都不唯一时返回 undefined：那是该由用户点名
- * 的情况，替他从多张里挑一张正是这套纪律一直在防的事。
- */
-export function referencedUploadImage(
-  currentImagePaths: string[],
-  conversationImages: string[],
-): string | undefined {
-  if (currentImagePaths.length > 1) return undefined;
-  if (currentImagePaths.length === 1) return currentImagePaths[0];
-  return conversationImages.length === 1 ? conversationImages[0] : undefined;
-}
 
-/**
- * "用户要求直接用附带的原图"这条上下文里要说的话。
- *
- * 抽成纯函数是为了能单独测：这段话的作用是**压住模型自己的档位判断**，措辞一旦被
- * 改软（例如变成"建议优先使用原图"），用户就会第三次遇到同一件事——他说了用哪张图，
- * Agent 却"为你好"地换成先出一张更干净的。
- */
-export function uploadAsReferenceContextLine(
-  imagePath: string,
-  threeDProvider: string | undefined,
-): string {
-  return (
-    `**用户明确要求直接用它发的那张原图当参考图**（${imagePath}）。` +
-    "用户已经表态选哪张图，**这不是技术选择而是产品选择**：用 attach-source-image " +
-    "把它登记为参考图即可（免费、本地、不需要同意），**不要**因为构图、背景太杂、" +
-    "机位斜侧视、背面没有信息之类的原因换成 generate-reference-images 先生成一张。" +
-    "这些风险写进 ask-user 卡片的 details 让他知情并拍板，**但不要替他改主意**。" +
-    `调用时把这个完整路径传进 image（或干脆省略 image，服务端会取同一张）；` +
-    '不要传字符串 "null"，也不要自己拼 source/ 前缀或裸文件名。' +
-    (threeDProvider === "hi3d-volc"
-      ? "例外：他选的渠道是数美 Hi3D，它只吃 Seedream 产物的公网 URL，原图喂不进去；" +
-        "如实说明并请他要么换渠道、要么同意先出一张。"
-      : "")
-  );
-}
 
 /** 对话流增量：文本或工具调用透明度事件（toolCallId+args 供 app 侧协作工具消费） */
 export type ChatDelta =
@@ -515,17 +411,6 @@ export async function* streamChat(
   const currentPlan = request.plan ?? state.plan;
   const threeDSelection = threeDModelFor(request.threeDModel);
   const conversationImages = conversationImagePaths(request.messages);
-  /*
-    "用户说的那张图"：本条消息附带的优先，本条没带图时落到整场对话里唯一的一张。
-    续跑轮不算——它没有新的用户输入，这里按"没有用户消息"处理（与 currentImagePaths 同源）。
-  */
-  const referencedUpload = request.resume
-    ? undefined
-    : referencedUploadImage(currentImagePaths, conversationImages);
-  const uploadedAsReference =
-    referencedUpload !== undefined &&
-    latestUserMessage !== undefined &&
-    hasExplicitUploadAsReferenceIntent(latestUserMessage);
   const assetNamesBySlug = new Map(
     state.assets.map((asset) => [
       asset.slug,
@@ -578,15 +463,6 @@ export async function* streamChat(
       ...(currentPlan ? [planContextText(currentPlan)] : []),
       "若用户消息带有“本条消息明确选中的资产”，它们是该条指令的主要目标，代词优先指向它们；" +
         "未带资产附件时，再根据完整资产名录和对话判断，无法唯一确定才向用户确认。",
-      ...(uploadedAsReference && referencedUpload
-        ? [uploadAsReferenceContextLine(referencedUpload, threeDSelection?.provider)]
-        : []),
-      /*
-        把"这场对话里用户发过哪些图、各自的完整逻辑路径"明确列出来。少了这一条，模型
-        只能看到 `源图：`（那是**项目级**的 source/ 清单，混着上一场会话的上传和 AI
-        生成的参考图），于是它会照着猜——2026-10-05 实测它依次猜了裸文件名与
-        `source/` 前缀两种写法，全都不存在。
-      */
       ...(conversationImages.length > 0
         ? [
             `本场对话里用户附带的图片（按出现顺序）：${conversationImages.join("、")}。` +
