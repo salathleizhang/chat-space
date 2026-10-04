@@ -1,0 +1,83 @@
+# ChatSpace Blender —— 本地编排
+#
+# 起法：
+#   cd blender/docker
+#   docker compose up --build
+#
+# 起来之后：
+#   · 人看画面   →  http://localhost:6901   （KasmVNC，密码见下面的 VNC_PW）
+#   · chat/ 驱动 →  BLENDER_ENABLED=1 BLENDER_HOST=127.0.0.1 BLENDER_PORT=9876
+#
+# ── 三个必须说明的设计点 ─────────────────────────────────────────────────────
+
+services:
+  blender:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      # 见 Dockerfile 顶部：Blender 官方不提供 Linux arm64 构建，
+      # 所以这里钉 amd64；Apple Silicon 上走 Rosetta 2。
+      platforms:
+        - linux/amd64
+    image: chatspace-blender:5.2.2-local
+    platform: linux/amd64
+
+    ports:
+      # KasmVNC：人看 Blender 的界面
+      - "127.0.0.1:6901:6901"
+      # addon socket：chat/ 驱动 Blender
+      #
+      # ⚠️ **只绑 127.0.0.1**。社区版插件的 socket **没有任何鉴权**（实测：没有
+      # token、没有密码、没有来源校验），绑到 0.0.0.0 等于给同网段任何人一个
+      # "在你这台 Blender 里执行任意 Python"的入口。要跨机访问，走 SSH 隧道或
+      # 一个自己写的带 token 的反代 —— 不要直接暴露这个端口。
+      - "127.0.0.1:9876:9877"
+
+    environment:
+      # KasmVNC 的登录口令（本地开发用；别用默认值）
+      VNC_PW: chatspace
+      # 构建时已经装过一次补丁；容器里留着这条，卷被清空时能自愈
+      CHATSPACE_PATCH_REPAIR: "1"
+
+    volumes:
+      # ── 共享工作目录：**这就是"文件怎么过去"的那条缝** ──────────────────────
+      #
+      # chat/ 跑在宿主机（macOS），Blender 跑在容器里 —— 两个文件系统。
+      # 所以 `blender-export` 不能像原来那样"Blender 写到 /tmp、chat/ 再从 /tmp 读"。
+      #
+      # 挂同一个目录，两边都能看见，靠一个映射函数对上：
+      #   容器里看到的   /workspace
+      #   宿主机上看到的 ~/ChatSpace/blender-work
+      #
+      # chat/ 侧对应的配置是 CHATSPACE_BLENDER_WORKDIR + BLENDER_WORKDIR。
+      # 将来上云（容器不在这台机器上）时，**只换这一个映射的实现**：
+      # 从"读本地文件"变成"从沙箱取回字节"，索引/侧写/发布/校验一个字不用改。
+      - "${CHATSPACE_BLENDER_WORKDIR:-${HOME}/ChatSpace/blender-work}:/workspace"
+
+    # Blender 建模是 CPU 密集的；给足但留上限，别让它把整机拖垮。
+    #
+    # 实测本机 Docker VM：10 核 / 7.65 GiB。所以内存给 4g 而不是 6g —— VM 自己也要内存，
+    # 顶到 6g 会把 VM 逼到没余量（容器不是 VM 里唯一在用的东西）。云端按机器规格调。
+    cpus: "4"
+    mem_limit: 4g
+    # 容器里的 Blender 崩了要能自己回来（编排层看见非零退出码）
+    restart: unless-stopped
+
+    # ── 出网 ─────────────────────────────────────────────────────────────────
+    #
+    # 建议**默认断网**，理由有两条：
+    #   1. 社区版遥测会往第三方 Supabase 打点（实测端点见 patch/README 的审计记录）。
+    #      环境变量表达的是"意图"，网络策略才是"执行"。
+    #   2. 插件里的资产市场（PolyHaven/Sketchfab）是提示注入面，我们本来就不用它们。
+    #
+    # 但首次 `install.py` 需要下 uv / mcp-for-blender，所以本地开发先留着网络。
+    # 生产镜像应当把补丁装进镜像（Dockerfile 已经这么做了），运行时不必出网。
+    #
+    # 需要收紧时取消下面注释（按需放行）：
+    # networks:
+    #   - blender_net
+#
+# networks:
+#   blender_net:
+#     driver: bridge
+#     internal: true

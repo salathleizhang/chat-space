@@ -26,6 +26,38 @@ const EnvSchema = z.object({
   VOLC_DOUBAO_PRO_MODEL: z.string().min(1).default(DOUBAO_PRO_SELECTION),
   VOLC_HYPER3D_MODEL: z.string().min(1).default("hyper3d-gen2-260112"),
   VOLC_HI3D_MODEL: z.string().min(1).default("hitem3d-2-0-251223"),
+  /**
+   * Blender 集成（默认**关闭**）。
+   *
+   * 关闭是刻意的：这 8 个工具只在真的有一个 Blender 会话时才该出现在 agent 的工具表里，
+   * 否则模型会去调一个必然失败的会话检查、白费轮次。打开：`BLENDER_ENABLED=1`。
+   */
+  BLENDER_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === "1" || value === "true"),
+  /** Blender addon 的 socket 地址。本地是 127.0.0.1；云端是容器暴露出来的主机。 */
+  BLENDER_HOST: z.string().min(1).optional(),
+  BLENDER_PORT: z.coerce.number().int().positive().max(65535).optional(),
+  /**
+   * MCP server 的可执行文件与参数（空格分隔）。
+   *
+   * 默认 `uvx --from mcp-for-blender blender-mcp`：本机系统 Python 是 3.9 而这个包要
+   * ≥3.10，`uvx` 会自己拉一个合适的 Python，于是"手动准备 Python 环境"整步消失。
+   */
+  BLENDER_MCP_BIN: z.string().min(1).optional(),
+  BLENDER_MCP_ARGS: z.string().optional(),
+  /**
+   * 共享工作目录 —— **"文件怎么过去"这条缝的两端**。
+   *
+   * Blender 跑在容器里、chat/ 跑在宿主机时，这是两个文件系统：Blender 写进 `/workspace`，
+   * 而 chat/ 看到的是挂载点 `~/ChatSpace/blender-work`。两个值一起给，中间做前缀映射。
+   *
+   * 两个都不给 = 同一文件系统（macOS 本地 Blender、或 Blender 与 chat/ 同机），
+   * 走 `os.tmpdir()` 中转即可。
+   */
+  BLENDER_WORKDIR: z.string().min(1).optional(),
+  CHATSPACE_BLENDER_WORKDIR: z.string().min(1).optional(),
 });
 
 const env = EnvSchema.parse(process.env);
@@ -100,6 +132,28 @@ export const config = {
   },
   tripo: {
     imageModel: env.TRIPO_IMAGE_MODEL,
+  },
+  /**
+   * Blender 会话。`host`/`port` 是 **Blender 所在那台机器**的 addon socket 地址——
+   * MCP server 是本地代理，所以"Blender 在云端"只需要改这两个值，工具层一个字不动。
+   */
+  blender: {
+    enabled: env.BLENDER_ENABLED === true,
+    host: env.BLENDER_HOST ?? "127.0.0.1",
+    port: env.BLENDER_PORT ?? 9876,
+    bin: env.BLENDER_MCP_BIN ?? "uvx",
+    args: env.BLENDER_MCP_ARGS
+      ? env.BLENDER_MCP_ARGS.split(" ").filter(Boolean)
+      : // 注意：可执行文件与包同名，都是 `mcp-for-blender`。改名前叫 `blender-mcp`，
+        // 用旧名字会得到 `An executable named 'blender-mcp' is not provided by package
+        // 'mcp-for-blender'`——本条由 blenderOps.test.ts 钉住。
+        ["mcp-for-blender"],
+    /**
+     * 共享工作目录的两端。`workDir` 是 **Blender 看到的**路径，
+     * `localWorkDir` 是 **chat/ 看到的**同一个目录。见 EnvSchema 里的说明。
+     */
+    workDir: env.BLENDER_WORKDIR ?? null,
+    localWorkDir: env.CHATSPACE_BLENDER_WORKDIR ?? null,
   },
 } as const;
 

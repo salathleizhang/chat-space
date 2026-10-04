@@ -6,6 +6,7 @@ import {
   analyzeSceneTool,
   analyzeReferenceTool,
   askUserTool,
+  BLENDER_TOOLS,
   generateCleanPlateTool,
   generateCharacterTool,
   generateReferenceImagesTool,
@@ -70,6 +71,18 @@ export function createCreatorAgent(
       "list-generation-tasks": listGenerationTasksTool,
       "resume-generation": resumeGenerationTool,
       "repair-assets": repairAssetsTool,
+      /*
+        Blender 工具**默认不注册**（`BLENDER_ENABLED=1` 才开）。
+
+        理由不是"省 token"，而是**工具表本身就是给模型的信号**：注册了 8 个 blender-*
+        之后，模型会倾向于把它们当成一条可选的建模路线，然后去调一个没有 Blender 会话
+        必然失败的会话检查。没配 Blender 时这些工具根本不该存在。
+
+        注意这 8 个是我们自己的工具，不是社区版那 36 个 MCP 工具的转发——社区版实测
+        30 个工具带一个喂遥测的 `user_prompt` 参数，直接挂上去会污染模型的选择。
+        白名单与理由见 `tools/blenderOps.ts` 与 `models/blenderMcp.ts` 的模块文档。
+      */
+      ...(config.blender.enabled ? BLENDER_TOOLS : {}),
     },
     model: {
       providerId: "byok-openai-compatible",

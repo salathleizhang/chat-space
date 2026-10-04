@@ -1,0 +1,35 @@
+# ChatSpace Blender 补丁 —— 插件清单
+#
+# 一行一个，`#` 开头是注释。安装器（install.py）逐行执行，**装不上就让整个安装失败**
+# （见 install.py 的"为什么失败要硬失败"注释）。
+#
+# 为什么要清单而不是"把本机的插件目录拷进去"：
+#   · 可审计 —— 这是个文本文件，能 diff、能 review；一坨拷贝的目录不能
+#   · 可复现 —— 能钉版本；拷目录只能钉"我当时机器上是什么"
+#   · **可验证** —— 每一项都能在安装时当场 enable 一次，失败立即暴露
+#   · 可迁移 —— macOS 与 Linux 用同一份清单，Docker 里也是跑同一份
+#   · 升 Blender 大版本时能重跑，而不是"重新攒一遍"
+#
+# 三种写法：
+#
+#   extension <repo> <id>
+#       Blender 4.2+ 的扩展机制：blender --command extension install <repo> <id>
+#       repo 常用默认仓库的别名：blender  /  extensions.blender.org
+#       例：extension blender node-wrangler
+#
+#   addon <module>
+#       断言这个插件**已经**存在于 Blender 的用户插件目录里（不再下载）。
+#       用于你自己 clone 进来、或者镜像里已经 COPY 进来的插件。
+#       例：addon my_custom_tools
+#
+#   path <绝对路径或相对本清单的路径>
+#       把该目录/文件作为插件放进去，然后按 <目录名> 启用。
+#       例：path ./vendor/some_addon
+#
+# ── 下面暂时是空的 ────────────────────────────────────────────────────────────
+# 你现在还没给我插件清单，而 Day 1 真正必须有的只有社区版 MCP 插件本身 ——
+# 那个由 install.py 单独负责（它有自己的跨平台安装器和版本检查，不走这份清单）。
+#
+# 把你要的插件按上面的写法加进来即可；加完重跑 install.py，它会装、启用、并自检。
+# 想先看看当前容器/Mac 里到底启用了什么，用 blender-api 之外的那条路：
+#   补丁里的 selfcheck.py 会打印已启用插件清单。
