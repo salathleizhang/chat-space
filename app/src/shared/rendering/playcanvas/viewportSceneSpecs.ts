@@ -102,6 +102,22 @@ export function viewportSceneSpecs(options: SceneSpecsOptions): SceneSpecsResult
         // 世界的**语义变换**（+Y 朝下 ⇒ 绕 X 转 π）由实体装配层读它合成，见 `worldPlacement.ts`
         worldSemantics: asset.worldSemantics ?? null,
       });
+      /*
+        世界是**两套几何**：spz 是画面、collider glb 是物理（与 three 侧 `WorldColliderMesh`
+        同源）。**必须用同一份 `worldSemantics`**——两者不一起翻转就会互相错位
+        （真机踩过：家具被一片巨大的地面盖住）。
+        id 加 `:collider` 后缀：`createSceneAssets.sync` 按 id 索引，与世界本体是两条条目。
+      */
+      if (asset.modelPath) {
+        const colliderUrl = asset.modelPath;
+        specs.push({
+          id: `${asset.id}:collider`,
+          kind: "collider",
+          url: withRevision(options.urlFor?.(colliderUrl) ?? colliderUrl, options.revisionFor?.(asset) ?? null),
+          placement: options.transforms?.[asset.id] ?? IDENTITY,
+          worldSemantics: asset.worldSemantics ?? null,
+        });
+      }
       continue;
     }
     const kind = specKindFor(asset);

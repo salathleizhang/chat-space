@@ -1,4 +1,5 @@
 import type { AppBase } from "playcanvas";
+import { createAmmoPhysicsWorld } from "./physicsWorld";
 
 /**
  * PlayCanvas 应用的装配：把**已经建好的** graphicsDevice 接到一个 `AppBase` 上。
@@ -42,22 +43,30 @@ export interface CreateAppOptions {
  */
 const REQUIRED_SYSTEMS = [
   "render", "camera", "light", "script", "anim", "gsplat",
-  "collision", "rigidbody", "element", "screen", "sprite", "layoutgroup", "layoutchild",
+  "collision", "rigidbody", "joint", "element", "screen", "sprite", "layoutgroup", "layoutchild",
 ] as const;
 
 async function defaultCreateApp(canvas: HTMLCanvasElement, device: unknown): Promise<AppBase> {
   const pc = await import("playcanvas");
   const { AppBase, AppOptions, Mouse, TouchDevice, FILLMODE_FILL_WINDOW, RESOLUTION_AUTO } = pc;
+  /*
+    物理世界**显式**建好再交给 AppOptions：不赌"`app.start()` 时全局恰好存在"的自动接线
+    （`rigid-body/system.js` 的 `typeof Ammo !== "undefined"` 分支），显式传参走的是
+    另一条分支（`app-base.js` 的 `options.physicsWorld`），与时机无关。
+    必须在 `app.init()` **之前**拿到 world。见 physicsWorld.ts 的三个静默陷阱。
+  */
+  const { world: physicsWorld } = await createAmmoPhysicsWorld();
   const app = new AppBase(canvas);
   const options = new AppOptions();
   options.graphicsDevice = device as never;
+  options.physicsWorld = physicsWorld as never;
   // 指针/触摸输入：PlayCanvas 自己接，不经过 React 的合成事件。
   options.mouse = new Mouse(document.body);
   options.touch = new TouchDevice(document.body);
   options.componentSystems = [
     pc.RenderComponentSystem, pc.CameraComponentSystem, pc.LightComponentSystem, pc.ScriptComponentSystem,
     pc.AnimComponentSystem, pc.GSplatComponentSystem,
-    pc.CollisionComponentSystem, pc.RigidBodyComponentSystem,
+    pc.CollisionComponentSystem, pc.RigidBodyComponentSystem, pc.JointComponentSystem,
     pc.ElementComponentSystem, pc.ScreenComponentSystem, pc.SpriteComponentSystem,
     pc.LayoutGroupComponentSystem, pc.LayoutChildComponentSystem,
   ];

@@ -1,4 +1,5 @@
 import { Environment } from "@react-three/drei/core/Environment";
+import { Physics } from "@react-three/rapier";
 import { WebGPUView } from "./WebGPUView";
 import { ProjectRenderRuntime, FirstPersonView } from "./ProjectRenderRuntime";
 import { PanePickTarget } from "./PanePicking";
@@ -48,6 +49,12 @@ import {
 import { ViewportChrome } from "./ViewportChrome";
 import { ViewportPane } from "./ViewportPane";
 import WorldColliderMesh from "./WorldColliderMesh";
+import { PhysicalAsset } from "./PhysicalAsset";
+import { PhysicsDebugBridge } from "./PhysicsDebugBridge";
+import { PhysicsGround } from "./PhysicsGround";
+import { PHYSICS_GRAVITY, CHARACTER_EYE_OFFSET, physicsEnabledFromSearch } from "./physics";
+import { physicsDebugEnabled, setGrabHandles } from "./physicsDebug";
+import { useObjectGrab } from "./useObjectGrab";
 
 export interface ViewportProps {
   /** 项目全部资产：共享场景一次性渲染，不再按选中切换 */
@@ -119,6 +126,20 @@ const SplatModel = lazy(() => import("./SplatModel"));
 const SKY_BACKDROP_RADIUS = 200;
 const FIRST_PERSON_LOCK_SELECTOR = "[data-viewport-first-person-lock]";
 
+/** 准星抓取没有界面，只是把 hook 挂进 `<Physics>` 里（hook 不能条件调用，所以包一层组件）。 */
+function FirstPersonGrab({ enabled }: { enabled: boolean }) {
+  const grab = useObjectGrab({ enabled });
+  /*
+    诊断口要调用**同一份**函数（含 `enabled` 与射线判据），而不是复制一份逻辑：
+    复制出来的那份测过也不代表产品路径对。见 physicsDebug.ts 的纪律 ②。
+  */
+  useEffect(() => {
+    setGrabHandles(grab);
+    return () => setGrabHandles(null);
+  }, [grab]);
+  return null;
+}
+
 /**
  * 用一个跟随相机、内壁贴图的大球替代 drei Environment 的 background：
  * three.js 内置的 scene.background 渲染靠"把顶点深度强制设成 far 平面"的戏法，
@@ -179,6 +200,11 @@ interface SceneContentsProps {
   hoveredByLayer: Record<number, string>;
   /** 线框着色模式：只作用于**模型资产**，泼溅世界/天空盒/网格/HUD 一律照旧（见 wireframeMaterial.ts） */
   wireframe: boolean;
+  /**
+   * 物理开关。开着时每个摆放资产是一个动态刚体 + 盒体碰撞体，world 的 collider 网格
+   * 无论画不画都作为 trimesh 地形参与碰撞（见 PhysicalAsset / WorldColliderMesh）。
+   */
+  physics: boolean;
 }
 
 /** One project-owned model instance; per-view proxies handle picking. */
@@ -191,6 +217,7 @@ const PlacedAsset = memo(function PlacedAsset({
   highlightMask,
   objects,
   wireframe,
+  physics,
 }: {
   asset: LibraryAsset;
   /** 网格默认位，或用户 gizmo 调过后落在 scene.json 里的摆放（见 scenePlacement.ts） */
@@ -203,12 +230,26 @@ const PlacedAsset = memo(function PlacedAsset({
   highlightMask: number;
   objects: Map<string, THREE.Object3D>;
   wireframe: boolean;
+  /** 该资产是否带物理化身（盒体碰撞体 + 刚体）。见 PhysicalAsset 的说明。 */
+  physics: boolean;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const register = useCallback((group: THREE.Group | null) => {
-    groupRef.current = group;
-    if (group) objects.set(asset.id, group);
+  const objectRef = useRef<THREE.Object3D | null>(null);
+  const [bounds, setBounds] = useState<THREE.Box3 | null>(null);
+  /*
+    拾取代理、gizmo 轴心、整场景检查都按 `objects` 里这个节点的世界变换算位置，所以
+    "谁是摆放的持有者"必须跟着渲染分支走：不带物理时是那个 `<group>`，带物理时是刚体本体
+    （`PhysicalAsset` 通过 `transformState` 把它交出来）。两边都写进同一个 ref，下面的
+    实时跟随与注销逻辑就完全共用。
+  */
+  const register = useCallback((object: THREE.Object3D | null) => {
+    objectRef.current = object;
+    if (object) objects.set(asset.id, object);
     else objects.delete(asset.id);
+  }, [objects, asset.id]);
+
+  useEffect(() => () => {
+    objects.delete(asset.id);
+    objectRef.current = null;
   }, [objects, asset.id]);
 
   /*
@@ -216,16 +257,43 @@ const PlacedAsset = memo(function PlacedAsset({
     上——绕开 React 是刻意的，拖拽时每帧 setState 会把整棵场景树重协调一遍，必卡；而
     所有窗格绘制同一个 group，每帧只应用一次实时变换。
     松手后表被清空，这里就不再插手，最终值经 props 正常回到 React 手里（两者相等，无跳变）。
+
+    物理开着时的顺序也是对的：物理世界只在第一人称下推进（见 render 处的 `<Physics paused>`），
+    而第一人称没有窗格、也就没有 gizmo，所以"每帧写摆放"和"每帧物理回写"永远不会同时发生。
   */
   useFrame(() => {
-    const group = groupRef.current;
-    if (!group || live.size === 0) return;
+    const object = objectRef.current;
+    if (!object || live.size === 0) return;
     const dragged = live.get(asset.id);
     if (!dragged) return;
-    group.position.fromArray(dragged.position);
-    group.rotation.fromArray(dragged.rotation);
-    group.scale.fromArray(dragged.scale);
+    object.position.fromArray(dragged.position);
+    object.rotation.fromArray(dragged.rotation);
+    object.scale.fromArray(dragged.scale);
   });
+
+  const mesh = (
+    <ModelMesh
+      asset={asset}
+      highlight={highlight}
+      highlightMask={highlightMask}
+      material={material}
+      wireframe={wireframe}
+      onBounds={physics ? setBounds : undefined}
+    />
+  );
+
+  if (physics) {
+    return (
+      <PhysicalAsset
+        name={`asset:${asset.id}`}
+        transform={placement}
+        bounds={bounds}
+        onObject={register}
+      >
+        {mesh}
+      </PhysicalAsset>
+    );
+  }
 
   return (
     <group
@@ -236,7 +304,7 @@ const PlacedAsset = memo(function PlacedAsset({
       scale={placement.scale}
 
     >
-      <ModelMesh asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} />
+      {mesh}
     </group>
   );
 });
@@ -256,6 +324,7 @@ function SceneContents({
   objects,
   hoveredByLayer,
   wireframe,
+  physics,
 }: SceneContentsProps) {
   return (
     <>
@@ -292,11 +361,15 @@ function SceneContents({
         </ResettableErrorBoundary>
       )}
       {/*
-        world 的 collider 网格，只作地形参照（见 WorldColliderMesh：**当前 100% 透明、不画**，
-        GLB 仍照旧加载并挂在场景里）。必须与泼溅用同一份 worldTransform：World Labs 的 +Y 朝下，
-        两者不一起翻就会互相错位。
+        world 的 collider 网格。它有两个身份，且**同一个 GLB 只挂一次**：
+        ① 地形参照层（`COLLIDER_VISIBLE=false`，当前一个像素都不画，见 WorldColliderMesh）；
+        ② 物理地形（fixed + trimesh），这是"走不穿墙、站在地板上"的唯一来源。
+
+        所以挂载条件**不再看** `showWorldCollider`，也不再看是不是第一人称——物理地形
+        在第一人称下必须存在（以前这个条件里带着 `!firstPerson`，直接换成物理就是
+        "人一进第一人称就掉出世界"）。`showWorldCollider` 只决定那层参照要不要显示。
       */}
-      {showWorldCollider && worldAsset?.modelPath && worldAsset.worldSemantics && (
+      {worldAsset?.modelPath && worldAsset.worldSemantics && (
         <ResettableErrorBoundary
           resetKey={`${worldAsset.modelPath}|${worldAsset.resourceRevision ?? 0}`}
           fallback={null}
@@ -306,6 +379,8 @@ function SceneContents({
               key={`${worldAsset.modelPath}|${worldAsset.resourceRevision ?? 0}`}
               url={`${libraryUrl(worldAsset.modelPath)}?revision=${worldAsset.resourceRevision ?? 0}`}
               semantics={worldAsset.worldSemantics}
+              visible={showWorldCollider}
+              physics={physics}
             />
           </Suspense>
         </ResettableErrorBoundary>
@@ -331,6 +406,7 @@ function SceneContents({
               highlightMask={selectedIds.has(asset.id) ? 1 : hoverMask}
               objects={objects}
               wireframe={wireframe}
+              physics={physics}
             />
           </Suspense>
         );
@@ -453,6 +529,31 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
   const placedAssets = useMemo(
     () => assets.filter((a) => a.kind !== "world" && a.modelPath),
     [assets],
+  );
+  /*
+    物理默认开启（`?physics=0` 只是测量用的对照臂，见 physics.ts 的说明）。
+    `physicsRunning` 是"世界要不要推进"：只在第一人称下推进——轨道/多窗格是编辑器语义，
+    家具必须待在 scene.json 说的位置上。
+  */
+  const physicsEnabled = useMemo(
+    () => physicsEnabledFromSearch(typeof location === "undefined" ? "" : location.search),
+    [],
+  );
+  const physicsRunning = physicsEnabled && mode === "firstPerson";
+  /** 诊断口开关：只在 dev 构建 + `?physicsDebug=1` 时安装（见 physicsDebug.ts） */
+  const physicsDebug = useMemo(
+    () => physicsDebugEnabled(typeof location === "undefined" ? "" : location.search),
+    [],
+  );
+  /**
+   * 第一人称出生点（**刚体中心**）。地面在 y=0 是**结构性的**：有 world 时
+   * `ground_plane_offset` 的语义就是把地面抬到 0，没有 world 时由 `PhysicsGround` 的
+   * 平板兜住。所以这里不能再加 `groundPlaneOffset`——加了就是"进第一人称先空降 1 米"
+   * （实测某项目 offset = 1.0636）。多给 0.2 m 余量，让重力把角色放到真正的地面上。
+   */
+  const firstPersonSpawn = useMemo<[number, number, number]>(
+    () => [0, CHARACTER_EYE_OFFSET + 0.2, 3],
+    [],
   );
   const layout = useMemo(() => computeSceneLayout(assets, transforms), [assets, transforms]);
   const skyboxAsset = selectProjectSkybox(assets, currentSkybox);
@@ -657,39 +758,79 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
         onPointerMissed={firstPerson ? undefined : handlePointerMissed}
       >
         <ProjectRenderRuntime>
-          <SceneContents
-            worldAsset={worldAsset}
-            placedAssets={placedAssets}
-            layout={layout}
-            showGrid={!firstPerson && showGrid}
-            showWorldCollider={!firstPerson && showWorldCollider}
-            skyboxUrl={skyboxUrl}
-            skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
-            selectedIds={selectedIds}
-            materials={materials}
-            live={live}
-            objects={objects}
-            hoveredByLayer={hoveredByLayer}
-            wireframe={wireframe}
-          />
-          {!firstPerson && panes.map((pane) => (
-            <WebGPUView key={pane.id} id={pane.id} layer={VIEW_LAYERS[pane.id]!} track={paneRefs[pane.id] as RefObject<HTMLElement>}>
-              {placedAssets.map((asset) => <PanePickTarget key={asset.id} asset={asset} objects={objects}
-                layer={VIEW_LAYERS[pane.id]!} onSelect={handleSelectAsset} onFocus={handleFocusAsset} onHover={handleHover} />)}
-              {onTransformCommit && <TransformGizmo members={gizmoMembers} mode={transformMode} space={transformSpace}
-                paneRef={paneRefs[pane.id]!} live={live} pickSuppressedRef={pickSuppressedRef} onCommit={onTransformCommit} />}
-              <PaneCamera
-                kind={pane.camera}
-                projection={projectionFor(pane)}
-                orbitCamera={ORBIT_CAMERA}
-                focusKey={focusedId ?? "__overview__"}
-                cameraTargetRef={cameraTargetRef}
-                paneRef={paneRefs[pane.id] as RefObject<HTMLDivElement | null>}
-                controlsOutRef={pane.id === "persp" ? perspControlsRef : undefined}
-              />
-            </WebGPUView>
-          ))}
-          {firstPerson && <><FirstPersonView /><FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} /></>}
+          {/*
+            物理世界**只在一个地方挂**：整个视口只有一份核心场景（1/2/4 窗格共用它，
+            第一人称也用它），逐窗格各挂一份会把同一批碰撞体建 N 份、步进 N 次。
+
+            `updateLoop="independent"` 不是可有可无的选项：画布是 `frameloop="demand"`，
+            默认的 "follow" 会把物理步绑在渲染帧上——没有帧就没有物理，物体停在半空。
+            "independent" 让物理跑在自己的循环里，而"要不要重画"由库自己决定
+            （它在每步后对活动刚体调 `invalidate()`）。
+
+            `paused`：**只在第一人称下推进**。轨道/多窗格是编辑器语义，家具必须待在
+            scene.json 说的位置上；进了第一人称才是一个"世界"。这也是为什么刚体建好就睡
+            （见 PhysicalAsset）——睡着 = 不碰它就不动。
+
+            `<Suspense>` 是**必需**的，不是保险：`<Physics>` 内部对 rapier 的
+            动态 import + wasm init 用了 `suspend()`，没有边界会直接把异常抛到 React 根上。
+            挂起只发生在**整页第一次**挂载物理世界（suspend-react 会缓存），代价是这一次
+            画布内容短暂为空——与启动时等 WebGPU 设备初始化是同一量级。
+          */}
+          <Suspense fallback={null}>
+            <Physics
+            gravity={PHYSICS_GRAVITY}
+            // 碰撞体一律显式声明：绝不让引擎按 mesh 自动生成（百万面模型会变 trimesh）
+            colliders={false}
+            updateLoop="independent"
+            paused={!physicsRunning}
+          >
+            <SceneContents
+              worldAsset={worldAsset}
+              placedAssets={placedAssets}
+              layout={layout}
+              showGrid={!firstPerson && showGrid}
+              showWorldCollider={!firstPerson && showWorldCollider}
+              skyboxUrl={skyboxUrl}
+              skyboxRevision={skyboxAsset?.resourceRevision ?? 0}
+              selectedIds={selectedIds}
+              materials={materials}
+              live={live}
+              objects={objects}
+              hoveredByLayer={hoveredByLayer}
+              wireframe={wireframe}
+              physics={physicsEnabled}
+            />
+            {/* 诊断口读的是引擎事实（rapier 的 rigidBodyStates），与渲染分支无关，所以挂在世界这一层 */}
+            <PhysicsDebugBridge enabled={physicsDebug} />
+            {/* 地面 + 兜底安全网：世界碰撞网格只是房间外壳，网格默认位常常在它外面。
+                `?physics=0` 时必须一起摘掉，否则对照臂里仍有物理在跑。 */}
+            {physicsEnabled && <PhysicsGround />}
+            {!firstPerson && panes.map((pane) => (
+              <WebGPUView key={pane.id} id={pane.id} layer={VIEW_LAYERS[pane.id]!} track={paneRefs[pane.id] as RefObject<HTMLElement>}>
+                {placedAssets.map((asset) => <PanePickTarget key={asset.id} asset={asset} objects={objects}
+                  layer={VIEW_LAYERS[pane.id]!} onSelect={handleSelectAsset} onFocus={handleFocusAsset} onHover={handleHover} />)}
+                {onTransformCommit && <TransformGizmo members={gizmoMembers} mode={transformMode} space={transformSpace}
+                  paneRef={paneRefs[pane.id]!} live={live} pickSuppressedRef={pickSuppressedRef} onCommit={onTransformCommit} />}
+                <PaneCamera
+                  kind={pane.camera}
+                  projection={projectionFor(pane)}
+                  orbitCamera={ORBIT_CAMERA}
+                  focusKey={focusedId ?? "__overview__"}
+                  cameraTargetRef={cameraTargetRef}
+                  paneRef={paneRefs[pane.id] as RefObject<HTMLDivElement | null>}
+                  controlsOutRef={pane.id === "persp" ? perspControlsRef : undefined}
+                />
+              </WebGPUView>
+            ))}
+            {firstPerson && (
+              <>
+                <FirstPersonView />
+                <FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} spawn={firstPersonSpawn} />
+                <FirstPersonGrab enabled={physicsEnabled} />
+              </>
+            )}
+            </Physics>
+          </Suspense>
         </ProjectRenderRuntime>
         {onInspectionCaptured && (
           <>

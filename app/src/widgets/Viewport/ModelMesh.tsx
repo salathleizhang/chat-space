@@ -21,6 +21,7 @@ import { libraryUrl } from "../../shared/lib/libraryApi";
 import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundary";
 import { useAssemblyMaterials } from "./materialOverride";
 import { needsAnimationFrame } from "./animationLoop";
+import { noteBoundsEmpty, noteBoundsMeasured, noteBoundsReported } from "./physicsDebug";
 import { mergeLoadedModel, type LoadedModel } from "./modelAssembly";
 import { MTLLoader, OBJLoader } from "./modelLoaders";
 import { useModelResource } from "../../shared/rendering/useModelResource";
@@ -224,7 +225,7 @@ const BOX_PADDING_RATIO = 0.02;
  * 回 root 局部空间，于是把 helper 直接挂成 root 的子节点就天然对齐，且与 root 挂没挂
  * 进场景、挂在哪一层无关。
  */
-function localBounds(root: Object3D) {
+function localBounds(root: Object3D, padded = true) {
   root.updateWorldMatrix(true, true);
   const toLocal = new THREE.Matrix4().copy(root.matrixWorld).invert();
   const matrix = new THREE.Matrix4();
@@ -240,6 +241,9 @@ function localBounds(root: Object3D) {
     box.union(meshBox);
   });
   if (box.isEmpty()) return box;
+  // `padded = false` 是给**物理碰撞体**用的：那圈 2% 的余量是给选中线框读得清楚用的，
+  // 拿去做碰撞体会让每个物体凭空胖一圈（2 m 的沙发每边多 4 cm），相邻物体互相顶开。
+  if (!padded) return box;
   const size = box.getSize(new THREE.Vector3());
   return box.expandByScalar(Math.max(size.x, size.y, size.z) * BOX_PADDING_RATIO);
 }
@@ -331,6 +335,7 @@ function ClonedAssembly({
   highlightMask,
   material,
   wireframe,
+  onBounds,
 }: {
   models: LoadedModel[];
   highlight: Highlight;
@@ -339,6 +344,11 @@ function ClonedAssembly({
   material?: AssetMaterial;
   /** 线框着色模式；开时忽略贴图覆盖（见 useAssemblyMaterials） */
   wireframe: boolean;
+  /**
+   * 把**已渲染这一份**的紧包围盒发布出去（局部坐标）。物理碰撞体要等模型真的挂上才知道
+   * 自己多大，所以只能由渲染层报，而不是由编辑层另挂一次模型去量（那正是被消除掉的越界）。
+   */
+  onBounds?: (box: THREE.Box3) => void;
 }) {
   const clonedModels = useMemo(
     () =>
@@ -357,6 +367,24 @@ function ClonedAssembly({
   */
   const invalidate = useThree((state) => state.invalidate);
   useAssemblyMaterials(root, material, wireframe, invalidate);
+  /*
+    物理碰撞体尺寸只在模型挂上后才知道，而且要的是**紧**盒（见 localBounds 的 padded 说明）。
+    依赖里不放 onBounds：调用方每次渲染都可能换函数身份，会变成每次渲染都报一次盒。
+  */
+  const reportBounds = useRef(onBounds);
+  reportBounds.current = onBounds;
+  useEffect(() => {
+    if (!root) return;
+    noteBoundsMeasured();
+    if (!reportBounds.current) return;
+    const box = localBounds(root, false);
+    if (box.isEmpty()) {
+      noteBoundsEmpty();
+      return;
+    }
+    noteBoundsReported();
+    reportBounds.current(box);
+  }, [root]);
   return (
     // 所有部件先保持供应商文件里的共同坐标系，再对整个集合只 Center 一次；逐部件
     // Center 会把每块都搬到原点，直接破坏分段模型的装配关系。
@@ -402,12 +430,14 @@ function ModelAssembly({
   highlightMask,
   material,
   wireframe,
+  onBounds,
 }: {
   asset: LibraryAsset;
   highlight: Highlight;
   highlightMask: number;
   material?: AssetMaterial;
   wireframe: boolean;
+  onBounds?: (box: THREE.Box3) => void;
 }) {
   const paths = renderableModelPaths(asset);
   const [loaded, setLoaded] = useState<Array<LoadedModel | null>>(() => paths.map(() => null));
@@ -454,7 +484,7 @@ function ModelAssembly({
         </Suspense>
       ))}
       {settled && loadedModels.length > 0 && (
-        <ClonedAssembly models={loadedModels} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} />
+        <ClonedAssembly models={loadedModels} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} onBounds={onBounds} />
       )}
     </>
   );
@@ -466,6 +496,7 @@ export function ModelMesh({
   highlightMask = 1,
   material,
   wireframe = false,
+  onBounds,
 }: {
   asset: LibraryAsset;
   /** 视口里的选中/悬浮态；预览小窗与缩略图渲染不传，保持无高亮 */
@@ -478,7 +509,9 @@ export function ModelMesh({
    * 所以它们永远渲染实体材质——线框是**视口的观察方式**，不是资产的状态。
    */
   wireframe?: boolean;
+  /** 发布已渲染模型的紧包围盒（物理碰撞体用）；预览/缩略图不传 */
+  onBounds?: (box: THREE.Box3) => void;
 }) {
   const assemblyKey = `${renderableModelPaths(asset).join("|")}|${asset.mtlPath ?? ""}|${asset.resourceRevision ?? 0}`;
-  return <ModelAssembly key={assemblyKey} asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} />;
+  return <ModelAssembly key={assemblyKey} asset={asset} highlight={highlight} highlightMask={highlightMask} material={material} wireframe={wireframe} onBounds={onBounds} />;
 }

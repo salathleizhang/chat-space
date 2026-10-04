@@ -100,6 +100,37 @@ export function walkStep(state: WalkState, input: WalkMoveInput): WalkState {
   };
 }
 
+/**
+ * **速度意图**（m/s）：与 `walkStep` 同一套朝向/按键口径，但输出速度而不是位移。
+ *
+ * 为什么要有它：第一人称改成物理胶囊体之后，位置由物理引擎说了算——`walkStep` 那种
+ * "自己算位移、再把 y 锁回眼高"的做法正是要拆掉的东西（它让人穿墙、不掉下台阶）。
+ * 所以物理路径只问这一个问题："这一帧想往哪走、多快"，剩下的交给刚体。
+ *
+ * 与 `walkStep` 唯一的有意差异：**斜向归一化**（同时按 W+D 不会比直走快 41%）。
+ */
+export function walkVelocity(
+  state: Pick<WalkState, "yaw">,
+  input: Pick<WalkMoveInput, "forward" | "strafe" | "run">,
+): Vec3 {
+  const forward = Number.isFinite(input.forward) ? input.forward : 0;
+  const strafe = Number.isFinite(input.strafe) ? input.strafe : 0;
+  if (forward === 0 && strafe === 0) return [0, 0, 0];
+  const speed = input.run ? RUN_SPEED : WALK_SPEED;
+  const flat = [-Math.sin(state.yaw), 0, -Math.cos(state.yaw)] as Vec3;
+  const flatLength = Math.hypot(flat[0], flat[2]);
+  const unitForward: Vec3 = flatLength < 1e-6 ? [0, 0, -1] : [flat[0] / flatLength, 0, flat[2] / flatLength];
+  const right: Vec3 = [-unitForward[2], 0, unitForward[0]];
+  const x = unitForward[0] * forward + right[0] * strafe;
+  const z = unitForward[2] * forward + right[2] * strafe;
+  // 把 `-0` 归一成 `0`：`0 * -1` 会得到 `-0`，它数值上等于 0 却会让"速度是零向量"的
+  // 判等与快照断言到处噪声（本仓库的测试就是逐分量 toEqual）
+  const clean = (value: number) => (value === 0 ? 0 : value);
+  const length = Math.hypot(x, z);
+  if (length <= 1 || length === 0) return [clean(x * speed), 0, clean(z * speed)];
+  return [(x / length) * speed, 0, (z / length) * speed];
+}
+
 /** 按键集合 → 前进/后退/横移/加速（只认小写字母，与 three 侧 `e.key.toLowerCase()` 一致）。 */
 export function walkInputFromKeys(keys: ReadonlySet<string>, delta: number): WalkMoveInput {
   return {

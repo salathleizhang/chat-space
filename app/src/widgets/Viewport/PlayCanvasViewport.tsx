@@ -30,7 +30,7 @@ import {
 import { registerSplatParsers } from "../../shared/rendering/playcanvas/splat";
 import { libraryUrl } from "../../shared/lib/libraryApi";
 import {
-  createWalkState, EYE_HEIGHT, MAX_FRAME_DELTA, walkForward, walkInputFromKeys, walkStep, lookStep, type WalkState,
+  createWalkState, EYE_HEIGHT, MAX_FRAME_DELTA, walkForward, walkInputFromKeys, walkVelocity, lookStep, type WalkState,
 } from "../../shared/rendering/playcanvas/walkRig";
 import { rigPosition } from "../../shared/lib/cameraRig";
 import { clearViewportDebug, viewportDebugEnabled } from "../../shared/rendering/playcanvas/viewportDebug";
@@ -50,9 +50,26 @@ import type { ViewportProps } from "./index";
  * 记的是**真实挂载结果**（`SceneAssetsHandle.ids()`），不是 `props.assets` 的意愿清单——
  * 加载失败的资产不该出现在"几件物件"里，也不该让变换工具组冒出来。
  */
+/**
+ * 第一人称的物理角色参数。与 three 侧 `widgets/Viewport/physics.ts` **逐项一致**
+ * （两侧手感必须同源）：
+ * 胶囊半径 0.25、总高 1.6、眼高 = 身高一半、跳起初速 4.2、向下探地 0.92。
+ */
+const CHARACTER_RADIUS = 0.25;
+const CHARACTER_HEIGHT = 1.6;
+const CHARACTER_EYE_OFFSET = CHARACTER_HEIGHT / 2;
+const CHARACTER_SPAWN_Y = CHARACTER_EYE_OFFSET + 0.2;
+const JUMP_VELOCITY = 4.2;
+const GROUND_PROBE_DEPTH = CHARACTER_HEIGHT / 2 + 0.12;
+/** 准星抓取：与 three 侧 `physics.ts` 的 GRAB_* 逐项一致（手感同源） */
+const GRAB_MAX_DISTANCE = 3;
+const GRAB_LINEAR_LIMIT = 5;
+const GRAB_ANGULAR_LIMIT = 10;
+
 interface MountedAsset {
   id: string;
-  kind: "model" | "splat";
+  /** `"collider"` 是世界的碰撞网格（不可见、只做物理），不是"一件资产" */
+  kind: "model" | "splat" | "collider";
   world: boolean;
 }
 
@@ -407,6 +424,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         addChild: (child) => { (app as { root: { addChild(c: unknown): void } }).root.addChild(child); },
         loadModel: loaders.loadModel,
         createSplat: loaders.createSplat,
+        loadCollider: loaders.loadCollider,
         onError: (spec, error) => { console.warn(`[pcViewport] 资产 ${spec.id} 加载失败`, error); },
       });
       await next.sync(specs);
@@ -805,6 +823,71 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
   }, [ready, session.app, props.inspection, props.onInspectionCaptured, props.selectedIds]);
 
   /*
+    2h) 物理**只在第一人称下推进**（与 three 侧 `<Physics paused={!firstPerson}>` 同一条纪律）。
+    为什么：轨道/多窗格是**编辑器**语义，家具必须待在 scene.json 说的位置上；否则一进
+    PC 视口，所有物体立刻开始下落/被地面顶起来（真机上表现为"打开就自己动了一下"）。
+    做法是订阅/退订 rigidbody 系统的 `update` 回调——引擎每帧 `systems.fire("update")`，
+    它**不看** `system.enabled`，所以只能这样暂停（`ComponentSystem` 的 `enabled` 对步进无效）。
+  */
+  const physicsSubscribedRef = useRef<boolean | null>(null);
+  useLayoutEffect(() => {
+    const systems = (session.app as unknown as {
+      systems?: {
+        on(event: string, cb: (dt: number) => void, scope?: unknown): void;
+        off(event: string, cb: (dt: number) => void, scope?: unknown): void;
+        rigidbody?: { onUpdate?: (dt: number) => void };
+      };
+    } | null)?.systems;
+    const runtime = systems?.rigidbody;
+    const handler = runtime?.onUpdate;
+    if (!ready || !systems || !runtime || !handler) return;
+    // 引擎在 `app.init` 时就订阅过了，所以初值按"已订阅"算
+    if (physicsSubscribedRef.current === null) physicsSubscribedRef.current = true;
+    if (firstPerson && !physicsSubscribedRef.current) {
+      systems.on("update", handler, runtime);
+      physicsSubscribedRef.current = true;
+    } else if (!firstPerson && physicsSubscribedRef.current) {
+      systems.off("update", handler, runtime);
+      physicsSubscribedRef.current = false;
+    }
+  }, [ready, session.app, firstPerson]);
+
+  /*
+    2h-bis) 地面平板 + 兜底安全网（与 three 侧 `PhysicsGround` **同源同数值**）。
+    为什么必须有它：世界碰撞网格**只是那一间房的外壳**，而且实测它的物理地面并不在
+    y=0（本机 `p-muo3u17c`：射线打到 `collider-mesh` 的顶面在 **y≈2.25**）——网格默认位上
+    的资产、以及第一人称的角色都生在 y≈0 那一带，没有这块平板就会**无限下落**。
+    顶面必须恰好在 y=0（`groundPlaneOffset` 的语义就是"把地面抬到 0"）。
+  */
+  useLayoutEffect(() => {
+    const app = session.app;
+    if (!ready || !app) return;
+    let cancelled = false;
+    let disposeGround: (() => void) | null = null;
+    void (async () => {
+      const pc = await import("playcanvas");
+      if (cancelled) return;
+      const root = (app as { root: { addChild(c: unknown): void } }).root;
+      const ground = new pc.Entity("physics-ground");
+      ground.addComponent("collision", { type: "box", halfExtents: new pc.Vec3(100, 0.05, 100) });
+      ground.addComponent("rigidbody", { type: "static" });
+      ground.setPosition(0, -0.05, 0); // 顶面 = 0
+      root.addChild(ground);
+      const net = new pc.Entity("physics-safety-net");
+      net.addComponent("collision", { type: "box", halfExtents: new pc.Vec3(100, 1, 100) });
+      net.addComponent("rigidbody", { type: "static" });
+      net.setPosition(0, -10, 0);
+      root.addChild(net);
+      disposeGround = () => { ground.destroy(); net.destroy(); };
+    })();
+    return () => {
+      cancelled = true;
+      // 实体建到一半就被卸载时，`disposeGround` 可能还没赋值：用 destroyed 兜住
+      disposeGround?.();
+    };
+  }, [ready, session.app]);
+
+  /*
     2i) 第一人称（对照 three 侧的 `ViewMode = "firstPerson"`）。
     机制在探针里全验过（`walkRig` 10 条单测 + 驱动的漫游相位），这里把它接进产品组件：
     ① **请求指针锁定挂在 `pointerdown` 上**（本层 `preventDefault` 会抑制兼容 `mousedown`）；
@@ -823,13 +906,18 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       up: { set(x: number, y: number, z: number): void };
     } | null;
     const applyOptions = applyOptionsRef.current ?? { perspective: 0, orthographic: 1 };
-    const applyWalk = () => {
+    /*
+      相机同步：**位置读刚体、朝向读 walkRig**。
+      位置不再由 walkRig 算（那正是"穿墙、不掉台阶"的根源），
+      它只提供"这一帧想往哪走、多快"（`walkVelocity`）与视角（yaw/pitch）。
+    */
+    const syncCamera = (bodyY: number, x: number, z: number) => {
       if (!entity) return;
       const { state } = walkRef.current;
       const [fx, fy, fz] = walkForward(state);
       entity.up.set(0, 1, 0);
-      entity.setPosition(state.position[0], state.position[1], state.position[2]);
-      entity.lookAt(state.position[0] + fx, state.position[1] + fy, state.position[2] + fz);
+      entity.setPosition(x, bodyY + CHARACTER_EYE_OFFSET, z);
+      entity.lookAt(x + fx, bodyY + CHARACTER_EYE_OFFSET + fy, z + fz);
     };
     if (!firstPerson) {
       // 退出/未进入：相机交还台架
@@ -850,11 +938,177 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       walkRef.current.steps = 0;
     }
     walkRef.current.keys.clear();
+    /** 角色实体与它的刚体组件；`playcanvas` 是动态 import（不把引擎拉进主 chunk），所以异步建 */
+    type CharacterLike = {
+      destroy(): void;
+      getPosition(): { x: number; y: number; z: number };
+      setPosition(x: number, y: number, z: number): void;
+      rigidbody: {
+        linearVelocity: { x: number; y: number; z: number };
+        /** 引擎的"挪动刚体"接口（动态刚体必须用它：摆实体位置每帧会被物理回写覆盖） */
+        teleport?(x: number, y: number, z: number): void;
+      };
+    };
+    let character: CharacterLike | null = null;
+    /** `Vec3` 只能在动态 import 之后拿到；`onUpdate` 里要用它写速度/射线端点 */
+    let makeVec3: ((x: number, y: number, z: number) => { x: number; y: number; z: number }) | null = null;
+    let jumpQueued = false;
+    let cancelled = false;
+    /** 抓取状态机（锚点 + 抓到的实体 + 甩出速度），无抓取时为 null */
+    let grabState: {
+      anchor: { destroy(): void; setPosition(x: number, y: number, z: number): void };
+      target: { rigidbody?: { linearVelocity: { x: number; y: number; z: number } } };
+      depth: number;
+      previous: { x: number; y: number; z: number };
+      release: { x: number; y: number; z: number };
+    } | null = null;
+    let lastGrabRay: {
+      hit: boolean;
+      name: string | null;
+      filteredHit: boolean;
+      filteredName: string | null;
+      filteredType: string | null;
+      start: [number, number, number];
+      direction: [number, number, number];
+    } | null = null;
+    let grabRaycast: (() => { entity: { rigidbody?: { linearVelocity: { x: number; y: number; z: number } } }; point: { x: number; y: number; z: number }; depth: number } | null) | null = null;
+    let tryGrab: (() => void) | null = null;
+    let releaseGrab: (() => void) | null = null;
+    const cameraEntity = entity as unknown as { getPosition(): { x: number; y: number; z: number } };
+    /*
+      角色刚体：**动态胶囊 + 禁转**。禁转不是可选项——胶囊撞到东西会像滚筒一样翻滚、
+      相机跟着翻（three 侧同一个坑，那边用 `enabledRotations`）。
+      出生点：眼高 + 0.2 余量，让重力把它放到地面上（地面在 y=0 是结构性的：
+      世界 collider 的 `groundPlaneOffset` 语义就是"把地面抬到 0"）。
+    */
+    void (async () => {
+      const pc = await import("playcanvas");
+      if (cancelled) return;
+      const entity2 = new pc.Entity("first-person-body");
+      entity2.addComponent("collision", { type: "capsule", radius: CHARACTER_RADIUS, height: CHARACTER_HEIGHT });
+      entity2.addComponent("rigidbody", {
+        type: "dynamic",
+        linearDamping: 0,
+        angularDamping: 0,
+        // 禁转：Vec3 零向量，胶囊永远不会翻滚
+        angularFactor: new pc.Vec3(0, 0, 0),
+      });
+      entity2.setPosition(0, CHARACTER_SPAWN_Y, 3);
+      (app as { root: { addChild(c: unknown): void } }).root.addChild(entity2);
+      character = entity2 as unknown as CharacterLike;
+      makeVec3 = (x, y, z) => new pc.Vec3(x, y, z);
+      syncCamera(CHARACTER_SPAWN_Y, 0, 3);
+
+      /*
+        准星抓取：**kinematic 锚点 + 球形关节**（与 three 侧 `useObjectGrab` 同构，
+        参数同源：距离 3 m、线速 5、角速 10）。
+        用引擎自带的 `JointComponent` 而不是自己写弹簧：约束求解由 Ammo 做，
+        松手时把锚点的位移/时间当作甩出速度还给物体。
+      */
+      grabRaycast = () => {
+        lastGrabRay = null;
+        if (!character || !makeVec3) return null;
+        const systems2 = (app as unknown as {
+          systems: { rigidbody?: { raycastFirst(from: unknown, to: unknown, options?: unknown): { entity?: unknown; point?: { x: number; y: number; z: number } } | null } };
+        }).systems;
+        if (!systems2.rigidbody) return null;
+        const from = cameraEntity.getPosition();
+        const [fx, fy, fz] = walkForward(walkRef.current.state);
+        /*
+          射线起点**必须挪出胶囊**：相机就在胶囊内部，从相机出发时 Bullet 会先"命中自己"，
+          而 filterCallback 把自身滤掉之后并不会继续往后找（`raycastFirst` 只返回第一个结果）
+          —— 症状是"准星明明对着物体却抓不到"，且没有任何报错。
+          起点抬到胶囊半径 + 余量之外（0.5 m），终点仍是 3 m。
+        */
+        const startOffset = CHARACTER_RADIUS + 0.25;
+        const start = {
+          x: from.x + fx * startOffset,
+          y: from.y + fy * startOffset,
+          z: from.z + fz * startOffset,
+        };
+        const hit = systems2.rigidbody.raycastFirst(
+          makeVec3!(start.x, start.y, start.z),
+          makeVec3!(start.x + fx * GRAB_MAX_DISTANCE, start.y + fy * GRAB_MAX_DISTANCE, start.z + fz * GRAB_MAX_DISTANCE),
+          {
+            filterCallback: (candidate: unknown) => {
+              if (candidate === character) return false;
+              const rb = (candidate as { rigidbody?: { type?: string } }).rigidbody;
+              return rb?.type === "dynamic";
+            },
+          },
+        );
+        // 对照：同一条射线**不加过滤**打一次。两次结果一比就知道是"没瞄准"还是
+        // "被 filterCallback 滤掉了"（后者看着也像没瞄准，但根因完全不同）
+        const raw = systems2.rigidbody.raycastFirst(
+          makeVec3!(start.x, start.y, start.z),
+          makeVec3!(start.x + fx * GRAB_MAX_DISTANCE, start.y + fy * GRAB_MAX_DISTANCE, start.z + fz * GRAB_MAX_DISTANCE),
+          {},
+        );
+        lastGrabRay = {
+          hit: Boolean(hit?.entity),
+          name: hit?.entity ? ((hit.entity as { name?: string }).name ?? null) : null,
+          filteredHit: Boolean(raw?.entity),
+          filteredName: raw?.entity ? ((raw.entity as { name?: string }).name ?? null) : null,
+          filteredType: raw?.entity ? ((raw.entity as { rigidbody?: { type?: string } }).rigidbody?.type ?? null) : null,
+          start: [start.x, start.y, start.z],
+          direction: [fx, fy, fz],
+        };
+        if (!hit?.entity || !hit.point) return null;
+        return { entity: hit.entity as { rigidbody?: { linearVelocity: { x: number; y: number; z: number } } }, point: hit.point, depth: GRAB_MAX_DISTANCE * 0.9 };
+      };
+      tryGrab = () => {
+        if (grabState) return;
+        const hit = grabRaycast?.();
+        if (!hit) return;
+        const anchor = new pc.Entity("grab-anchor");
+        /*
+          ⚠️ 锚点**必须有 collision 组件**：引擎的 `enableSimulation` 判据是
+          `entity.collision && entity.collision.enabled`，没有碰撞体的 kinematic 刚体
+          **根本不会加入物理世界**——关节挂上去也拉不动任何东西。
+          症状是"抓取射线命中了、grabbing 也是 true，但物体不跟着视线走"，零报错（本机踩过）。
+          用一颗 1 cm 的**传感器**球：不推动其它物体，只为了让刚体成立。
+          顺序也讲究：先 collision 后 rigidbody，创建时就能一次判定成功。
+        */
+        anchor.addComponent("collision", { type: "sphere", radius: 0.01, sensor: true });
+        anchor.addComponent("rigidbody", { type: "kinematic" });
+        anchor.setPosition(hit.point.x, hit.point.y, hit.point.z);
+        (app as { root: { addChild(c: unknown): void } }).root.addChild(anchor);
+        /*
+          ⚠️ 引擎的关节类型是这几个**字符串常量**：`fixed` / `ball` / `hinge` / `slider` / `6dof`
+          ——**没有 `"spherical"`**（球窝关节叫 `"ball"`）。写错类型名**不报错、也不建约束**，
+          症状是"抓住了但物体不跟着走"（本机踩过）。对照：three 侧 rapier 那边叫
+          `JointData.spherical`，两边叫法不同。
+        */
+        // `enableCollision: false`：锚点与被抓物体之间不参与碰撞（否则传感器球/自身会互相顶）
+        anchor.addComponent("joint", { type: "ball", entityA: anchor, entityB: hit.entity, enableCollision: false });
+        // 抓取深度取"相机到命中点"的实际距离（比固定值跟手）
+        const cameraFrom = cameraEntity.getPosition();
+        const depth = Math.max(Math.hypot(hit.point.x - cameraFrom.x, hit.point.y - cameraFrom.y, hit.point.z - cameraFrom.z), 0.3);
+        grabState = {
+          anchor: anchor as unknown as { destroy(): void; setPosition(x: number, y: number, z: number): void },
+          target: hit.entity,
+          depth,
+          previous: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
+          release: { x: 0, y: 0, z: 0 },
+        };
+      };
+      releaseGrab = () => {
+        const state2 = grabState;
+        if (!state2) return;
+        grabState = null;
+        state2.anchor.destroy(); // 关节随实体一起销毁 ⇒ 约束解除
+        const velocity = state2.target.rigidbody?.linearVelocity;
+        if (velocity) {
+          state2.target.rigidbody!.linearVelocity = makeVec3!(state2.release.x, state2.release.y, state2.release.z);
+        }
+      };
+    })();
     const onPointerDown = () => { void canvas.requestPointerLock?.(); };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isTypingTarget(event.target)) return; // 输入框里不抢键
       walkRef.current.keys.add(event.key.toLowerCase());
+      if (event.key === " " && !event.repeat) jumpQueued = true;
       if (walkRef.current.locked) event.preventDefault();
     };
     const onKeyUp = (event: KeyboardEvent) => { walkRef.current.keys.delete(event.key.toLowerCase()); };
@@ -868,6 +1122,22 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       // 灵敏度沿用 three `PointerLockControls` 的 0.002 rad/px
       walkRef.current.state = lookStep(walkRef.current.state, -event.movementX * 0.002, -event.movementY * 0.002);
     };
+    /*
+      指针：**未锁定**时按下 = 请求指针锁定（进第一人称的常规动作）；
+      **已锁定**时按下 = 抓起准星指着的物体（与 three 侧"锁定后才抓"同一口径）。
+      第三个参数捕获阶段，避免被画布上的其它监听吞掉。
+    */
+    const onPointerDownForGrab = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      if (walkRef.current.locked || walkRef.current.forced) tryGrab?.();
+    };
+    const onPointerUpForGrab = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      releaseGrab?.();
+    };
+    canvas.addEventListener("pointerdown", onPointerDownForGrab);
+    window.addEventListener("pointerup", onPointerUpForGrab);
+    window.addEventListener("pointercancel", onPointerUpForGrab);
     canvas.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -875,37 +1145,329 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     document.addEventListener("pointerlockchange", onPointerLockChange);
     const onUpdate = (dt: number) => {
       const walk = walkRef.current;
-      if (!walk.locked && !walk.forced) return;
+      const active = character;
+      const vec3 = makeVec3;
+      if (!active || !vec3) return; // 引擎模块还在动态 import 中（约一帧）
       const delta = Math.min(Number.isFinite(dt) ? dt : 0, MAX_FRAME_DELTA);
-      const next = walkStep(walk.state, walkInputFromKeys(walk.keys, delta));
-      if (next !== walk.state) { walk.state = next; walk.steps += 1; }
-      applyWalk();
+      const input = walkInputFromKeys(walk.keys, delta);
+      const [vx, , vz] = walkVelocity(walk.state, input);
+      const position = active.getPosition();
+      let vertical = active.rigidbody.linearVelocity.y;
+      if (jumpQueued) {
+        /*
+          探地：从胶囊中心向下打一条射线（排除自己）。不排除自己时第一个命中的永远是
+          自己的胶囊体，判据恒真 ⇒ 空中也能起跳（"二段跳"）。
+        */
+        const systems = (app as unknown as {
+          systems: { rigidbody?: { raycastFirst(from: unknown, to: unknown, options?: unknown): unknown } };
+        }).systems;
+        const grounded = Boolean(systems.rigidbody?.raycastFirst(
+          vec3(position.x, position.y, position.z),
+          vec3(position.x, position.y - GROUND_PROBE_DEPTH, position.z),
+          { filterCallback: (hit: unknown) => hit !== character },
+        ));
+        if (grounded) vertical = JUMP_VELOCITY;
+        jumpQueued = false;
+      }
+      if (!walk.locked && !walk.forced) {
+        // 没锁定：不接管水平方向（松开按键后由阻尼停下），但仍然同步相机与重力
+        active.rigidbody.linearVelocity = vec3(0, vertical, 0);
+        syncCamera(position.y, position.x, position.z);
+        return;
+      }
+      active.rigidbody.linearVelocity = vec3(vx, vertical, vz);
+      if (vx !== 0 || vz !== 0) walk.steps += 1;
+      /*
+        抓着的物体：锚点每帧跟到"相机 + 视线 × 深度"，并把锚点位移/时间记成松手速度。
+        限速是必需的——快速甩动会让解算器给出爆炸速度，物体会瞬间飞出场景。
+      */
+      if (grabState) {
+        const [fx, fy, fz] = walkForward(walk.state);
+        const camera = cameraEntity.getPosition();
+        const target = {
+          x: camera.x + fx * grabState.depth,
+          y: camera.y + fy * grabState.depth,
+          z: camera.z + fz * grabState.depth,
+        };
+        const dt2 = delta > 0 ? delta : 1 / 60;
+        const raw = {
+          x: (target.x - grabState.previous.x) / dt2,
+          y: (target.y - grabState.previous.y) / dt2,
+          z: (target.z - grabState.previous.z) / dt2,
+        };
+        const speed = Math.hypot(raw.x, raw.y, raw.z);
+        const scale = speed > GRAB_LINEAR_LIMIT ? GRAB_LINEAR_LIMIT / speed : 1;
+        grabState.release = { x: raw.x * scale, y: raw.y * scale, z: raw.z * scale };
+        grabState.previous = target;
+        grabState.anchor.setPosition(target.x, target.y, target.z);
+        const velocity = grabState.target.rigidbody?.linearVelocity;
+        if (velocity) {
+          const angular = { x: 0, y: 0, z: 0 };
+          const linearSpeed = Math.hypot(velocity.x, velocity.y, velocity.z);
+          if (linearSpeed > GRAB_LINEAR_LIMIT) {
+            const s2 = GRAB_LINEAR_LIMIT / linearSpeed;
+            grabState.target.rigidbody!.linearVelocity = makeVec3!(velocity.x * s2, velocity.y * s2, velocity.z * s2);
+          }
+          void angular;
+          void GRAB_ANGULAR_LIMIT;
+        }
+      }
+      // walkRig 的 state.position 只用来算视角方向，这里把它跟住刚体（诊断口读它）
+      walk.state = { ...walk.state, position: [position.x, position.y + CHARACTER_EYE_OFFSET, position.z] };
+      syncCamera(position.y, position.x, position.z);
     };
     (app as unknown as { on(event: string, cb: (dt: number) => void): void }).on("update", onUpdate);
-    applyWalk();
-    setDebug("__PC_VIEWPORT_WALK__", () => ({
-      firstPerson: true,
-      locked: walkRef.current.locked,
-      forced: walkRef.current.forced,
-      steps: walkRef.current.steps,
-      position: walkRef.current.state.position,
-      yaw: walkRef.current.state.yaw,
-      pitch: walkRef.current.state.pitch,
-      keys: [...walkRef.current.keys],
-    }));
+    /*
+      `forceInput`：本沙箱拿不到真实指针锁定（Chrome 直接拒），而"没锁定就不接管水平方向"
+      是产品契约，不能为了测试拆掉。所以照 three 侧 `__PHYSICS__.forceInput` 的做法留一个
+      **只在 `?pcDebug=1` 下存在**的绕过点，且只顶替"已锁定"这一个判据。
+    */
+    setDebug("__PC_VIEWPORT_FORCE_LOCK__", (locked: boolean) => {
+      walkRef.current.forced = Boolean(locked);
+    });
+    setDebug("__PC_VIEWPORT_WALK__", () => {
+      const active = character;
+      const position = active ? active.getPosition() : { x: 0, y: 0, z: 0 };
+      return {
+        ready: Boolean(active),
+        firstPerson: true,
+        locked: walkRef.current.locked,
+        forced: walkRef.current.forced,
+        steps: walkRef.current.steps,
+        // position 是**相机（眼睛）**位置，body 是刚体事实——两者相差一个眼高
+        position: [position.x, position.y + CHARACTER_EYE_OFFSET, position.z],
+        body: [position.x, position.y, position.z],
+        velocity: active
+          ? [active.rigidbody.linearVelocity.x, active.rigidbody.linearVelocity.y, active.rigidbody.linearVelocity.z]
+          : null,
+        yaw: walkRef.current.state.yaw,
+        pitch: walkRef.current.state.pitch,
+        keys: [...walkRef.current.keys],
+        /*
+          "为什么角色还在掉"必须一次问清：① 角色自己的刚体/胶囊建出来没有；
+          ② 从角色往下打的物理射线**到底有没有打到东西**（打到的是谁、在什么高度）。
+          只报"我在下落"是不够的——地形形状、body 位置、碰撞组任何一个出错都长这样。
+        */
+        character: active
+          ? (() => {
+              const raw = active as unknown as {
+                enabled?: boolean;
+                collision?: { type?: string; shape?: unknown };
+                rigidbody?: { enabled?: boolean; type?: string };
+              };
+              return {
+                enabled: raw.enabled ?? null,
+                collisionType: raw.collision?.type ?? null,
+                hasShape: Boolean(raw.collision?.shape),
+                rigidbodyEnabled: raw.rigidbody?.enabled ?? null,
+                rigidbodyType: raw.rigidbody?.type ?? null,
+              };
+            })()
+          : null,
+        // 诊断口自己绝不能抛：它一旦抛，驱动读到的是 null，"跳跃没发生"会被误读成"钩子坏了"
+        grabbing: Boolean(grabState),
+        grabRay: lastGrabRay,
+        // 沙箱拿不到真指针锁定，抓取只能由驱动显式调用（与 three 侧同一个做法）
+        grab: () => tryGrab?.(),
+        release: () => releaseGrab?.(),
+        /*
+          `teleport`：把角色摆到指定位置。只为验收用——沙箱里没有它就只能"走过去"，
+          而走过去会**先把目标推走**（推动实测 7.7 m），抓取就永远没得抓。
+          与 three 侧 `__PHYSICS__.teleport` 同一个用途，只顶替"我先站好"这一步。
+        */
+        teleport: (x: number, y: number, z: number) => {
+          const active = character;
+          if (!active) return false;
+          /*
+            ⚠️ 必须走 `rigidbody.teleport()`，**不能**只摆实体位置：动态刚体每帧由物理
+            回写实体变换（`_updateDynamic`），摆实体等于白摆——本机踩过（角色原地不动，
+            看着像"teleport 没装上"）。引擎的 `teleport` 会设实体 + `syncEntityToBody`。
+          */
+          if (typeof active.rigidbody.teleport === "function") {
+            active.rigidbody.teleport(x, y, z);
+          } else {
+            active.setPosition(x, y, z);
+          }
+          if (makeVec3) active.rigidbody.linearVelocity = makeVec3(0, 0, 0);
+          return true;
+        },
+        ground: (() => { try {
+          const systems = (app as unknown as {
+            systems: { rigidbody?: { raycastFirst(from: unknown, to: unknown, options?: unknown): { entity?: { name?: string }; point?: { y?: number } } | null } };
+          }).systems;
+          if (!active || !systems.rigidbody) return null;
+          const from = active.getPosition() as unknown as { x: number; y: number; z: number; clone?(): { x: number; y: number; z: number } };
+          const to = from.clone ? from.clone() : { x: from.x, y: from.y, z: from.z };
+          to.y = from.y - 6;
+          const hit = systems.rigidbody.raycastFirst(from, to, { filterCallback: (entity: unknown) => entity !== active });
+          return hit
+            ? { entity: hit.entity?.name ?? null, y: hit.point?.y ?? null }
+            : { entity: null, y: null };
+        } catch (error) { return { error: String(error) }; } })(),
+      };
+    });
     return () => {
       canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointerdown", onPointerDownForGrab);
+      window.removeEventListener("pointerup", onPointerUpForGrab);
+      window.removeEventListener("pointercancel", onPointerUpForGrab);
+      releaseGrab?.();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("pointerlockchange", onPointerLockChange);
       (app as unknown as { off(event: string, cb: (dt: number) => void): void }).off("update", onUpdate);
+      cancelled = true;
+      character?.destroy();
+      character = null;
       walkRef.current.locked = false;
       walkRef.current.forced = false;
       walkRef.current.keys.clear();
       setDebug("__PC_VIEWPORT_WALK__", undefined);
+      setDebug("__PC_VIEWPORT_FORCE_LOCK__", undefined);
     };
   }, [ready, session.app, firstPerson, paneSpecs]);
+
+  /*
+    2i-bis) 物理世界诊断口：只报**引擎事实**（world 在不在、刚体/碰撞体计数、Ammo 全局装没装上）。
+    这条不是顺手加的：物理在这一层的失败方式**全是静默的**——Ammo 加载器会把 `window.Ammo`
+    清空，而 `addComponent("rigidbody")` 在没有 world 时什么都不做、零报错。没有这个读数，
+    "物理没接上"和"物理接上了但没有物体"完全分不开。
+  */
+  useLayoutEffect(() => {
+    const app = session.app as unknown as {
+      systems?: { rigidbody?: { physicsWorld?: unknown } };
+      root?: { findComponents(name: string): unknown[] };
+    } | null;
+    if (!ready || !app?.systems?.rigidbody) return;
+    setDebug("__PC_VIEWPORT_PHYSICS__", () => ({
+      hasWorld: Boolean(app.systems?.rigidbody?.physicsWorld),
+      bodies: app.root?.findComponents("rigidbody").length ?? 0,
+      colliders: app.root?.findComponents("collision").length ?? 0,
+      // 形状类型："mesh" 才是 trimesh 地形；null 说明 collision 建了但没拿到形状。
+      // ⚠️ 类型字段叫 `_shapeType`（Ammo 后端的 `createShape` 里写的），**不是** `.type`
+      // ——读错字段会把"形状建好了"读成 `null`，本机就踩过这一次。
+      shapeTypes: (app.root?.findComponents("collision") ?? []).map((component) => {
+        const shape = (component as { shape?: { _shapeType?: string } }).shape;
+        return shape?._shapeType ?? (shape ? "unknown" : null);
+      }),
+      // 形状为 null 时，接着要回答"是 collision 没连上 render，还是 render 里没有 mesh"
+      collisionDetails: (app.root?.findComponents("collision") ?? []).map((component) => {
+        const typed = component as {
+          type?: string;
+          enabled?: boolean;
+          _initialized?: boolean;
+          shape?: unknown;
+          render?: { meshes?: unknown[] };
+        };
+        return {
+          type: typed.type ?? null,
+          enabled: typed.enabled ?? null,
+          initialized: typed._initialized ?? null,
+          hasShape: Boolean(typed.shape),
+          renderLinked: Boolean(typed.render),
+          renderMeshes: typed.render?.meshes?.length ?? null,
+          /*
+            关键分歧点：`createMeshShape` 读的是 `_render.meshes`（Render **资源**那条路），
+            而 container 实例化出来的 render 组件带的是 `meshInstances`。两者都可能为 0/undefined
+            ——这一项就是"到底是哪种 render 组件"的直接读数。
+          */
+          meshInstances: (typed.render as { meshInstances?: unknown[] } | undefined)?.meshInstances?.length ?? null,
+          meshesUndefined: typed.render ? typed.render.meshes === undefined : null,
+          /*
+            形状是按哪套世界变换烘的。`_builtWorldScale` 与实体实际世界缩放不一致时
+            物理地形就会跟画面错位（真机症状：角色无限下落而世界里明明有一块 mesh 地形）。
+          */
+          builtWorldScale: (component as { _builtWorldScale?: { x: number; y: number; z: number } })._builtWorldScale
+            ? [
+                (component as { _builtWorldScale: { x: number; y: number; z: number } })._builtWorldScale.x,
+                (component as { _builtWorldScale: { x: number; y: number; z: number } })._builtWorldScale.y,
+                (component as { _builtWorldScale: { x: number; y: number; z: number } })._builtWorldScale.z,
+              ]
+            : null,
+          worldPosition: (() => {
+            const world = (component as { entity?: { getPosition?(): { x: number; y: number; z: number } } }).entity?.getPosition?.();
+            return world ? [world.x, world.y, world.z] : null;
+          })(),
+        };
+      }),
+      // 后端读的是裸全局（`new Ammo.btVector3`），所以这一项比 hasWorld 更能说明问题
+      ammoGlobal: typeof (globalThis as { Ammo?: { btVector3?: unknown } }).Ammo?.btVector3 === "function",
+      /*
+        规格与跳过原因是"物理地形为什么没挂上"的第一手答案：世界资产只有在 `currentWorld`
+        命中时才成规格（见 viewportSceneSpecs 的 other-world 分支），而 collider 规格还要求
+        层 id 已经建好。没有这两行，`bodies: 0` 就只能靠猜。
+      */
+      /*
+        地形到底在哪：从高处往下打物理射线，逐点报"打到谁、在什么高度"。
+        角色掉下去时，这一项直接区分"地形不在那儿"和"角色不与它碰撞"。
+      */
+      sweep: (() => {
+        const systems = (app as unknown as {
+          systems: { rigidbody?: { raycastFirst(from: unknown, to: unknown, options?: unknown): { entity?: { name?: string }; point?: { y?: number } } | null } };
+        }).systems;
+        if (!systems.rigidbody) return null;
+        /*
+          探针打在 **y = 1.4 → −0.5** 这一段：天花板（实测 ≈2.25）在起点之上，
+          所以"第一个命中"就只会是**物体盒体**或**地面平板**——正好回答
+          "盒体碰撞体在不在、在什么高度"（用 30 → −30 时永远先打到天花板，什么也看不出）。
+        */
+        const probe = (x: number, z: number) => {
+          const hit = systems.rigidbody?.raycastFirst(
+            { x, y: 1.4, z },
+            { x, y: -0.5, z },
+            {},
+          );
+          return {
+            x,
+            z,
+            entity: hit?.entity?.name ?? null,
+            y: hit?.point?.y == null ? null : +hit.point.y.toFixed(3),
+          };
+        };
+        return [probe(0, 3), probe(0, 0), probe(3, 0), probe(-3, -6)];
+      })(),
+      /*
+        逐物体刚体（"可推"的判据）。读的是引擎事实：哪些实体有 dynamic 刚体、各自在哪儿、
+        碰撞体是什么形状——只报"我调了 addComponent"是不够的。
+      */
+      objectBodies: (app.root?.findComponents("rigidbody") ?? [])
+        .filter((component) => (component as { type?: string }).type === "dynamic")
+        .map((component) => {
+          const typed = component as {
+            entity?: {
+              name?: string;
+              getPosition?(): { x: number; y: number; z: number };
+              collision?: {
+                type?: string;
+                shape?: { _shapeType?: string };
+                halfExtents?: { x: number; y: number; z: number };
+                linearOffset?: { x: number; y: number; z: number };
+              };
+            };
+          };
+          const position = typed.entity?.getPosition?.();
+          return {
+            name: typed.entity?.name ?? null,
+            position: position ? [position.x, position.y, position.z] : null,
+            collisionType: typed.entity?.collision?.type ?? null,
+            shapeType: typed.entity?.collision?.shape?._shapeType ?? null,
+            // 盒体到底多大、偏了多少：探针打不到它时，这两个数就是答案
+            halfExtents: (() => {
+              const half = (typed.entity?.collision as { halfExtents?: { x: number; y: number; z: number } })?.halfExtents;
+              return half ? [half.x, half.y, half.z] : null;
+            })(),
+            linearOffset: (() => {
+              const offset = (typed.entity?.collision as { linearOffset?: { x: number; y: number; z: number } })?.linearOffset;
+              return offset ? [offset.x, offset.y, offset.z] : null;
+            })(),
+          };
+        }),
+      specKinds: sceneSpecs.specs.map((spec) => [spec.id, spec.kind] as const),
+      skipped: sceneSpecs.skipped.map((entry) => [entry.id, entry.reason] as const),
+    }));
+    return () => setDebug("__PC_VIEWPORT_PHYSICS__", undefined);
+  }, [ready, session.app, sceneSpecs]);
 
   /*
     2j) skybox / 环境贴图（`props.currentSkybox` 是资产 slug）。

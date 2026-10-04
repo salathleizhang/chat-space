@@ -1,66 +1,196 @@
 import { PointerLockControls } from "@react-three/drei/core/PointerLockControls";
-import { useFrame, useThree } from "@react-three/fiber";
-import { useCallback, useEffect, useRef, type ComponentRef } from "react";
+import {
+  CapsuleCollider,
+  RigidBody,
+  useAfterPhysicsStep,
+  useBeforePhysicsStep,
+  useRapier,
+  type RapierRigidBody,
+} from "@react-three/rapier";
+import { useThree } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, type ComponentRef } from "react";
 import * as THREE from "three";
+import {
+  CHARACTER_EYE_OFFSET,
+  GROUND_PROBE_DISTANCE,
+  JUMP_VELOCITY,
+  RUN_SPEED,
+  WALK_SPEED,
+  characterCapsule,
+  horizontalVelocity,
+} from "./physics";
+import { isForcedLocked } from "./physicsDebug";
 
-const WALK_SPEED = 3;
-const RUN_SPEED = 7;
-const EYE_HEIGHT = 1.6;
+const _direction = new THREE.Vector3();
 
-/** 第一人称漫游：指针锁定视角 + WASD 平移（Shift 加速），高度锁定在视线高度 */
-export function FirstPersonRig({ lockSelector }: { lockSelector: string }) {
+/**
+ * 「焦点在输入框里」判定：与 G/R/S 契约（`transformKeys.ts`）同一口径。
+ * 没锁指针时用户多半正在 Agent 输入框里打字，那时 WASD 绝不能推着角色走。
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!target) return false;
+  const element = target as { isContentEditable?: boolean; tagName?: string };
+  if (element.isContentEditable) return true;
+  return /^(input|textarea|select)$/i.test(element.tagName ?? "");
+}
+
+/**
+ * 第一人称：**物理驱动**的胶囊体 + 指针锁定视角。
+ *
+ * 与改造前的区别只有一处，但它是这次改动的全部意义：以前每帧硬写
+ * `camera.position.y = EYE_HEIGHT`，所以"走"其实是在空气里平移——不撞墙、不上台阶、
+ * 不掉下去。现在相机只是**读出**刚体位置，脚在哪由 rapier 说了算。
+ *
+ * 三个必须踩住的点：
+ * 1. **速度写在 `useBeforePhysicsStep`，位置读在 `useAfterPhysicsStep`**。
+ *    `<Physics>` 用 `updateLoop="independent"`（专为 `frameloop="demand"` 设计），
+ *    物理步与渲染帧**不是一个节奏**；写在 `useFrame` 里会按渲染帧改速度、按物理步前进，
+ *    手感随帧率漂移。
+ * 2. **`RigidBody` 必须禁用旋转**（`enabledRotations={[false,false,false]}`），否则胶囊体
+ *    撞到东西会像滚筒一样翻滚，相机跟着翻。
+ * 3. **跳跃要先探地**：没落地的"二段跳"是最常见的物理角色 bug，这里用一条从刚体中心
+ *    向下的射线（排除自身）判定。排除自身不是可选项——不排除时第一个命中的永远是自己的
+ *    胶囊体，判据恒真。
+ *
+ * 键位沿用产品原有手感（WASD/方向键 + Shift 加速），跳跃是这次新增的 Space。
+ */
+export function FirstPersonRig({
+  lockSelector,
+  spawn = [0, CHARACTER_EYE_OFFSET, 3],
+}: {
+  /** 指针锁定的点击选择器（见 `FIRST_PERSON_LOCK_SELECTOR`） */
+  lockSelector: string;
+  /** 出生点（**刚体中心**）。世界存在时要抬到地面之上，见 index.tsx 的 firstPersonSpawn */
+  spawn?: [number, number, number];
+}) {
   const camera = useThree((state) => state.camera);
   const invalidate = useThree((state) => state.invalidate);
+  const { rapier, world } = useRapier();
+  const bodyRef = useRef<RapierRigidBody | null>(null);
   const controlsRef = useRef<ComponentRef<typeof PointerLockControls>>(null);
   const keys = useRef<Set<string>>(new Set());
-  const direction = useRef(new THREE.Vector3());
-  const right = useRef(new THREE.Vector3());
-  const clearKeys = useCallback(() => keys.current.clear(), []);
+  const jumpQueued = useRef(false);
+  const capsule = useMemo(characterCapsule, []);
 
   useEffect(() => {
-    camera.position.set(0, EYE_HEIGHT, 3);
-    const down = (e: KeyboardEvent) => {
-      keys.current.add(e.key.toLowerCase());
-      invalidate();
+    camera.position.set(spawn[0], spawn[1], spawn[2]);
+  }, [camera, spawn]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      // 未锁定时用户可能正在 Agent 输入框里打字，WASD 绝不能偷偷推着角色走
+      if (isEditableTarget(event.target)) return;
+      keys.current.add(event.code);
+      if (event.code === "Space" && !event.repeat) {
+        jumpQueued.current = true;
+        event.preventDefault();
+      }
     };
-    const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase());
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
+    const onKeyUp = (event: KeyboardEvent) => keys.current.delete(event.code);
+    // 失焦（切标签页、切窗口）时按键集合必须清空，否则回来时角色会"自己一直往前走"
+    const onBlur = () => {
+      keys.current.clear();
+      jumpQueued.current = false;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
     return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
       keys.current.clear();
     };
-  }, [camera, invalidate]);
+  }, []);
 
-  useFrame((state, delta) => {
-    // 未锁定时用户可能正在 Agent 输入框里打字；这时 WASD 绝不能偷偷移动相机。
-    if (!controlsRef.current?.isLocked) return;
-    const k = keys.current;
-    const forward = (k.has("w") ? 1 : 0) - (k.has("s") ? 1 : 0);
-    const strafe = (k.has("d") ? 1 : 0) - (k.has("a") ? 1 : 0);
-    if (!forward && !strafe) return;
-    const speed = k.has("shift") ? RUN_SPEED : WALK_SPEED;
+  useBeforePhysicsStep(() => {
+    const body = bodyRef.current;
+    if (!body) return;
 
-    camera.getWorldDirection(direction.current);
-    direction.current.y = 0;
-    direction.current.normalize();
-    right.current.crossVectors(direction.current, camera.up).normalize();
+    const locked = (controlsRef.current?.isLocked ?? false) || isForcedLocked();
+    const pressed = keys.current;
+    const forward =
+      (pressed.has("KeyW") || pressed.has("ArrowUp") ? 1 : 0) -
+      (pressed.has("KeyS") || pressed.has("ArrowDown") ? 1 : 0);
+    const strafe =
+      (pressed.has("KeyD") || pressed.has("ArrowRight") ? 1 : 0) -
+      (pressed.has("KeyA") || pressed.has("ArrowLeft") ? 1 : 0);
+    const speed = pressed.has("ShiftLeft") || pressed.has("ShiftRight") ? RUN_SPEED : WALK_SPEED;
 
-    // 标签页恢复时 delta 可能突增，钳住单帧步长避免人物瞬移穿过场景。
-    const frameDelta = Math.min(delta, 0.1);
-    camera.position.addScaledVector(direction.current, forward * speed * frameDelta);
-    camera.position.addScaledVector(right.current, strafe * speed * frameDelta);
-    camera.position.y = EYE_HEIGHT;
-    state.invalidate();
+    // 竖直方向永远交给物理（重力/落地/台阶），我们只覆盖水平两轴
+    const linvel = body.linvel();
+    let vertical = linvel.y;
+
+    if (jumpQueued.current) {
+      const position = body.translation();
+      const ray = new rapier.Ray(
+        { x: position.x, y: position.y, z: position.z },
+        { x: 0, y: -1, z: 0 },
+      );
+      const grounded = Boolean(
+        world.castRay(ray, GROUND_PROBE_DISTANCE, true, undefined, undefined, undefined, body),
+      );
+      if (grounded) vertical = JUMP_VELOCITY;
+      jumpQueued.current = false;
+    }
+
+    if (!locked || (forward === 0 && strafe === 0)) {
+      body.setLinvel({ x: 0, y: vertical, z: 0 }, true);
+      return;
+    }
+
+    // 视线方向决定移动方向（先水平化，免得"抬头就往前上方飞"）
+    camera.getWorldDirection(_direction);
+    _direction.y = 0;
+    if (_direction.lengthSq() < 1e-6) {
+      body.setLinvel({ x: 0, y: vertical, z: 0 }, true);
+      return;
+    }
+    _direction.normalize();
+    const yaw = Math.atan2(-_direction.x, -_direction.z);
+    const [x, z] = horizontalVelocity(forward, strafe, yaw, speed);
+    body.setLinvel({ x, y: vertical, z }, true);
+  });
+
+  useAfterPhysicsStep(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const position = body.translation();
+    camera.position.set(position.x, position.y + CHARACTER_EYE_OFFSET, position.z);
   });
 
   return (
-    <PointerLockControls
-      ref={controlsRef}
-      makeDefault
-      selector={lockSelector}
-      onUnlock={clearKeys}
-    />
+    <>
+      <RigidBody
+        ref={bodyRef}
+        type="dynamic"
+        colliders={false}
+        position={spawn}
+        enabledRotations={[false, false, false]}
+        linearDamping={0}
+        // 抓取射线按这个标记排除角色自己（见 useObjectGrab）
+        userData={{ character: true }}
+        /*
+          角色**不许睡**：睡着之后物理层不再 invalidate（`forEachActiveRigidBody`），
+          站在原地看着某个方向时画面就不再重画；而且睡着的角色不会被重力处理，
+          走到台阶边缘也不会掉下去。
+        */
+        canSleep={false}
+      >
+        <CapsuleCollider args={[capsule.halfSegment, capsule.radius]} />
+      </RigidBody>
+      <PointerLockControls
+        ref={controlsRef}
+        makeDefault
+        selector={lockSelector}
+        onUnlock={() => keys.current.clear()}
+        /*
+          显式要一帧：画布是 `frameloop="demand"`，而"转头"不改变任何刚体状态，
+          没有别的东西会把这一帧排上（物理层只在有活动刚体时自己 invalidate）。
+          只在真的转了视角时触发，不是每帧无条件 invalidate。
+        */
+        onChange={() => invalidate()}
+      />
+    </>
   );
 }

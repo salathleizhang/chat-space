@@ -1,4 +1,5 @@
 import { useGLTF } from "@react-three/drei/core/Gltf";
+import { RigidBody } from "@react-three/rapier";
 import { useMemo } from "react";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
@@ -67,9 +68,19 @@ colliderMaterial.name = "world-collider";
 export default function WorldColliderMesh({
   url,
   semantics,
+  visible = true,
+  physics = true,
 }: {
   url: string;
   semantics: WorldSemantics;
+  /** 参照层的显示开关（工具栏那个"地形参照层"按钮）。**关掉不影响物理地形**。 */
+  visible?: boolean;
+  /**
+   * 是否把它作为物理地形挂出去。`false` 时只保留那份**完全透明**的参照几何
+   * （见 `COLLIDER_VISIBLE`），世界里一个刚体都不建——`?physics=0` 的对照臂必须
+   * 干净到"零刚体"，否则"关掉物理"的那一轮里仍有物理在跑，A/B 结论就是假的。
+   */
+  physics?: boolean;
 }) {
   const { scene } = useGLTF(url);
   useModelResource(scene, () => useGLTF.clear(url));
@@ -98,14 +109,37 @@ export default function WorldColliderMesh({
   // 立即释放会拆掉正在渲染的那一份。
   useDeferredDispose(model, disposeSkeletons);
 
-  return (
+  const reference = (
     <group
-      visible={COLLIDER_VISIBLE}
+      visible={COLLIDER_VISIBLE && visible}
       position={transform.position}
       rotation={transform.rotation}
       scale={transform.scale}
     >
       <primitive object={model} dispose={null} />
     </group>
+  );
+
+  // `?physics=0` 的对照臂：只有参照几何，世界里零刚体
+  if (!physics) return reference;
+
+  return (
+    /*
+      这份 GLB 同时是**画面参照**与**物理地形**（World Labs 一个世界给两套几何：spz 是画面，
+      collider glb 是物理）。物理那一半是全项目唯一用 trimesh 的地方——实测真实项目
+      4.3 万 / 6.4 万三角面（`0-world-2.glb` 43 124、`0-world.glb` 63 861），
+      家具模型那种百万面绝不走这条路（见 physics.ts）。
+
+      结构上刚体在**根**、世界变换在子 group 上：rapier 的刚体没有"被父级缩放"这种事，
+      自动生成的 trimesh 顶点是按网格自己的世界缩放去缩的（`createColliderPropsFromChildren`
+      读 `getWorldScale`），把 `transform` 写在刚体上会让顶点少乘一次缩放、地形整体缩水。
+
+      `includeInvisible` 不是可选项：自动碰撞体走的是 `traverseVisible`，而这一层
+      `COLLIDER_VISIBLE = false`（不画），不开这个开关就一个碰撞体都生成不出来——
+      症状是"能看见地形、却直接穿到地下"，零报错。
+    */
+    <RigidBody type="fixed" colliders="trimesh" includeInvisible>
+      {reference}
+    </RigidBody>
   );
 }

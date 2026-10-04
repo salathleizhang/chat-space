@@ -119,6 +119,37 @@ describe("当前世界（场景背景）", () => {
     expect(plain.specs[0]!.worldSemantics).toBeNull();
   });
 
+  test("世界有 collider 产物时**多发一条** collider 规格，且与泼溅共用同一份语义变换与摆放", () => {
+    const semantics = { flipY: true, metricScaleFactor: 1.8169396, groundPlaneOffset: 1.0635998 };
+    const withCollider = {
+      ...world,
+      modelPath: "/world/0-world.glb",
+      worldSemantics: semantics,
+      resourceRevision: 7,
+    };
+    const result = viewportSceneSpecs({
+      assets: [withCollider],
+      layout: new Map(),
+      currentWorld: "world",
+      revisionFor: () => 7,
+      urlFor: (path) => `https://example.test${path}`,
+    });
+    expect(result.specs.map((s) => [s.id, s.kind])).toEqual([
+      ["world-1", "splat"],
+      ["world-1:collider", "collider"],
+    ]);
+    const collider = result.specs[1]!;
+    // 两套几何必须用**同一份**语义变换与摆放：不一起翻就会互相错位（真机踩过）
+    expect(collider.worldSemantics).toEqual(semantics);
+    expect(collider.placement).toEqual(result.specs[0]!.placement);
+    expect(collider.url).toBe("https://example.test/world/0-world.glb?revision=7");
+  });
+
+  test("世界没有 collider 产物时只发泼溅那一条（不猜 URL）", () => {
+    const result = viewportSceneSpecs({ assets: [world], layout: new Map(), currentWorld: "world" });
+    expect(result.specs.map((s) => s.id)).toEqual(["world-1"]);
+  });
+
   test("不是当前世界的世界资产进 skipped（other-world），不渲染", () => {
     const other = asset({ id: "world-2", assetSlug: "another", kind: "world", modelPath: null, spzPath: "/w2.spz" });
     const result = viewportSceneSpecs({ assets: [world, other], layout: new Map(), currentWorld: "world" });

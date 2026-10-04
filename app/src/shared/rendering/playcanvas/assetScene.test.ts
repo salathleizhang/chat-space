@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Mat4, Quat, Vec3 } from "playcanvas";
-import { createSceneAssets, type LoadedAssetLike, type SceneAssetSpec } from "./assetScene";
+import { attachDynamicBoxBody, attachStaticMeshCollider, createSceneAssets, syncPhysicsToPlacement, type LoadedAssetLike, type SceneAssetSpec } from "./assetScene";
 import { matrixFromPlacement, type Placement } from "./selectionTransform";
 
 const placement = (over: Partial<Placement> = {}): Placement => ({
@@ -55,6 +55,108 @@ function fixture() {
   });
   return { handle, children, removed, loadedUrls, errors, loadCounts, fail, spec };
 }
+
+describe("逐物体刚体：盒体必须用真 Vec3", () => {
+  const fakeEntity = () => {
+    const components: Record<string, unknown> = {};
+    return {
+      components,
+      get rigidbody() { return components.rigidbody; },
+      get collision() { return components.collision; },
+      addComponent(name: string, data?: unknown) { components[name] = { name, data }; return components[name]; },
+    };
+  };
+  const bounds = { min: [-1, 0, -0.5] as [number, number, number], max: [1, 2, 0.5] as [number, number, number] };
+  // 记录工厂被怎么调用：传裸对象时引擎会静默丢掉（真机读数 halfExtents === undefined）
+  const vec3 = (x: number, y: number, z: number) => ({ kind: "vec3", x, y, z });
+
+  test("挂 dynamic 刚体 + box 碰撞体，且 halfExtents/linearOffset 走 Vec3 工厂", () => {
+    const entity = fakeEntity();
+    expect(attachDynamicBoxBody(entity, bounds, vec3)).toBe(true);
+    expect((entity.components.rigidbody as { data?: Record<string, unknown> }).data).toEqual({
+      type: "dynamic", linearDamping: 0.45, angularDamping: 0.35,
+    });
+    const collision = (entity.components.collision as { data?: Record<string, unknown> }).data!;
+    expect(collision.type).toBe("box");
+    expect(collision.halfExtents).toEqual({ kind: "vec3", x: 1, y: 1, z: 0.5 });
+    expect(collision.linearOffset).toEqual({ kind: "vec3", x: 0, y: 1, z: 0 });
+  });
+
+  test("没有 Vec3 工厂或包围盒时显式跳过（宁可没有刚体，也不要一个空盒）", () => {
+    expect(attachDynamicBoxBody(fakeEntity(), bounds, undefined)).toBe(false);
+    expect(attachDynamicBoxBody(fakeEntity(), null, vec3)).toBe(false);
+  });
+});
+
+describe("摆放写上去之后的物理同步", () => {
+  test("每个 collision 都同步 body 变换，且 mesh 形状会被重烘（renderAsset 重新赋值）", () => {
+    const syncedBody: string[] = [];
+    const rebuilds: number[] = [];
+    const renderAsset = 7;
+    const collision = {
+      type: "mesh",
+      get renderAsset() { return renderAsset; },
+      set renderAsset(value: number) { rebuilds.push(value); },
+      entity: { rigidbody: { syncEntityToBody: () => syncedBody.push("mesh") } },
+    };
+    const plain = { type: "box", entity: { rigidbody: { syncEntityToBody: () => syncedBody.push("box") } } };
+    const root = { findComponents: (name: string) => (name === "collision" ? [collision, plain] : []) };
+    expect(syncPhysicsToPlacement(root)).toBe(2);
+    // mesh 地形必须重烘：顶点是按"当时的"世界缩放烘进去的
+    expect(rebuilds).toEqual([renderAsset]);
+    expect(syncedBody).toEqual(["mesh", "box"]);
+  });
+
+  test("没有 findComponents 时安全返回 0（不抛）", () => {
+    expect(syncPhysicsToPlacement({})).toBe(0);
+  });
+});
+
+describe("碰撞网格（Render 资产那条路）", () => {
+  const renderAssets = [{ id: 11 }, { id: 12 }];
+
+  const makeFactory = () => {
+    const created: Array<{ components: Record<string, unknown>; added: boolean }> = [];
+    const children: unknown[] = [];
+    const createEntity = () => {
+      const components: Record<string, unknown> = {};
+      const record = { components, added: false };
+      created.push(record);
+      return {
+        get collision() { return components.collision; },
+        get rigidbody() { return components.rigidbody; },
+        addComponent(name: string, data?: unknown) {
+          components[name] = { name, data };
+          return components[name];
+        },
+        markAdded() { record.added = true; },
+      };
+    };
+    return { created, children, createEntity };
+  };
+
+  test("每个 Render 资产一个实体：collision(renderAsset) + rigidbody(static)，并挂进父节点", () => {
+    const factory = makeFactory();
+    const attached = attachStaticMeshCollider(renderAssets, factory.createEntity, (child) => factory.children.push(child));
+    expect(attached).toBe(2);
+    expect(factory.children).toHaveLength(2);
+    for (const [index, record] of factory.created.entries()) {
+      // `renderAsset` 必须原样带上：引擎的 mesh 形状只认这个字段（实例化出来的 render
+      // 组件没有 `meshes`，走那条路形状永远是 null——真机实测）
+      expect((record.components.collision as { data?: Record<string, unknown> }).data)
+        .toEqual({ type: "mesh", renderAsset: renderAssets[index] });
+      expect((record.components.rigidbody as { data?: unknown }).data).toEqual({ type: "static" });
+      // **不加 render 组件**：加了就会把这个几十万面的地形画出来
+      expect(record.components.render).toBeUndefined();
+    }
+  });
+
+  test("空列表 → 一套都不建（调用方据此报错，而不是静默挂上一个空壳）", () => {
+    const factory = makeFactory();
+    expect(attachStaticMeshCollider([], factory.createEntity, (child) => factory.children.push(child))).toBe(0);
+    expect(factory.children).toHaveLength(0);
+  });
+});
 
 describe("资产 → 实体 挂载器", () => {
   test("世界的语义变换叠加在摆放上（+Y 朝下 ⇒ 先绕 X 转 π），且不改动记下来的用户摆放", async () => {

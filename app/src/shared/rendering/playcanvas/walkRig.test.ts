@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createWalkState, EYE_HEIGHT, lookStep, MAX_FRAME_DELTA, MAX_PITCH, RUN_SPEED, walkForward,
   walkInputFromKeys, walkStep, WALK_SPEED, WALK_START, type WalkState,
+  walkVelocity,
 } from "./walkRig";
 
 const state = (over: Partial<WalkState> = {}): WalkState => createWalkState(over);
@@ -78,5 +79,31 @@ describe("第一人称漫游的纯数学", () => {
     expect(walkInputFromKeys(new Set(["w", "s", "a", "d"]), 0.016)).toEqual({ forward: 0, strafe: 0, run: false, delta: 0.016 });
     expect(walkInputFromKeys(new Set(["W"]), 0.016).forward).toBe(0); // 大写不认（three 侧转小写后才进集合）
     expect(walkInputFromKeys(new Set(["s", "a", "shift"]), 0.016)).toEqual({ forward: -1, strafe: -1, run: true, delta: 0.016 });
+  });
+});
+describe("物理角色的速度意图（walkVelocity）", () => {
+  test("yaw=0 按 W：往 −Z 走，速度 = WALK_SPEED，竖直分量恒为 0", () => {
+    expect(walkVelocity({ yaw: 0 }, { forward: 1, strafe: 0, run: false })).toEqual([0, 0, -WALK_SPEED]);
+  });
+
+  test("Shift 走 RUN_SPEED；按 D 往 +X 横移", () => {
+    expect(walkVelocity({ yaw: 0 }, { forward: 1, strafe: 0, run: true })).toEqual([0, 0, -RUN_SPEED]);
+    expect(walkVelocity({ yaw: 0 }, { forward: 0, strafe: 1, run: false })).toEqual([WALK_SPEED, 0, 0]);
+  });
+
+  test("斜向归一化：W+D 不会比直走快（否则「对角线瞬移」是物理角色的经典 bug）", () => {
+    const [x, y, z] = walkVelocity({ yaw: 0 }, { forward: 1, strafe: 1, run: false });
+    expect(Math.hypot(x, z)).toBeCloseTo(WALK_SPEED, 10);
+    expect(y).toBe(0);
+  });
+
+  test("朝向跟着 yaw 转（与 walkStep 同一套朝向口径）", () => {
+    const [x, , z] = walkVelocity({ yaw: Math.PI / 2 }, { forward: 1, strafe: 0, run: false });
+    expect(x).toBeCloseTo(-WALK_SPEED, 10);
+    expect(z).toBeCloseTo(0, 10);
+  });
+
+  test("不动时返回零速度（不是 NaN）", () => {
+    expect(walkVelocity({ yaw: 1.2 }, { forward: 0, strafe: 0, run: false })).toEqual([0, 0, 0]);
   });
 });

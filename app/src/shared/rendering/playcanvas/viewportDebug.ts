@@ -23,6 +23,7 @@ export const VIEWPORT_DEBUG_NAMES = [
   "__PC_VIEWPORT_SKY_MESH__",
   "__PC_VIEWPORT_WALK__",
   "__PC_VIEWPORT_FORCE_LOCK__",
+  "__PC_VIEWPORT_PHYSICS__",
 ] as const;
 
 export type ViewportDebugName = (typeof VIEWPORT_DEBUG_NAMES)[number];
