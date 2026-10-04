@@ -51,6 +51,23 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/blender-live/, ""),
         // 连不上时打一条**能照着做**的日志，而不是留一个空白 iframe 让人猜。
         configure: (proxy) => {
+          /*
+            ⚠️ **必须单独给 WebSocket 升级请求挂 Authorization。**
+
+            实测：只在上面写 `headers: { Authorization }` 时，HTTP 那条通（页面能加载、
+            返回 200），但画面永远停在 KasmVNC 的「Connecting…」——
+            直接测 `ws://127.0.0.1:5173/blender-live/websockify` 得到
+            `Expected 101 status code`，也就是**升级被上游拒了**。
+
+            原因是 `headers` 只作用于普通 HTTP 请求；WebSocket 走的是 `upgrade` 事件，
+            http-proxy 用另一条路径（`proxyReqWs`）发请求，不经过那个 headers 选项。
+            KasmVNC 对 `/websockify` 同样要 Basic 鉴权，缺头就 401 → 升级失败。
+
+            这一条很容易漏：**页面看起来是"加载中"，而不是"鉴权失败"**。
+          */
+          proxy.on("proxyReqWs", (proxyReq) => {
+            proxyReq.setHeader("Authorization", BLENDER_LIVE_AUTH);
+          });
           proxy.on("error", (err) => {
             console.warn(
               `[blender-live] 代理到 ${BLENDER_LIVE_TARGET} 失败：${err.message}\n` +
