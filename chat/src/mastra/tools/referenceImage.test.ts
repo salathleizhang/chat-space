@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  assetDir,
   assetIdentityFile,
   projectAnalysisFile,
   projectCandidatesFile,
@@ -16,13 +17,15 @@ import {
   SceneAnalysisSchema,
 } from "../../dto/library";
 import { routeImageEditChannel, routeImageGenerateChannel, runImageGenerate } from "../../models/images";
-import { LocalFileStorage, readJson, writeJson } from "../../services/assetStorage";
+import { LocalFileStorage, readJson, setAssetStorage, writeJson } from "../../services/assetStorage";
+import { resolve3dObjects } from "../../services/tasks";
 import { createProject } from "./projectTools";
 import {
   composeReferenceImageEditPrompt,
   composeReferenceImagePrompt,
   GenerateReferenceImagesInputSchema,
   GenerateReferenceImagesToolSchema,
+  runAttachSourceImage,
   runGenerateReferenceImages,
   runReferenceImageEdit,
   runReferenceImageGeneration,
@@ -73,6 +76,9 @@ const fakeFetch = (async (input: string | URL | Request) => {
 }) as typeof fetch;
 
 beforeAll(async () => {
+  // resolve3dObjects 走模块级 storage 单例（start-3d-batch 就是这么取图的），
+  // 所以这里把全局指向同一个临时根，让"绑定 → 生成"能在同一个沙箱里端到端跑。
+  setAssetStorage(storage);
   await createProject(storage, { name: "参考图演示", slug: "ref-demo" });
   await writeJson(storage, projectAnalysisFile("ref-demo"), SceneAnalysisSchema, {
     schemaVersion: 1,
@@ -92,7 +98,10 @@ beforeAll(async () => {
   });
 });
 
-afterAll(() => rm(root, { recursive: true, force: true }));
+afterAll(async () => {
+  setAssetStorage(undefined);
+  await rm(root, { recursive: true, force: true });
+});
 
 describe("routeImageGenerateChannel", () => {
   test.each([
@@ -747,5 +756,278 @@ describe("runReferenceImageMultiview", () => {
     expect(identity.sourceImages).toEqual(result.images);
     expect(identity.referenceViews).toEqual(result.referenceViews);
     expect(calls.some((url) => url.endsWith("/generation/image-to-multiview"))).toBe(true);
+  });
+});
+
+/**
+ * 上传直连：把用户本条消息带的原图直接登记成参考图。
+ *
+ * 这条通路存在的理由是"参考图不必非得是生成出来的"——用户上传的照片本身就是参考图。
+ * 这里钉住四件事：① 免费（不落请求侧写、不碰供应商）、② 登记后 start-3d-batch 认得出
+ * 它、③ 只吃用户原图（AI 产物要回到既有那条需要用户点头的复用路径）、④ 取图来源必须
+ * 可证明（默认只肯用本条消息附带的图）。
+ */
+describe("runAttachSourceImage", () => {
+  test("本条消息的原图绑定新目标：登记候选、不产生费用，start-3d-batch 认得出它", async () => {
+    await createProject(storage, { name: "上传直连", slug: "attach-demo" });
+    const uploaded = `${projectSourceDir("attach-demo")}/0-photo.png`;
+    await storage.writeBytes(uploaded, PNG_BYTES);
+
+    const result = await runAttachSourceImage(
+      storage,
+      {
+        projectSlug: "attach-demo",
+        assetSlug: "ceramic-vase",
+        assetName: "陶罐",
+        assetIntent: "米白色陶瓷花瓶",
+      },
+      [uploaded],
+    );
+
+    expect(result.image).toBe(uploaded);
+    expect(result.target).toEqual({
+      assetSlug: "ceramic-vase",
+      name: "陶罐",
+      intent: "米白色陶瓷花瓶",
+    });
+    expect(result.note).toContain("ask-user");
+    // 绝不为了绑定参考图提前创建资产身份
+    expect(await storage.exists(assetIdentityFile("attach-demo", "ceramic-vase"))).toBe(false);
+    // 也不落任何请求侧写：referenceResolution 就是按"有没有成功的侧写"区分
+    // 用户原图与 AI 产物的，没有侧写 ⇒ 这张图跨轮次可直接复用（与既有口径一致）
+    expect(
+      (await storage.list(projectSourceDir("attach-demo"))).filter((name) =>
+        name.endsWith("-request.json"),
+      ),
+    ).toEqual([]);
+
+    const candidates = await readJson(
+      storage,
+      projectCandidatesFile("attach-demo"),
+      CandidateRegistrySchema,
+    );
+    expect(candidates.objects).toEqual([
+      {
+        slug: "ceramic-vase",
+        name: "陶罐",
+        description: "米白色陶瓷花瓶",
+        sourceImages: [uploaded],
+        createdAt: expect.any(String),
+      },
+    ]);
+
+    // 端到端：start-3d-batch 取图走的正是这份 sourceImages[0]
+    const objects = await resolve3dObjects("attach-demo", ["ceramic-vase"]);
+    expect(objects).toHaveLength(1);
+    expect(objects[0]?.sourceImages).toEqual([uploaded]);
+  });
+
+  test("本条消息没有附图且没显式指定 → 报错而不是静默拿项目的旧图", async () => {
+    await expect(
+      runAttachSourceImage(storage, { projectSlug: "attach-demo", assetSlug: "solo" }, []),
+    ).rejects.toThrow("没有附带图片");
+  });
+
+  test("本条消息多张图 → 要求指名，不替用户挑", async () => {
+    await expect(
+      runAttachSourceImage(
+        storage,
+        { projectSlug: "attach-demo", assetSlug: "solo" },
+        ["projects/attach-demo/source/0-a.png", "projects/attach-demo/source/1-b.png"],
+      ),
+    ).rejects.toThrow("指名");
+  });
+
+  test("AI 生成/编辑出来的参考图不能走这条通路", async () => {
+    const generated = `${projectSourceDir("attach-demo")}/1-machine-ref.png`;
+    await storage.writeBytes(generated, PNG_BYTES);
+    await writeJson(
+      storage,
+      `${projectSourceDir("attach-demo")}/.1-machine-ref-request.json`,
+      RequestSidecarSchema,
+      {
+        schemaVersion: 1,
+        index: 1,
+        slug: "machine-ref",
+        provider: "volcengine",
+        model: "doubao-seedream-4-5-251128",
+        params: { prompt: "a machine" },
+        status: "succeeded",
+        outputs: [{ path: generated }],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    );
+
+    await expect(
+      runAttachSourceImage(
+        storage,
+        { projectSlug: "attach-demo", assetSlug: "machine", image: generated },
+        [],
+      ),
+    ).rejects.toThrow("只能绑定用户上传的原图");
+  });
+
+  test("显式路径必须落在本项目 source/ 内（挡住任意历史文件）", async () => {
+    const outside = `${assetDir("attach-demo", "probe")}/0-photo.png`;
+    await storage.writeBytes(outside, PNG_BYTES);
+    await expect(
+      runAttachSourceImage(
+        storage,
+        { projectSlug: "attach-demo", assetSlug: "probe", image: outside },
+        [],
+      ),
+    ).rejects.toThrow("只能绑定本项目 source/");
+  });
+
+  test("不给 assetSlug 时只确认可用，并明说没有目标可被 start-3d-batch 找到", async () => {
+    await createProject(storage, { name: "只确认可用", slug: "attach-unbound" });
+    const uploaded = `${projectSourceDir("attach-unbound")}/0-standalone.png`;
+    await storage.writeBytes(uploaded, PNG_BYTES);
+
+    const result = await runAttachSourceImage(
+      storage,
+      { projectSlug: "attach-unbound" },
+      [uploaded],
+    );
+
+    expect(result.image).toBe(uploaded);
+    expect(result.target).toBeUndefined();
+    expect(result.note).toContain("没有绑定到任何生成目标");
+    // 没有任何 slug 被登记：start-3d-batch 会报 no_objects，而不是静默拿这张图开工
+    expect(await storage.exists(projectCandidatesFile("attach-unbound"))).toBe(false);
+  });
+
+  test("目标 slug 与非模型资产冲突时拒绝，不悄悄改写它", async () => {
+    await createProject(storage, { name: "绑定撞名", slug: "attach-conflict" });
+    const uploaded = `${projectSourceDir("attach-conflict")}/0-photo.png`;
+    await storage.writeBytes(uploaded, PNG_BYTES);
+    await writeJson(
+      storage,
+      assetIdentityFile("attach-conflict", "world"),
+      AssetIdentitySchema,
+      {
+        schemaVersion: 1,
+        slug: "world",
+        kind: "world",
+        name: "已有世界",
+        intent: "existing world",
+        sourceImages: [],
+        createdAt: new Date().toISOString(),
+      },
+    );
+
+    await expect(
+      runAttachSourceImage(
+        storage,
+        { projectSlug: "attach-conflict", assetSlug: "world" },
+        [uploaded],
+      ),
+    ).rejects.toThrow("已被 world 资产占用");
+  });
+});
+
+/**
+ * mode=edit 的新对象通路：目标还不存在时，用 sourceImage（或本条消息的图）隔离出
+ * 单物体参考图，并把目标一并登记。
+ */
+describe("runReferenceImageEdit 的新对象通路", () => {
+  test("新对象 + sourceImage：隔离结果登记为待生成目标", async () => {
+    await createProject(storage, { name: "隔离新对象", slug: "edit-new" });
+    const photo = `${projectSourceDir("edit-new")}/0-room.png`;
+    await storage.writeBytes(photo, PNG_BYTES);
+
+    const result = await runGenerateReferenceImages(
+      storage,
+      "edit-new",
+      {
+        mode: "edit",
+        assetSlug: "floor-lamp",
+        assetName: "落地灯",
+        assetIntent: "房间角落的落地灯",
+        prompt: "isolate the floor lamp in the corner",
+        sourceImage: photo,
+      },
+      { volcengineApiKey: "vk" },
+      { fetchFn: fakeFetch, pollIntervalMs: 1 },
+    );
+
+    expect(result).toMatchObject({ mode: "edit", channel: "volcengine" });
+    expect(result.images).toHaveLength(1);
+    // 新对象不该被提前建成正式资产
+    expect(await storage.exists(assetIdentityFile("edit-new", "floor-lamp"))).toBe(false);
+    const candidates = await readJson(
+      storage,
+      projectCandidatesFile("edit-new"),
+      CandidateRegistrySchema,
+    );
+    expect(candidates.objects).toEqual([
+      {
+        slug: "floor-lamp",
+        name: "落地灯",
+        description: "房间角落的落地灯",
+        sourceImages: result.images,
+        createdAt: expect.any(String),
+      },
+    ]);
+  });
+
+  test("省略 sourceImage 时用本条消息附带的图，并把那张图当输入送给图生图", async () => {
+    await createProject(storage, { name: "本条图隔离", slug: "edit-current" });
+    const photo = `${projectSourceDir("edit-current")}/0-photo.png`;
+    await storage.writeBytes(photo, PNG_BYTES);
+
+    const submitted: Record<string, unknown>[] = [];
+    const recordFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith("/images/generations") && init?.body) {
+        submitted.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return jsonResponse({ data: [{ b64_json: PNG_B64 }] });
+      }
+      return fakeFetch(input);
+    }) as typeof fetch;
+
+    const result = await runGenerateReferenceImages(
+      storage,
+      "edit-current",
+      { mode: "edit", assetSlug: "armchair", prompt: "isolate the armchair" },
+      { volcengineApiKey: "vk" },
+      { fetchFn: recordFetch, pollIntervalMs: 1 },
+      [photo],
+    );
+
+    expect(submitted[0]).toMatchObject({
+      image: expect.stringContaining("data:image/png;base64,"),
+    });
+    expect(result.images).toHaveLength(1);
+  });
+
+  test("slug 撞上非模型资产时拒绝——新通路不绕过撞名预检", async () => {
+    await createProject(storage, { name: "隔离撞名", slug: "edit-conflict" });
+    const photo = `${projectSourceDir("edit-conflict")}/0-photo.png`;
+    await storage.writeBytes(photo, PNG_BYTES);
+    await writeJson(
+      storage,
+      assetIdentityFile("edit-conflict", "sky"),
+      AssetIdentitySchema,
+      {
+        schemaVersion: 1,
+        slug: "sky",
+        kind: "world",
+        name: "已有世界",
+        intent: "existing world",
+        sourceImages: [],
+        createdAt: new Date().toISOString(),
+      },
+    );
+
+    await expect(
+      runGenerateReferenceImages(
+        storage,
+        "edit-conflict",
+        { mode: "edit", assetSlug: "sky", prompt: "isolate the sky", sourceImage: photo },
+        { volcengineApiKey: "vk" },
+        { fetchFn: fakeFetch, pollIntervalMs: 1 },
+      ),
+    ).rejects.toThrow("已被 world 资产占用");
   });
 });

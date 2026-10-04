@@ -50,6 +50,29 @@ describe("creator 回复协议", () => {
   });
 
   /**
+   * 上传直连：用户本条上传的原图本身就是参考图，不该再花钱画一张。这一档也是
+   * "两次同意"纪律的**唯一例外**，而例外必须窄——只有 attach-source-image 这条
+   * 免费通路成立时才允许在参考图落盘前取得 3D 生成的同意（本来就没有新图要落盘、
+   * 也没有"方向对不对"要看）；生成出来的参考图仍走完整的两步。
+   *
+   * 钉住三件事：① 三档判据在（直接绑定 / 隔离 / 重新生成）、② 例外写明"唯一"且
+   * 附着在这一档上、③ 判断发生在花钱之前，不是"先生成出来看看、不行再换"（那等于
+   * 给差输入付两次费）。后续调整很容易把它放宽成"上传的图都不用二次确认"，所以
+   * 连措辞一起钉。
+   */
+  test("上传原图可直连，但例外窄、判档在花钱之前", () => {
+    expect(CREATOR_INSTRUCTIONS).toContain("attach-source-image");
+    expect(CREATOR_INSTRUCTIONS).toContain("单件物体、主体完整无遮挡");
+    expect(CREATOR_INSTRUCTIONS).toContain("mode=edit");
+    expect(CREATOR_INSTRUCTIONS).toContain("mode=generate");
+    expect(CREATOR_INSTRUCTIONS).toContain("唯一例外");
+    expect(CREATOR_INSTRUCTIONS).toContain("直接使用你上传的原图");
+    expect(CREATOR_INSTRUCTIONS).toContain('不要"先生成出来看看、不行再换一张"');
+    // Hi3D 只吃 Seedream 产物的公网 URL，这一档对它不成立
+    expect(CREATOR_INSTRUCTIONS).toContain("Hi3D 时第一档不成立");
+  });
+
+  /**
    * 2026-10-02 用户反馈：参考图生成完，Agent 在正文里写「告诉我方向对不对」，
    * 用户必须先手打一句「继续」才看到那张 3D 同意卡片。需要用户拍板的事只有一条
    * 出路——ask-user 卡片；正文里不许出现等用户打字才能推进的话。

@@ -26,6 +26,22 @@ describe("creator 工具可用性", () => {
     ) as { properties?: Record<string, unknown> };
     expect(worldSchema.properties).toHaveProperty("sourceMode");
     expect(tools["generate-reference-images"]).toBeDefined();
+    /*
+      上传直连：用户本条消息带一张干净的单物体照片时，参考图不必是生成出来的——
+      attach-source-image 免费把它登记为参考图（不碰任何供应商、不需要付费同意）。
+      少了它，"把这张照片做成模型"只能靠花钱重画一张，保真度也会掉。
+    */
+    expect(tools["attach-source-image"]).toBeDefined();
+    const attachSchema = z.toJSONSchema(
+      (tools["attach-source-image"] as unknown as { inputSchema: z.ZodType }).inputSchema,
+      { io: "input" },
+    ) as { properties?: Record<string, unknown> };
+    expect(Object.keys(attachSchema.properties ?? {}).sort()).toEqual([
+      "assetIntent",
+      "assetName",
+      "assetSlug",
+      "image",
+    ]);
     expect(tools["generate-clean-plate"]).toBeDefined();
     expect(tools["start-scene-job"]).toBeDefined();
     expect(tools["revise-scene-job"]).toBeDefined();
