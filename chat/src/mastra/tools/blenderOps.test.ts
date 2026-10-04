@@ -8,7 +8,9 @@ import {
   FRAME_ALL_SNIPPET,
   LIST_PLUGINS_SNIPPET,
   MARKER,
+  BRIDGE_KILLING_CALLS,
   MAX_STEP_CHARS,
+  SAFE_CLEAR_SNIPPET,
   blenderRunTool,
   mapWorkdirPath,
   parseMarker,
@@ -190,5 +192,51 @@ describe("共享目录的路径映射", () => {
     // /workspace-other 不是 /workspace 的子路径。用裸 startsWith 会误判，
     // 于是把文件读到错误的地方。
     expect(() => mapWorkdirPath("/workspace-other/x.glb", "/workspace", "/local")).toThrow();
+  });
+});
+
+/**
+ * 会打死桥接自己的调用 —— 实测记录见 `BRIDGE_KILLING_CALLS` 的注释：
+ * 跑一次 `read_factory_settings` 之后，`get_addon_status` 从 `native` 变成 `error`
+ * 且**再也回不来**（只能重启 Blender/容器）。
+ *
+ * 这个闸门必须在**发出之前**生效：跑到一半才发现就晚了——addon 已经没了，
+ * 连"报错"这条回程都没有。
+ */
+describe("拦住会打死桥接的调用", () => {
+  test("read_factory_settings 被拒，且拒绝发生在调用 Blender 之前", async () => {
+    const error = (await blenderRunTool
+      .execute!(
+        { code: "import bpy\nbpy.ops.wm.read_factory_settings(use_empty=True)", step: "清空" } as never,
+        context,
+      )
+      .catch((thrown: unknown) => thrown)) as ChatServiceError;
+    expect(error).toBeInstanceOf(ChatServiceError);
+    expect(error.code).toBe("blender_call_would_kill_bridge");
+  });
+
+  test("报错里给出安全替代（删对象），而不是只说「不行」", async () => {
+    const error = (await blenderRunTool
+      .execute!(
+        { code: "bpy.ops.wm.read_homefile(use_empty=True)" } as never,
+        context,
+      )
+      .catch((thrown: unknown) => thrown)) as ChatServiceError;
+    expect(error.message).toContain("bpy.data.objects.remove");
+    expect(error.message).toContain("再也连不上");
+  });
+
+  test("安全替代本身不会被拦", async () => {
+    // 它会真的去连 Blender（这里没有），所以只断言错误**不是**那个闸门。
+    const thrown = (await blenderRunTool
+      .execute!({ code: SAFE_CLEAR_SNIPPET, step: "清空" } as never, context)
+      .catch((e: unknown) => e)) as ChatServiceError;
+    expect(thrown.code).not.toBe("blender_call_would_kill_bridge");
+  });
+
+  test("闸门清单里的三个名字都覆盖（少一个就是个洞）", () => {
+    for (const name of ["read_factory_settings", "read_homefile", "open_mainfile"]) {
+      expect(BRIDGE_KILLING_CALLS as readonly string[]).toContain(name);
+    }
   });
 });

@@ -217,6 +217,48 @@ export const MAX_STEP_CHARS = 6000;
 /** 单步超过这个耗时就在返回里提示"下次拆小点"。 */
 export const SLOW_STEP_MS = 12_000;
 
+/**
+ * **会打死 bridge 自己的 bpy 调用。**
+ *
+ * ## 实测（容器里逐项验过，不是推断）
+ *
+ * ```
+ * ① 动之前:  get_addon_status → source=native     ← addon 活着
+ * ② 执行:    bpy.ops.wm.read_factory_settings(use_empty=True)   ← 代码本身跑完了
+ * ③ 之后:    get_addon_status → source=error      ← addon 死了，之后**永远**连不上
+ * ```
+ *
+ * 原因是这些操作会**卸载并重载全部插件**——addon 的 socket 服务就在它自己的
+ * `register()` 里起的，于是服务线程跟着没了。Blender 不会报错，我们的调用也"成功"了，
+ * 但**桥接从此断掉**，直到重启 Blender/容器。
+ *
+ * 这是一个**单向陷阱**：agent 想"清空场景"，做了一件完全合理的事，代价是整条链路死掉；
+ * 而症状（`source=error`、`Connection closed`）看起来像"容器坏了"。
+ *
+ * 所以这里拦住，并把**安全的做法**一起给它（见 `SAFE_CLEAR_SNIPPET`）：
+ * 删对象不会碰插件，效果一样。
+ */
+export const BRIDGE_KILLING_CALLS = [
+  "read_factory_settings",
+  "read_homefile",
+  "open_mainfile",
+] as const;
+
+/**
+ * 安全的"清空场景"——**不碰插件**，因此不会打死桥接。
+ *
+ * 给 agent 的替代方案：想从空白开始就用这个，别用 `read_factory_settings`。
+ */
+export const SAFE_CLEAR_SNIPPET = [
+  "import bpy",
+  "for o in list(bpy.data.objects):",
+  "    bpy.data.objects.remove(o, do_unlink=True)",
+  "for c in (bpy.data.meshes, bpy.data.materials, bpy.data.curves):",
+  "    for item in list(c):",
+  "        if item.users == 0:",
+  "            c.remove(item)",
+].join("\n");
+
 const ProjectSchema = { projectSlug: SlugSchema.optional() };
 
 function projectOf(context: unknown, explicit?: string): string {
@@ -336,7 +378,11 @@ export const blenderRunTool = createTool({
     "**必须小步。** 单次执行期间 Blender 的主线程被占住，**用户的视口是冻住的**（画面只在两次调用之间刷新）。一次提交一整套建模会让盯着屏幕的人只看到画面卡住、然后啪一下出现成品——那正是这个功能要避免的。正确节奏是：建一个部件 → 看事实 → 加一个修改器 → 看事实 → 布尔 → 看事实。\n\n" +
     "**每步都要看返回的 facts**（对象数/面数/包围盒）。面数是 0 或包围盒退化说明这一步静默失败了，不要继续往上堆。\n\n" +
     "`frame` 默认 true：每步之后把视口对准场景，这样用户能看到刚才那一步干了什么。想固定机位对比前后变化时传 false。\n\n" +
-    "**什么时候不要用它**：不要用它做 Blender 之外的事。导出用 blender-export；查 API 或插件签名用 blender-api（猜 operator 参数名会浪费好几轮）；看已装插件用 blender-plugins。",
+    "**什么时候不要用它**：不要用它做 Blender 之外的事。导出用 blender-export；查 API 或插件签名用 blender-api（猜 operator 参数名会浪费好几轮）；看已装插件用 blender-plugins。\n\n" +
+    "⚠️ **不要用 `bpy.ops.wm.read_factory_settings()` 来清空场景**——那个调用会卸载并重载全部插件，" +
+    "而 ChatSpace 的 socket 服务挂在插件上，**一跑桥接就断了、之后再也连不上**（实测过的单向陷阱）。" +
+    "想从空白开始就删对象：`for o in list(bpy.data.objects): bpy.data.objects.remove(o, do_unlink=True)`。" +
+    "这一条在工具层被直接拦下，所以你会收到一条报错而不是把链路打死。",
   inputSchema: z.object({
     ...ProjectSchema,
     /** 一段 bpy 代码。作用域里已有 bpy / bmesh / math / Matrix / Vector。 */
@@ -348,8 +394,21 @@ export const blenderRunTool = createTool({
   }),
   execute: async (input, context) => {
     projectOf(context, input.projectSlug);
-    if (input.code.length > MAX_STEP_CHARS) {
+    // 拦住会打死桥接自己的调用（见 BRIDGE_KILLING_CALLS 的实测记录）。
+    // **必须在发出之前拦**：跑到一半才发现就晚了——addon 已经没了，连"报错"这条回程都没有。
+    const killer = BRIDGE_KILLING_CALLS.find((name) => input.code.includes(name));
+    if (killer) {
       throw new ChatServiceError(
+        `这段代码里有 \`${killer}\`，它会**卸载并重载全部插件**——而 ChatSpace 的 socket 服务` +
+          `就挂在插件上，所以这一跑桥接就断了，之后**再也连不上**，只能重启 Blender/容器。` +
+          `Blender 不会报错，看起来像"容器坏了"，这是实测过的单向陷阱。\n\n` +
+          `想从空白场景开始请改用删对象（效果一样、不碰插件）：\n\n${SAFE_CLEAR_SNIPPET}`,
+        400,
+        "blender_call_would_kill_bridge",
+      );
+    }
+
+    if (input.code.length > MAX_STEP_CHARS) {      throw new ChatServiceError(
         `这一步的代码有 ${input.code.length} 字符，超过单步上限 ${MAX_STEP_CHARS}。` +
           `这基本一定是在一次调用里做完了整套建模——请拆成多步：每一步建一个部件或加一个修改器，` +
           `每步之后看返回的 facts 再决定下一步。用户的视口在单次执行期间是冻住的，拆开才看得到过程。`,

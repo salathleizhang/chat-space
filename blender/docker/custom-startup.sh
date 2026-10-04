@@ -146,9 +146,15 @@ done
 # 所以 chat/ 那边看到的仍然是熟悉的 9876，配置一个字都不用改。
 if command -v socat >/dev/null 2>&1; then
   echo "[chatspace] 启动 socat 中继 0.0.0.0:9877 -> 127.0.0.1:9876"
-  # `nodelay` 是实测加上去的：不带它时 `get_addon_status`（短应答）能通、
-  # 而 `execute_blender_code`（要进 Blender 主线程的 timer 队列、跨度更长）会
-  # 被对端以 `Connection closed before receiving any data` 断开。
+  # ⚠️ `nodelay` 的来历要说清楚：**它是"合理但未单独验证"的选择，不是已证实的因果**。
+  #
+  # 我最初看到的是「`get_addon_status` 能通、`execute_blender_code` 断连」，据此加了 nodelay。
+  # 但后来查明那次断连的真凶是**前一次调用里的 `read_factory_settings` 把 addon 打死了**
+  # （见 chat 侧 `BRIDGE_KILLING_CALLS` 的实测记录），跟 socat 无关。
+  # 而且实测 8 轮连接前后 socat 进程数与线程数都不变——**没有连接泄漏**。
+  #
+  # 所以：nodelay 对请求/应答式协议本身是正确的（禁用 Nagle，避免小包被压住），留着；
+  # 但**不要把它当成某个已观察故障的修复**——那个功劳不属于它。
   socat TCP-LISTEN:9877,fork,reuseaddr,nodelay TCP:127.0.0.1:9876 &
   sleep 1
   if (echo > /dev/tcp/127.0.0.1/9877) 2>/dev/null; then

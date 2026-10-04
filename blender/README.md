@@ -175,10 +175,33 @@ CHATSPACE_BLENDER_WORKDIR="$HOME/ChatSpace/blender-work" \
 | --- | --- | --- |
 | 1 容器 | 日志停在 pulseaudio / `Unknown Service: custom_startup` | 看 §三 的 16–20 条 |
 | 2 端口通但连不上 | `source=error`（而 `nc` 说"通"——那是 Docker 代理接受的） | addon 只绑 localhost |
-| 3 连上了但执行不了 | `Connection closed before receiving any data` | socat 少了 `nodelay` |
+| 3 连上了但执行不了 | `Connection closed before receiving any data` | **上一次调用里跑了 `read_factory_settings`，addon 已被打死**（见下） |
 | 4 执行了但拿不到事实 | 面数全是 `undefined` | 误用了社区版 `get_scene_info` |
 
 脚本**逐层单独给结论**，哪层红了一眼就知道该往哪看，不用从一头猜。
+
+### ⚠️ 单向陷阱：`read_factory_settings` 会打死桥接
+
+实测（容器里逐项验过）：
+
+```
+① 动之前:  get_addon_status → source=native     ← addon 活着
+② 执行:    bpy.ops.wm.read_factory_settings(use_empty=True)
+③ 之后:    get_addon_status → source=error      ← addon 死了，之后永远连不上
+```
+
+它会**卸载并重载全部插件**，而 ChatSpace 的 socket 服务就挂在插件上。Blender 不报错、
+那次调用也"成功"，但桥接从此断掉——**只能重启 Blender/容器**。症状看起来像"容器坏了"。
+
+**工具层直接拦住了它**（`BRIDGE_KILLING_CALLS`），并把安全替代一起给出去：
+
+```python
+for o in list(bpy.data.objects):
+    bpy.data.objects.remove(o, do_unlink=True)
+```
+
+> 我一度以为这是"连接累积"，还去调了 socat。**那个诊断是错的**：实测 8 轮连接前后
+> socat 进程数与线程数都不变，没有泄漏。这条记在这里，免得下次又往 socat 上想。
 
 **看画面**：<http://localhost:6901>（口令 `chatspace`）—— 应该看到 XFCE 桌面和 Blender 窗口。
 
