@@ -20,6 +20,9 @@ import { boundsCenter, boundsFromCenterHalfExtents, boundsSize, unionBounds, typ
 import { createSelectionWireframe, type SelectionWireframeHandle } from "../../shared/rendering/playcanvas/selectionWireframe";
 import { useRendererSession } from "../../shared/rendering/playcanvas/useRendererSession";
 import { createEngineSceneLoaders, createSceneAssets, type SceneAssetsHandle } from "../../shared/rendering/playcanvas/assetScene";
+import { assetIdForEntity, type IdentityNode } from "../../shared/rendering/playcanvas/assetIdentity";
+import { DROP_SETTLE_TIMEOUT_MS, dropPlacementMoved, dropSettled } from "../../shared/rendering/playcanvas/grabDrop";
+import { settleHeld } from "../../shared/lib/settleHold";
 import { viewportSceneSpecs } from "../../shared/rendering/playcanvas/viewportSceneSpecs";
 import { captureInspectionSheet } from "../../shared/rendering/playcanvas/inspectionCapture";
 import {
@@ -123,6 +126,29 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
   const inputRef = useRef<PanePointerInputHandle | null>(null);
   const pickerRef = useRef<PanePickerHandle | null>(null);
   const assetsRef = useRef<SceneAssetsHandle | null>(null);
+  /**
+   * 第一人称里"抓起来的模型 = 点中它"要调 `onSelectAsset`，而抓取住在一个
+   * **不依赖 props** 的 effect 里（`[ready, session.app, firstPerson, paneSpecs]`——
+   * 加 props 进去会让每次渲染都销毁重建整个角色）。所以走 ref：每次渲染刷新这一份，
+   * effect 里读到的永远是最新，且不必把 `props` 塞进依赖。
+   */
+  const selectAssetByIdRef = useRef<(assetId: string) => void>(() => {});
+  selectAssetByIdRef.current = (assetId: string) => {
+    const asset = props.assets.find((candidate) => candidate.id === assetId);
+    if (asset) props.onSelectAsset(asset as LibraryAsset, false);
+  };
+  /**
+   * 抓起的东西**落定之后写回摆放**（与 three 侧 `handleGrabDrop` 同一条口径）。
+   * 同样走 ref：读的那个 effect 依赖里没有 props。
+   * 两道闸门：真的动过才提交（位置 / 四元数夹角）、拿不到资产条目不提交。
+   */
+  const commitDropRef = useRef<(assetId: string, placement: Placement) => void>(() => {});
+  commitDropRef.current = (assetId: string, placement: Placement) => {
+    const before = assetsRef.current?.entry(assetId)?.placement();
+    if (!before || !dropPlacementMoved(before, placement)) return;
+    // `mode` 只用来写历史的步骤文案（见 `useSceneHistory`）：抓取同时改了位置与姿态，主体是"搬"
+    props.onTransformCommit?.({ [assetId]: placement }, "translate");
+  };
   const gizmoHostRef = useRef<PaneGizmoHandle | null>(null);
   const transformRef = useRef<SelectionTransformHandle<string> | null>(null);
   const pivotEntityRef = useRef<unknown>(null);
@@ -961,7 +987,34 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       depth: number;
       previous: { x: number; y: number; z: number };
       release: { x: number; y: number; z: number };
+      /** 抓到的是哪件资产（解析不出来时为 null：那时既不选中、也不落盘） */
+      assetId: string | null;
     } | null = null;
+    /**
+     * 松手之后**等落定**再落盘的几笔（three 侧 `useObjectGrab` 的 `pendingRef` 对应物）：
+     * 松手会把速度还给物体，它还要飞一段、掉到地上、再滚一会儿——松手那一刻的姿态不是
+     * 它最后待的地方（判据与上限见 `grabDrop.ts`）。
+     */
+    let pendingDrops: { assetId: string; entity: unknown; deadline: number; stillSince: number | null }[] = [];
+    /** 刚体是不是停下来了。刚体没了（实体被卸载）也按停下算，交给下面读姿态时兜底 */
+    const dropTargetSettled = (target: unknown): boolean => {
+      const rb = (target as {
+        rigidbody?: {
+          linearVelocity?: { x: number; y: number; z: number };
+          angularVelocity?: { x: number; y: number; z: number };
+        };
+      } | null)?.rigidbody;
+      if (!rb?.linearVelocity || !rb.angularVelocity) return true;
+      return dropSettled(rb.linearVelocity, rb.angularVelocity);
+    };
+    /** 把一笔等待落定的读数交出去。实体可能已经不在（换资产/切布局），读它会抛，忽略即可 */
+    const flushDrop = (entry: { assetId: string; entity: unknown }) => {
+      try {
+        commitDropRef.current(entry.assetId, readEntityPlacement(entry.entity as never));
+      } catch {
+        // 实体已经不在了：这一件这次就不落盘
+      }
+    };
     let lastGrabRay: {
       hit: boolean;
       name: string | null;
@@ -1084,13 +1137,31 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         // 抓取深度取"相机到命中点"的实际距离（比固定值跟手）
         const cameraFrom = cameraEntity.getPosition();
         const depth = Math.max(Math.hypot(hit.point.x - cameraFrom.x, hit.point.y - cameraFrom.y, hit.point.z - cameraFrom.z), 0.3);
+        /*
+          **抓住 = 在第三人称点中它**（用户要的口径：第一人称拿起模型，右侧栏就该出现它，
+          好接着编辑）。与点选共用同一个解析器与同一个回调，所以"选中"只有一套语义。
+          解析不出资产（角色自己、地面/地形、grab 锚点）时**什么都不做**：那一下点击的
+          本意是"抓"，没抓到不等于"点了空白"，不能顺手清空选中。
+          **解析要在建状态之前**：`assetId` 同时决定"抓起来选谁"和"松手把谁落盘"。
+        */
+        const mounted = assetsRef.current;
+        const assetId = mounted
+          ? assetIdForEntity(mounted.ids(), (id) => mounted.entry(id)?.entity as IdentityNode | undefined, hit.entity)
+          : null;
+        /*
+          又抓起了**同一个实体**：上一轮那次等待落定作废（这次松手会重新等），
+          否则它会先被落一次盘、再被落第二次。别的几笔不受影响。
+        */
+        if (assetId) pendingDrops = pendingDrops.filter((entry) => entry.entity !== hit.entity);
         grabState = {
           anchor: anchor as unknown as { destroy(): void; setPosition(x: number, y: number, z: number): void },
           target: hit.entity,
           depth,
           previous: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
           release: { x: 0, y: 0, z: 0 },
+          assetId,
         };
+        if (assetId) selectAssetByIdRef.current(assetId);
       };
       releaseGrab = () => {
         const state2 = grabState;
@@ -1100,6 +1171,18 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         const velocity = state2.target.rigidbody?.linearVelocity;
         if (velocity) {
           state2.target.rigidbody!.linearVelocity = makeVec3!(state2.release.x, state2.release.y, state2.release.z);
+        }
+        /*
+          记一笔"等它停下再落盘"。**不在这一刻落盘**：这一秒物体还带着甩出的速度在半空，
+          它的位置马上就变了（与 three 侧 `useObjectGrab.release` 同一条）。
+        */
+        if (state2.assetId) {
+          pendingDrops.push({
+            assetId: state2.assetId,
+            entity: state2.target,
+            deadline: Date.now() + DROP_SETTLE_TIMEOUT_MS,
+            stillSince: null,
+          });
         }
       };
     })();
@@ -1144,6 +1227,29 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     window.addEventListener("mousemove", onMouseMove);
     document.addEventListener("pointerlockchange", onPointerLockChange);
     const onUpdate = (dt: number) => {
+      /*
+        先处理"等落定"的几笔：它们与角色在不在无关（角色刚体还在异步建的时候，
+        抓取本来就还没发生，但顺序上不该让它们被那一行早退挡掉）。
+        到点或停稳就交出去落盘，判据与上限见 `grabDrop.ts`。
+      */
+      if (pendingDrops.length > 0) {
+        const now = Date.now();
+        const remaining: typeof pendingDrops = [];
+        for (const entry of pendingDrops) {
+          /*
+            「静够 150 ms 才算落定」，不是"这一刻速度小"：把沙发端在半空、停下鼠标再松开时，
+            关节会把它稳稳吊住 ⇒ 那一刻速度≈0，照"速度小"判就会在**半空**里记下摆放。
+            重力一让它动，计时就清零（见 `shared/lib/settleHold.ts`）。
+          */
+          const held = now >= entry.deadline
+            ? { commit: true, stillSince: entry.stillSince }
+            : settleHeld(entry.stillSince, dropTargetSettled(entry.entity), now);
+          entry.stillSince = held.stillSince;
+          if (held.commit) flushDrop(entry);
+          else remaining.push(entry);
+        }
+        pendingDrops = remaining;
+      }
       const walk = walkRef.current;
       const active = character;
       const vec3 = makeVec3;
@@ -1311,7 +1417,15 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       canvas.removeEventListener("pointerdown", onPointerDownForGrab);
       window.removeEventListener("pointerup", onPointerUpForGrab);
       window.removeEventListener("pointercancel", onPointerUpForGrab);
+      /*
+        退出第一人称 / 卸载：**立刻**把等待落定的几笔交出去。这一刻物理也停了
+        （2h 那个 effect 退订了 rigidbody 的 update ⇒ 物体停在原地），所以
+        "读到什么就落什么"与画面一致。顺序不能反：先 `releaseGrab()`（手上还抓着的
+        那个也变成一笔），再一起交出去。不这么做的话那几笔等不到下一帧，位置就丢了。
+      */
       releaseGrab?.();
+      for (const entry of pendingDrops) flushDrop(entry);
+      pendingDrops = [];
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("mousemove", onMouseMove);
@@ -1613,20 +1727,14 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
             文件名/"model.glb"），拿它去比 `asset.id`/`assetSlug` 比不中就会把"点中模型"当成"点空白"
             而清空选中——症状是**怎么点都选不中**（真机上扫 28 个点全落空，本机踩过）。
             做法：从命中实体往上找，看它属于哪一件**已挂载**的资产（`entry(id).entity` 是同一棵树）。
+            **解析器与第一人称抓取共用** `assetIdForEntity`（见该模块：两条入口给的实体层次不同，
+            双向包含的判据必须只有一份）。
           */
           const assets = assetsRef.current;
           const hitEntity = (hit as { entity?: unknown }).entity ?? null;
-          let assetId: string | null = null;
-          if (assets && hitEntity) {
-            for (const candidate of assets.ids()) {
-              const root = assets.entry(candidate)?.entity as { isDescendantOf?(node: unknown): boolean } | undefined;
-              if (!root) continue;
-              if (root === hitEntity || root.isDescendantOf?.(hitEntity) || (hitEntity as { isDescendantOf?(node: unknown): boolean }).isDescendantOf?.(root)) {
-                assetId = candidate;
-                break;
-              }
-            }
-          }
+          const assetId = assets
+            ? assetIdForEntity(assets.ids(), (id) => assets.entry(id)?.entity as IdentityNode | undefined, hitEntity)
+            : null;
           const asset = assetId ? props.assets.find((candidate) => candidate.id === assetId) : undefined;
           if (asset) props.onSelectAsset(asset as LibraryAsset, false);
           else props.onClearSelection();

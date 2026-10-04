@@ -28,6 +28,7 @@ import { OBJECT_ANGULAR_DAMPING, OBJECT_LINEAR_DAMPING, boxColliderFromBounds } 
  */
 export function PhysicalAsset({
   name,
+  assetId,
   transform,
   bounds,
   onObject,
@@ -35,6 +36,15 @@ export function PhysicalAsset({
 }: {
   /** 与资产 `<group>` 同名的节点名：整场景检查按 `asset:` 前缀取景，改名会让检查图丢内容 */
   name?: string;
+  /**
+   * 稳定资产 id，写进刚体的 `userData`。
+   *
+   * 存在的唯一理由是**准星抓取要能反查"抓到的是哪一件"**：rapier 的射线只给碰撞体，
+   * 而"抓起来 = 在第三人称选中它"要靠这个 id 回到 `LibraryAsset`（见 `grabSelection.ts`）。
+   * 别改成从节点名 `asset:<id>` 里解字符串——名字是给整场景检查取景用的展示字段，
+   * 改名的代价不该是"选中失灵"（PC 侧就踩过按名字比身份的坑）。
+   */
+  assetId: string;
   /** 该资产的摆放（与 `scenePlacement` 同语义：position 是包围盒中心） */
   transform: AssetTransform;
   /** 已渲染模型的**紧**包围盒（局部坐标，未乘摆放缩放）；未加载完时为 null */
@@ -69,9 +79,20 @@ export function PhysicalAsset({
       scale={transform.scale}
       linearDamping={OBJECT_LINEAR_DAMPING}
       angularDamping={OBJECT_ANGULAR_DAMPING}
+      /*
+        与 image-blaster 的 `SceneObject` **逐项对齐**（抓取手感照抄它的，见 `useObjectGrab`）。
+        `additionalSolverIterations` 不是可有可无：抓取用的球形关节是**位置级硬约束**，
+        默认迭代下它和地面接触会解不干净、形成极限环。同一场景台架
+        （`.tmp/grab-bench/iterations.mjs`，手压进地面 50 mm）读数：
+        0 次额外迭代 ⇒ y 峰峰 **6.07 mm**（肉眼可见的抖）；4 次 ⇒ **0.97 mm**（0.6 px，看不见）。
+        8 次是 0.76 mm，收益已经不大了，所以照抄它的 4。
+      */
+      additionalSolverIterations={4}
       // 甩出去的物体会很快（抓取限速 5 m/s），开 CCD 免得穿墙
       ccd
       canSleep
+      // 准星抓取靠它反查资产（见 assetId 的说明）；角色刚体是 `{ character: true }`，两者互不干扰
+      userData={{ assetId }}
       transformState={(state) => {
         // 建好就睡：物理没在跑时保持"编辑器里摆在哪就是哪"，
         // 进了第一人称也只在你碰到它时才醒来。

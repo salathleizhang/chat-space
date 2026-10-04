@@ -529,6 +529,46 @@ bun run check                        # typecheck + test + build
 退出时 `applyRig` 把相机还给台架并**清空按键**。真机验过：真实 `W` → `steps 90`、z 9.67→5.18、高度 1.6；
 可信鼠标 → 偏航 0.058→0.850。沙箱拿不到真锁，判据走 `__PC_VIEWPORT_FORCE_LOCK__` + 真实键鼠。
 
+**抓取 = 选中（两版同一口径，2026-10-04）**：第一人称准星**抓住一件模型就等于在第三人称点中它**
+（`selectedIds` 写进去、右侧栏出现它），松手**不**取消选中。three 侧靠 `PhysicalAsset` 写进刚体的
+`userData.assetId` + `grabSelection`（**别**从节点名 `asset:<id>` 解字符串），PC 侧靠
+`assetIdentity.assetIdForEntity`——**点选与抓取共用同一个解析器**（两条入口给的实体层次不同：
+抓取给资产根、点选给某块 mesh，判据要双向包含）。**解析不出资产时什么都不做**：那一下点击的
+本意是"抓"，没抓到不等于"点空白"，**不清空**原选中。
+
+**抓住的东西松手后落盘（同一批，2026-10-04）**：**不是松手那一瞬**——那时物体还带着甩出速度在半空。
+判据是"刚体睡着或两个速度都小于阈值"，**并且连续静够 150 ms**（`shared/lib/settleHold.ts`，两版共用），
+**5 s 封顶**；"速度小"单独不够用：端在半空停下鼠标再松开时关节把它吊住、速度≈0，
+照那一刻落盘就是在半空里记摆放。两侧都在**物理步/帧回调**里查（不用 `setTimeout`），
+hook 卸载时先 `release()` 再立刻 flush（那一刻物理已暂停，"读到什么就落什么"与画面一致）。
+"动过没有"必须用**位置距离 + 四元数夹角**，**不要逐分量比欧拉**（欧拉多对一，会把同一姿态的另一种
+写法判成动过 ⇒ 抓一下又放开也留一条撤销步骤）。three 用 `widgets/Viewport/grabCommit.ts`（欧拉转换与
+`TransformGizmo.decomposePlacement` 同源：弧度 + XYZ），PC 用 `playcanvas/grabDrop.ts` +
+`readEntityPlacement`。细节、残余与"推动仍不落盘"见 `PHYSICS.md` 第 8 节。
+
+**第一人称的搬运 = 照抄 image-blaster（2026-10-04 定案；改之前先读 `PHYSICS.md` 第 9 节）**：
+
+实现是原仓库 `/Users/junwei/Documents/GitHub/gabo/image-blaster/app/src/modules/scene/useObjectGrab.ts`
+（**本机就有，先读它再改**）。四条必须成套，缺一条就出问题：
+
+1. **球形关节 + 抓取点（命中的表面点）**：`JointData.spherical(零, 局部化的命中点)`。手感来自
+   "点锁死、姿态自由"（跟手滞后 0 mm，物体绕抓取点自转 93° = 晃 + 坠）。
+2. **每个物理步前后各钳一次**线速/角速（5 / 10）：`useBeforePhysicsStep` **和** `useAfterPhysicsStep`。
+   我们原来只钳步前。
+3. **物体刚体带 `additionalSolverIterations={4}`**（`PhysicalAsset`）。我们原来没有：同一场景
+   压地抖动 **6.07 mm → 0.97 mm**（约 4 px → 0.6 px）。这两条是当初"一顿一顿"的真正原因，
+   不是关节本身。
+4. 松手顺序同它：removeJoint → setLinvel(releaseVelocity) → clamp → wakeUp。
+
+**别自己发明**：弹簧搬运（橡皮筋滞后）、速度搬运 + 竖直只上不下（刚性平移、无物理感）都被
+用户否掉了，读数留档在 `PHYSICS.md` 第 9 节。真机结构判据：拖动时物体 **98.6% 的帧都在动**、
+最长停 1 帧 ⇒ 不是节拍问题；`frameloop="demand"` + `updateLoop="independent"` 是本仓库的
+既有架构决定（image-blaster 用 always + follow），**没动**。
+
+**没改的两处**：世界 collider 的 trimesh 内部边（`FIX_INTERNAL_EDGES`：75.8° → 0.0°）；
+PC 侧同一口径（那边还是 `JointComponent` 的 `ball`，且锚点摆在命中点上 ⇒ 一抓会窜半个身位）。
+排查时先排除掉的三条：落盘（按住期间零写盘）、帧率、物理步开销（p50 0.007 ms）。
+
 ### 诊断口（`viewportDebug.ts`）
 
 10 个 `window.__PC_VIEWPORT_*` 活口**只在开发构建 + `?pcDebug=1` 时**才装（原先无条件装、

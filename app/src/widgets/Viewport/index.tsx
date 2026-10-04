@@ -31,6 +31,8 @@ import type { CameraTarget } from "./CameraRig";
 import { CloseupInspectionRig } from "./CloseupInspectionRig";
 import { FirstPersonRig } from "./FirstPersonRig";
 import { focusPoseFor, type FocusPose } from "./focusPose";
+import { dropPoseMoved, placementFromBodyPose, type BodyPose } from "./grabCommit";
+import { findGrabbedAsset } from "./grabSelection";
 import { ModelMesh } from "./ModelMesh";
 import { PlayCanvasViewport } from "./PlayCanvasViewport";
 import { LAYOUTS, gridTemplateFor, type CameraKind, type LayoutMode, type Projection } from "./paneLayouts";
@@ -127,8 +129,21 @@ const SKY_BACKDROP_RADIUS = 200;
 const FIRST_PERSON_LOCK_SELECTOR = "[data-viewport-first-person-lock]";
 
 /** 准星抓取没有界面，只是把 hook 挂进 `<Physics>` 里（hook 不能条件调用，所以包一层组件）。 */
-function FirstPersonGrab({ enabled }: { enabled: boolean }) {
-  const grab = useObjectGrab({ enabled });
+function FirstPersonGrab({
+  enabled,
+  onGrabAsset,
+  onDropAsset,
+}: {
+  enabled: boolean;
+  /**
+   * 抓到一件资产时的回调（**等价于第三人称里点中它**）：上层据此写 `selectedIds`，
+   * 右侧栏随之打开，"拿起来"就顺带成了"选中它方便编辑"。
+   */
+  onGrabAsset?: (assetId: string) => void;
+  /** 抓住的东西**落定**（停下）之后的姿态；上层据此写回摆放（见 `grabCommit.ts`） */
+  onDropAsset?: (assetId: string, pose: BodyPose) => void;
+}) {
+  const grab = useObjectGrab({ enabled, onGrab: onGrabAsset, onDrop: onDropAsset });
   /*
     诊断口要调用**同一份**函数（含 `enabled` 与射线判据），而不是复制一份逻辑：
     复制出来的那份测过也不代表产品路径对。见 physicsDebug.ts 的纪律 ②。
@@ -286,6 +301,7 @@ const PlacedAsset = memo(function PlacedAsset({
     return (
       <PhysicalAsset
         name={`asset:${asset.id}`}
+        assetId={asset.id}
         transform={placement}
         bounds={bounds}
         onObject={register}
@@ -642,6 +658,44 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
     [onFocusAsset],
   );
   /**
+   * 第一人称里**抓起一件模型 = 在第三人称里点中它**（用户要的口径：拿起来就该出现在右侧栏，
+   * 好接着编辑）。走同一个 `handleSelectAsset`，所以"选中"只有一套语义，不会出现
+   * "抓起来选中的那个"和"点选的那个"在别处行为不同。
+   *
+   * 解析不出资产（角色刚体、世界里的固定物、已删除资产留下的刚体）时**什么都不做**：
+   * 第一人称里那一下点击的本意是"抓"，没抓到不等于"点空白清空选中"。判据同 PC 侧。
+   */
+  const handleGrabAsset = useCallback(
+    (assetId: string) => {
+      const asset = findGrabbedAsset(placedAssets, assetId);
+      if (asset) handleSelectAsset(asset, false);
+    },
+    [handleSelectAsset, placedAssets],
+  );
+  /**
+   * 抓起的东西**落定之后写回摆放**（scene.json）：抓起来挪到哪儿，松手就落在哪儿，
+   * 右侧栏的数字从此与它一致 —— 否则"抓起来编辑"是假的：栏里显示旧摆放，
+   * 改一个数就把物体**拉回**旧位置。
+   *
+   * 两条判据都在 `grabCommit.ts` 里（纯函数、带单测）：
+   * ① 姿态由**落定**那一刻决定（不是松手那一瞬，物体会飞一段）；
+   * ② 真的动过才提交（位置距离 / 四元数夹角），抓一下又放开不在历史里留一步。
+   *
+   * `mode` 传 `"translate"`：这一步同时改了位置与姿态，而历史的 `mode` **只用来写步骤文案**
+   * （`useSceneHistory` 里就这一处用途），抓取的手势主体是"搬"。
+   */
+  const handleGrabDrop = useCallback(
+    (assetId: string, pose: BodyPose) => {
+      if (!onTransformCommit) return;
+      const asset = findGrabbedAsset(placedAssets, assetId);
+      const current = layout.get(assetId);
+      if (!asset || !current) return;
+      if (!dropPoseMoved(current, pose)) return;
+      onTransformCommit({ [assetId]: placementFromBodyPose(pose, current.scale) }, "translate");
+    },
+    [layout, onTransformCommit, placedAssets],
+  );
+  /**
    * "点了空白处" 的判定。R3F 只保证"这次点击没打中任何可拾取对象"，而 Canvas 的
    * `eventSource` 是整个视口容器——**叠在画布上的 chrome（右下角控制簇、窗格角标按钮）
    * 被点到时同样会冒泡进来并算作没打中**，照单全收的话点一下"移动/旋转/缩放"就把选中
@@ -826,7 +880,11 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
               <>
                 <FirstPersonView />
                 <FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} spawn={firstPersonSpawn} />
-                <FirstPersonGrab enabled={physicsEnabled} />
+                <FirstPersonGrab
+                  enabled={physicsEnabled}
+                  onGrabAsset={handleGrabAsset}
+                  onDropAsset={handleGrabDrop}
+                />
               </>
             )}
             </Physics>
