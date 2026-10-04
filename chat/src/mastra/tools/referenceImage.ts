@@ -51,6 +51,7 @@ import { PlateInputObjectSchema, PlateInputSchema, runPlateGeneration } from "./
 import { requireProject } from "./projectTools";
 import { listSourceReferences } from "./referenceResolution";
 import {
+  conversationImagePaths,
   currentImagePaths,
   optionalContextString,
   requireCurrentProject,
@@ -942,21 +943,41 @@ export const generateReferenceImagesTool = createTool({
 
 const USER_SOURCE_EXT_RE = /\.(?:png|jpe?g|webp)$/i;
 
+/**
+ * 部分 OpenAI 兼容模型会把"我没这个参数"输出成字符串 `"null"` 或 `"undefined"`。
+ *
+ * 2026-10-05 实测：模型调 attach-source-image 时传了 `image: "null"`，Zod 的
+ * `.optional()` 拦不住（它收到的是一个合法字符串），于是被当成一个图路径去做扩展名
+ * 校验，报出「不是支持的图片格式（png/jpg/webp）：null」——错误信息指向格式，而真正的
+ * 问题是"参数不该有这个值"。所以在这里归一成"没传"：调用方要的行为本来就是省略。
+ *
+ * `assetSlug` 也要过这一关：slug 允许纯小写字母，`"null"` 是个**合法 slug**，
+ * 不挡就会凭空建出一个叫 null 的资产。
+ */
+function nullishToUndefined(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return /^(null|undefined|none|nil)$/i.test(trimmed) ? undefined : value;
+}
+
+const OptionalSlugInput = z.preprocess(nullishToUndefined, SlugSchema.optional());
+const OptionalTextInput = z.preprocess(nullishToUndefined, z.string().min(1).optional());
+
 export const AttachSourceImageParamsSchema = z.object({
   projectSlug: SlugSchema,
   /**
-   * 要绑定的图（库内逻辑路径）。省略时使用**本条消息附带的那张图**——那是唯一能证明
-   * "这张图是用户刚给的"的来源，也是默认档。显式给出时必须落在本项目 `source/` 里、
-   * 且是用户原图（不是 AI 产物）。
+   * 要绑定的图（库内逻辑路径）。省略时服务端按"本条消息附带的 > 整场对话里唯一的一张"
+   * 自己取——**推荐省略**，模型不需要（也往往不知道）这个路径。
+   * 显式给出时必须落在本项目 `source/` 里、且是用户原图（不是 AI 产物）。
    */
-  image: LogicalPathSchema.optional(),
+  image: z.preprocess(nullishToUndefined, LogicalPathSchema.optional()),
   /**
    * 省略 = 只确认这张图可用，不登记任何目标；那样 `start-3d-batch` 找不到它，
    * 所以正常调用都要带上。
    */
-  assetSlug: SlugSchema.optional(),
-  assetName: z.string().min(1).optional(),
-  assetIntent: z.string().min(1).optional(),
+  assetSlug: OptionalSlugInput,
+  assetName: OptionalTextInput,
+  assetIntent: OptionalTextInput,
 });
 export type AttachSourceImageParams = z.input<typeof AttachSourceImageParamsSchema>;
 
@@ -980,32 +1001,41 @@ const ATTACH_UNBOUND_NOTE =
 /**
  * 解析"要绑定哪张图"。
  *
- * 默认档是本条消息附带的唯一一张图——服务端自己从请求里取，Agent 指不了别的历史文件；
- * 显式路径则要求落在本项目 `source/` 内且没有成功侧写（= 用户原图）。
+ * 优先级：① 显式 `image` ② 本条消息附带的图（恰好一张）③ 整场对话里唯一的一张用户附图。
+ *
+ * ②③ 由**服务端**从请求里取，所以模型既不用知道路径、也指不了别的历史文件。加 ③ 是因为
+ * 用户的指代是"我发你的那张"而不是"这一条消息里的那张"：他常常先发图，再单独补一句
+ * 「不要生成参考图，直接用我发你的这张」——那条消息本身没有图，2026-10-05 实测工具因此
+ * 报"本条消息没有附带图片"，模型转而去猜路径（`"null"`、裸文件名、`source/` 前缀，全错）。
+ *
+ * 显式路径要求落在本项目 `source/` 内且没有成功侧写（= 用户原图）。
  */
 export async function resolveAttachImage(
   storage: AssetStorage,
   projectSlug: string,
   explicit: string | undefined,
   currentImages: string[],
+  conversationImages: string[] = [],
 ): Promise<string> {
   if (!explicit) {
-    if (currentImages.length === 0) {
+    const candidates = currentImages.length > 0 ? currentImages : conversationImages;
+    if (candidates.length === 0) {
       throw new ChatServiceError(
-        "本条消息没有附带图片，无法直接把原图当作参考图；请让用户重新发送图片，" +
-          "或用 generate-reference-images 生成一张",
+        "这场对话里还没有用户附带的图片，无法把原图当作参考图；" +
+          "请让用户重新发送图片，或用 generate-reference-images 生成一张",
         400,
         "input_image_missing",
       );
     }
-    if (currentImages.length > 1) {
+    if (candidates.length > 1) {
       throw new ChatServiceError(
-        `本条消息附带 ${currentImages.length} 张图片，请用 image 参数指名要用哪一张`,
+        `这场对话里用户附带了 ${candidates.length} 张图片，请用 image 参数指名要用哪一张：` +
+          `${candidates.join("、")}`,
         400,
         "input_image_ambiguous",
       );
     }
-    return currentImages[0]!;
+    return candidates[0]!;
   }
 
   if (!USER_SOURCE_EXT_RE.test(explicit)) {
@@ -1016,7 +1046,14 @@ export async function resolveAttachImage(
     );
   }
   if (!(await storage.exists(explicit))) {
-    throw new ChatServiceError(`参考图不存在：${explicit}`, 404, "input_image_missing");
+    throw new ChatServiceError(
+      `参考图不存在：${explicit}。请原样使用用户上传图片的完整逻辑路径` +
+        (conversationImages.length > 0
+          ? `（这场对话里的图片是：${conversationImages.join("、")}）`
+          : ""),
+      404,
+      "input_image_missing",
+    );
   }
   const sourceDir = projectSourceDir(projectSlug);
   if (!explicit.startsWith(`${sourceDir}/`)) {
@@ -1046,6 +1083,7 @@ export async function runAttachSourceImage(
   storage: AssetStorage,
   rawParams: AttachSourceImageParams,
   currentImages: string[] = [],
+  conversationImages: string[] = [],
 ): Promise<AttachSourceImageResult> {
   const params = AttachSourceImageParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
@@ -1054,6 +1092,7 @@ export async function runAttachSourceImage(
     params.projectSlug,
     params.image,
     currentImages,
+    conversationImages.length > 0 ? conversationImages : currentImages,
   );
 
   if (!params.assetSlug) return { image, note: ATTACH_UNBOUND_NOTE };
@@ -1086,9 +1125,10 @@ export const attachSourceImageTool = createTool({
   id: "attach-source-image",
   description:
     "把**用户上传的原图**直接登记为 3D 生成的参考图——免费、本地、不调用任何供应商，**不需要用户同意**。" +
-    "用在「把这个/这张照片做成 3D 模型」这类请求上，并且这条消息本身带了图片时：图已经是用户给的输入，" +
+    "用在「把这个/这张照片做成 3D 模型」这类请求上，并且这场对话里用户发过图片时：图已经是用户给的输入，" +
     "不要再花钱生成一张参考图。**用户明确说了不要生成参考图、或要求直接用他给的那张图时，本工具是他的决定的唯一正确落点——照做，不要改换成先生成一张。**" +
-    "省略 image 即使用本条消息附带的图（必须只有一张）。" +
+    "**image 参数直接省略**：服务端自己取（本条消息附带的图，本条没带就取整场对话里唯一的那张）。" +
+    "用户先发图、再补一句「就用我发你的那张」时同样省略 image，**不要**传字符串 \"null\"，也**不要**自己拼 `source/` 前缀或裸文件名——路径猜错只会浪费一轮。" +
     "只接受用户上传的原图；AI 生成或编辑出来的参考图会被拒绝（那些走 start-3d-batch 的既有复用路径）。" +
     "只有传了 assetSlug 才会登记成待生成目标、start-3d-batch 才认得出它；目标已是资产就直接用它的 slug，建议同时给 assetName 与 assetIntent。" +
     "本工具不产生费用，但调用之后的 3D 生成仍然要先用 ask-user 取得付费同意，并把「直接使用你上传的原图」和它的风险写进卡片让用户拍板。" +
@@ -1099,5 +1139,6 @@ export const attachSourceImageTool = createTool({
       getAssetStorage(),
       { ...input, projectSlug: requireCurrentProject(context) },
       currentImagePaths(context),
+      conversationImagePaths(context),
     ),
 });

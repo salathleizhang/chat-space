@@ -67,7 +67,26 @@ export function optionalContextLlm(
 export function currentImagePaths(
   context: ToolContextLike | undefined,
 ): string[] {
-  const value = readContextValue(context, "currentImagePaths");
+  return readImagePathList(context, "currentImagePaths");
+}
+
+/**
+ * 整场对话里用户附带的图片（服务端从请求历史里算好）。
+ *
+ * 与 `currentImagePaths` 的区别只在"本条消息"与"这场对话"：用户先发图、再补一句
+ * 「就用我发你的那张」时，本条消息没有图，只有这里能找到。
+ */
+export function conversationImagePaths(
+  context: ToolContextLike | undefined,
+): string[] {
+  return readImagePathList(context, "conversationImagePaths");
+}
+
+function readImagePathList(
+  context: ToolContextLike | undefined,
+  key: string,
+): string[] {
+  const value = readContextValue(context, key);
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
 }

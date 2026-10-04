@@ -8,6 +8,13 @@ export interface RunKeys {
   llm?: LlmConfig;
   /** 最新一条用户消息实际附带的图片路径；供参考图工具做硬边界校验。 */
   currentImagePaths?: string[];
+  /**
+   * 本轮请求里**整场对话**中用户附带的图片（按出现顺序去重）。
+   *
+   * 用户说「我发你的那张图」时指代的是这场对话，不是"这一条消息"：他经常先发图、
+   * 再单独补一句"就用这张"。只看 `currentImagePaths` 会让那种追问拿不到任何图。
+   */
+  conversationImagePaths?: string[];
   /** 最新用户文本明确要求把附图提取/生成成 3D 资产。 */
   referenceAnalysisAllowed?: boolean;
   /** AgentDock 当前图片生成模型；天空盒编辑等工具直接消费，不暴露为工具参数。 */
@@ -35,6 +42,7 @@ export function buildRequestContext(keys: RunKeys): RequestContext {
   if (keys.projectSlug) ctx.set("projectSlug", keys.projectSlug);
   if (keys.llm) ctx.set("llm", keys.llm);
   if (keys.currentImagePaths) ctx.set("currentImagePaths", keys.currentImagePaths);
+  if (keys.conversationImagePaths) ctx.set("conversationImagePaths", keys.conversationImagePaths);
   if (keys.referenceAnalysisAllowed) ctx.set("referenceAnalysisAllowed", true);
   if (keys.imageGenerateModel) ctx.set("imageGenerateModel", keys.imageGenerateModel);
   if (keys.threeDModel) ctx.set("threeDModel", keys.threeDModel);

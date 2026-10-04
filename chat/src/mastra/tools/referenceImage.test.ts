@@ -825,7 +825,112 @@ describe("runAttachSourceImage", () => {
   test("本条消息没有附图且没显式指定 → 报错而不是静默拿项目的旧图", async () => {
     await expect(
       runAttachSourceImage(storage, { projectSlug: "attach-demo", assetSlug: "solo" }, []),
-    ).rejects.toThrow("没有附带图片");
+    ).rejects.toThrow("这场对话里还没有用户附带的图片");
+  });
+
+  /**
+   * 2026-10-05 用户第三次踩到的坑，逐条钉住：
+   * 「带图说：直接这张图提交」→「不带图说：我不要生成参考图，直接用**我发你的这张**来搞」。
+   * 第二条消息本身没有图，只认"本条消息"的工具拿到空数组就报错，模型只能猜路径。
+   */
+  test("本条消息没带图，但整场对话里唯一的一张就是用户说的那张 → 认得出来", async () => {
+    await createProject(storage, { name: "跨轮次指代", slug: "attach-earlier" });
+    const earlier = `${projectSourceDir("attach-earlier")}/0-earlier.png`;
+    await storage.writeBytes(earlier, PNG_BYTES);
+
+    // currentImages 为空 = 这一条消息没有附图；conversationImages 里只有他先前发的那张
+    const result = await runAttachSourceImage(
+      storage,
+      { projectSlug: "attach-earlier", assetSlug: "earlier-vase" },
+      [],
+      [earlier],
+    );
+
+    expect(result.image).toBe(earlier);
+    const candidates = await readJson(
+      storage,
+      projectCandidatesFile("attach-earlier"),
+      CandidateRegistrySchema,
+    );
+    expect(candidates.objects[0]?.sourceImages).toEqual([earlier]);
+  });
+
+  test("对话里有不止一张 → 要求指名，不替他挑", async () => {
+    await expect(
+      runAttachSourceImage(storage, { projectSlug: "attach-earlier", assetSlug: "x" }, [], [
+        "projects/attach-earlier/source/0-a.png",
+        "projects/attach-earlier/source/1-b.png",
+      ]),
+    ).rejects.toThrow("指名要用哪一张");
+  });
+
+  test("本条消息带了图时优先用本条那张，不被对话里的旧图抢走", async () => {
+    await createProject(storage, { name: "本条优先", slug: "attach-priority" });
+    const oldOne = `${projectSourceDir("attach-priority")}/0-old.png`;
+    const fresh = `${projectSourceDir("attach-priority")}/1-fresh.png`;
+    await storage.writeBytes(oldOne, PNG_BYTES);
+    await storage.writeBytes(fresh, PNG_BYTES);
+
+    const result = await runAttachSourceImage(
+      storage,
+      { projectSlug: "attach-priority", assetSlug: "picked" },
+      [fresh],
+      [oldOne, fresh],
+    );
+    expect(result.image).toBe(fresh);
+  });
+
+  /**
+   * OpenAI 兼容模型会把"我没这个参数"输出成字符串 `"null"`。Zod 的 `.optional()` 拦不住
+   * （收到的是合法字符串），旧代码于是把它当路径去校验扩展名，报出
+   * 「不是支持的图片格式（png/jpg/webp）：null」——错误指向格式，真问题却是参数不该有值。
+   * `assetSlug` 更危险：`"null"` 是个**合法 slug**，不挡就会真的建出一个叫 null 的资产。
+   */
+  test('把 "null" / "undefined" 当成"没传"，而不是当成路径或 slug', async () => {
+    await createProject(storage, { name: "空值归一", slug: "attach-null" });
+    const uploaded = `${projectSourceDir("attach-null")}/0-photo.png`;
+    await storage.writeBytes(uploaded, PNG_BYTES);
+
+    const result = await runAttachSourceImage(
+      storage,
+      {
+        projectSlug: "attach-null",
+        assetSlug: "real-slug",
+        assetName: "null",
+        assetIntent: "undefined",
+        image: "null",
+      },
+      [uploaded],
+      [uploaded],
+    );
+
+    expect(result.image).toBe(uploaded);
+    const candidates = await readJson(
+      storage,
+      projectCandidatesFile("attach-null"),
+      CandidateRegistrySchema,
+    );
+    // "null"/"undefined" 没有被当成名字，落到 slug 派生的兜底名上
+    expect(candidates.objects[0]).toMatchObject({
+      slug: "real-slug",
+      name: "real slug",
+      description: "real slug",
+      sourceImages: [uploaded],
+    });
+    // 没有凭空建出一个叫 null 的资产
+    expect(await storage.exists(assetIdentityFile("attach-null", "null"))).toBe(false);
+  });
+
+  test("显式路径不存在时，错误里把这场对话的图列出来，省得模型接着猜", async () => {
+    const known = `${projectSourceDir("attach-demo")}/0-photo.png`;
+    await expect(
+      runAttachSourceImage(
+        storage,
+        { projectSlug: "attach-demo", assetSlug: "x", image: "0-photo.png" },
+        [],
+        [known],
+      ),
+    ).rejects.toThrow(known);
   });
 
   test("本条消息多张图 → 要求指名，不替用户挑", async () => {

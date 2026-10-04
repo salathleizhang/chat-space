@@ -165,6 +165,45 @@ export function hasExplicitUploadAsReferenceIntent(message: ChatMessage): boolea
 }
 
 /**
+ * 本轮请求里**整场对话**中用户附带的图片，按出现顺序去重。
+ *
+ * 为什么不能只看最新一条消息（2026-10-05 用户第三次踩到的坑）：他那两轮是
+ * 「带图说：直接这张图提交」→「不带图说：我不要生成参考图，直接用**我发你的这张**来搞」。
+ * 第二条消息本身没有图，于是只认"本条消息"的工具拿到空数组，报"本条消息没有附带图片"，
+ * 模型只能自己猜路径（实测它依次试了字符串 `"null"`、裸文件名 `0-xxx.png`、
+ * `source/0-xxx.png`，全错）。**用户说的"我发你的那张"指的是这场对话里的图，
+ * 不是"这一条消息里的图"** —— 判据必须跟着他的指代走。
+ *
+ * 只看 `request.messages`（客户端带来的本会话历史），所以不会把上一场会话的图算进来。
+ */
+export function conversationImagePaths(messages: ChatMessage[]): string[] {
+  const paths: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "user" || typeof message.content === "string") continue;
+    for (const part of message.content) {
+      if (part.type === "image" && !paths.includes(part.path)) paths.push(part.path);
+    }
+  }
+  return paths;
+}
+
+/**
+ * "用户说的那张图"是哪一张。
+ *
+ * 本条消息附带的（恰好一张）优先——他刚发的就是他要说的；本条没有附图时落到整场对话，
+ * 只有对话里也**恰好一张**才敢认定。两处都不唯一时返回 undefined：那是该由用户点名
+ * 的情况，替他从多张里挑一张正是这套纪律一直在防的事。
+ */
+export function referencedUploadImage(
+  currentImagePaths: string[],
+  conversationImages: string[],
+): string | undefined {
+  if (currentImagePaths.length > 1) return undefined;
+  if (currentImagePaths.length === 1) return currentImagePaths[0];
+  return conversationImages.length === 1 ? conversationImages[0] : undefined;
+}
+
+/**
  * "用户要求直接用附带的原图"这条上下文里要说的话。
  *
  * 抽成纯函数是为了能单独测：这段话的作用是**压住模型自己的档位判断**，措辞一旦被
@@ -176,11 +215,13 @@ export function uploadAsReferenceContextLine(
   threeDProvider: string | undefined,
 ): string {
   return (
-    `**用户明确要求直接把它附带的那张原图当参考图**（${imagePath}）。` +
+    `**用户明确要求直接用它发的那张原图当参考图**（${imagePath}）。` +
     "用户已经表态选哪张图，**这不是技术选择而是产品选择**：用 attach-source-image " +
     "把它登记为参考图即可（免费、本地、不需要同意），**不要**因为构图、背景太杂、" +
     "机位斜侧视、背面没有信息之类的原因换成 generate-reference-images 先生成一张。" +
     "这些风险写进 ask-user 卡片的 details 让他知情并拍板，**但不要替他改主意**。" +
+    `调用时把这个完整路径传进 image（或干脆省略 image，服务端会取同一张）；` +
+    '不要传字符串 "null"，也不要自己拼 source/ 前缀或裸文件名。' +
     (threeDProvider === "hi3d-volc"
       ? "例外：他选的渠道是数美 Hi3D，它只吃 Seedream 产物的公网 URL，原图喂不进去；" +
         "如实说明并请他要么换渠道、要么同意先出一张。"
@@ -413,11 +454,13 @@ export function buildChatRequestContext(
   request: ChatStreamRequest,
   currentImagePaths: string[],
   referenceAnalysisAllowed: boolean,
+  conversationImages: string[] = [],
 ) {
   return buildRequestContext({
     projectSlug: request.projectSlug,
     llm: request.llm,
     currentImagePaths,
+    conversationImagePaths: conversationImages,
     referenceAnalysisAllowed,
     worldLabsApiKey: request.worldLabsApiKey,
     tripo3dApiKey: request.tripo3dApiKey,
@@ -471,13 +514,16 @@ export async function* streamChat(
   );
   const currentPlan = request.plan ?? state.plan;
   const threeDSelection = threeDModelFor(request.threeDModel);
+  const conversationImages = conversationImagePaths(request.messages);
   /*
-    只在"本条消息恰好带一张图"时判：多张图时该由用户点名用哪张，不能替他挑一张
-    （attach-source-image 自己也会拒绝多图）。续跑轮没有新的用户消息，
-    `currentImagePaths` 本来就为空，这里自然不触发。
+    "用户说的那张图"：本条消息附带的优先，本条没带图时落到整场对话里唯一的一张。
+    续跑轮不算——它没有新的用户输入，这里按"没有用户消息"处理（与 currentImagePaths 同源）。
   */
+  const referencedUpload = request.resume
+    ? undefined
+    : referencedUploadImage(currentImagePaths, conversationImages);
   const uploadedAsReference =
-    currentImagePaths.length === 1 &&
+    referencedUpload !== undefined &&
     latestUserMessage !== undefined &&
     hasExplicitUploadAsReferenceIntent(latestUserMessage);
   const assetNamesBySlug = new Map(
@@ -532,12 +578,21 @@ export async function* streamChat(
       ...(currentPlan ? [planContextText(currentPlan)] : []),
       "若用户消息带有“本条消息明确选中的资产”，它们是该条指令的主要目标，代词优先指向它们；" +
         "未带资产附件时，再根据完整资产名录和对话判断，无法唯一确定才向用户确认。",
-      ...(uploadedAsReference
+      ...(uploadedAsReference && referencedUpload
+        ? [uploadAsReferenceContextLine(referencedUpload, threeDSelection?.provider)]
+        : []),
+      /*
+        把"这场对话里用户发过哪些图、各自的完整逻辑路径"明确列出来。少了这一条，模型
+        只能看到 `源图：`（那是**项目级**的 source/ 清单，混着上一场会话的上传和 AI
+        生成的参考图），于是它会照着猜——2026-10-05 实测它依次猜了裸文件名与
+        `source/` 前缀两种写法，全都不存在。
+      */
+      ...(conversationImages.length > 0
         ? [
-            uploadAsReferenceContextLine(
-              currentImagePaths[0]!,
-              threeDSelection?.provider,
-            ),
+            `本场对话里用户附带的图片（按出现顺序）：${conversationImages.join("、")}。` +
+              "用户说「我发你的那张图」时指的就是这里面的图；要指定其中一张就把**上面这个" +
+              "完整路径**原样传给工具，不要自己拼 `source/` 前缀或裸文件名，也不要传字符串 " +
+              '"null"。本条消息没带图也照样能用这张（attach-source-image 会自己取）。',
           ]
         : []),
       ...(threeDSelection
@@ -572,6 +627,7 @@ export async function* streamChat(
       request,
       currentImagePaths,
       referenceAnalysisAllowed,
+      conversationImages,
     ),
   });
 

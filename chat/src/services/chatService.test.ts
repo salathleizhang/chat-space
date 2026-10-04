@@ -9,12 +9,14 @@ import {
   answerContextText,
   toAnswerMessage,
   buildChatRequestContext,
+  conversationImagePaths,
   hasExplicitReferenceAnalysisIntent,
   hasExplicitUploadAsReferenceIntent,
   imagePathsFromToolResult,
   listPendingGenerationTargets,
   planContextText,
   planFromToolResult,
+  referencedUploadImage,
   taskIdsFromToolResult,
   toResumeMessage,
   toolErrorMessage,
@@ -179,6 +181,9 @@ describe("hasExplicitUploadAsReferenceIntent", () => {
     expect(line).toContain("attach-source-image");
     expect(line).toContain("不要");
     expect(line).toContain("不要替他改主意");
+    // 2026-10-05 实测模型传了字符串 "null"、又自己拼了 source/ 前缀与裸文件名，全错
+    expect(line).toContain('"null"');
+    expect(line).toContain("source/");
     // 非 Hi3D 时不该出现渠道例外，否则模型会以为可以退回先生成
     expect(line).not.toContain("hi3d");
 
@@ -187,6 +192,50 @@ describe("hasExplicitUploadAsReferenceIntent", () => {
       "hi3d-volc",
     );
     expect(hi3d).toContain("原图喂不进去");
+  });
+});
+
+/**
+ * 用户的指代是「我发你的那张」，不是「这一条消息里的那张」。
+ *
+ * 2026-10-05 用户连着两轮：第一条带图说「直接这张图提交」，第二条**不带图**说
+ * 「我不要生成参考图，直接用我发你的这张来搞」。只认最新消息的判据在第二条上拿到空
+ * 数组，工具报"本条消息没有附带图片"，模型只能猜路径。这一组把判据钉在对话维度上。
+ */
+describe("conversationImagePaths / referencedUploadImage", () => {
+  const userWithImages = (paths: string[], text = "看图"): ChatMessage => ({
+    role: "user",
+    content: [
+      ...paths.map((path) => ({ type: "image" as const, path })),
+      { type: "text" as const, text },
+    ],
+  });
+
+  test("跨轮次收集用户附图：按出现顺序、去重、忽略助手消息", () => {
+    expect(
+      conversationImagePaths([
+        userWithImages(["projects/demo/source/0-a.png"]),
+        { role: "assistant", content: "好的" },
+        userWithImages(["projects/demo/source/1-b.png", "projects/demo/source/0-a.png"]),
+        { role: "user", content: "纯文本" },
+      ]),
+    ).toEqual(["projects/demo/source/0-a.png", "projects/demo/source/1-b.png"]);
+  });
+
+  test("本条消息的图优先；本条没带图才落到对话里唯一的那张", () => {
+    // 本条带了 → 用本条的（哪怕对话里还有旧图）
+    expect(referencedUploadImage(["fresh.png"], ["old.png", "fresh.png"])).toBe("fresh.png");
+    // 本条没带、对话里唯一 → 用那张（用户说「我发你的那张」就是它）
+    expect(referencedUploadImage([], ["only.png"])).toBe("only.png");
+  });
+
+  test("两处都不唯一时不猜", () => {
+    // 本条带了多张：该由用户点名
+    expect(referencedUploadImage(["a.png", "b.png"], ["a.png", "b.png"])).toBeUndefined();
+    // 本条没带、对话里有多张：同样不猜
+    expect(referencedUploadImage([], ["a.png", "b.png"])).toBeUndefined();
+    // 一张都没有
+    expect(referencedUploadImage([], [])).toBeUndefined();
   });
 });
 
