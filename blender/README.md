@@ -154,6 +154,48 @@ docker compose exec blender blender --background --python-expr \
 
 ---
 
+## 五之二、怎么验收（一条命令）
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+cd blender/docker && docker compose up -d          # 起容器（首次先 ./fetch-blender.sh）
+
+# 只验"能连上 + 能建模"（不需要项目）
+bun run --cwd chat scripts/verify-blender.ts
+
+# 连"导出进资产库"一起验（需要一个真实项目 slug，且容器挂着共享卷）
+BLENDER_WORKDIR=/workspace \
+CHATSPACE_BLENDER_WORKDIR="$HOME/ChatSpace/blender-work" \
+  bun run --cwd chat scripts/verify-blender.ts <项目slug>
+```
+
+**为什么要写成脚本而不是一段文档**：这条链有四层，而**每一层的失败症状都长得像另一层的失败**——
+
+| 层 | 失败症状 | 真凶在哪 |
+| --- | --- | --- |
+| 1 容器 | 日志停在 pulseaudio / `Unknown Service: custom_startup` | 看 §三 的 16–20 条 |
+| 2 端口通但连不上 | `source=error`（而 `nc` 说"通"——那是 Docker 代理接受的） | addon 只绑 localhost |
+| 3 连上了但执行不了 | `Connection closed before receiving any data` | socat 少了 `nodelay` |
+| 4 执行了但拿不到事实 | 面数全是 `undefined` | 误用了社区版 `get_scene_info` |
+
+脚本**逐层单独给结论**，哪层红了一眼就知道该往哪看，不用从一头猜。
+
+**看画面**：<http://localhost:6901>（口令 `chatspace`）—— 应该看到 XFCE 桌面和 Blender 窗口。
+
+**让 agent 真的动手**（走 UI）：
+
+```bash
+BLENDER_ENABLED=1 \
+BLENDER_WORKDIR=/workspace \
+CHATSPACE_BLENDER_WORKDIR="$HOME/ChatSpace/blender-work" \
+  bun run --cwd chat start
+```
+
+然后对 agent 说「用 Blender 做一块带孔的安装板」。`BLENDER_ENABLED=1` 才会把这 8 个工具注册给它
+（默认关闭——没有 Blender 时不该让它看见这些工具）。
+
+---
+
 ## 六、社区插件
 
 清单在 `patch/plugins.txt`。三种写法：`extension` / `addon` / `path`。
