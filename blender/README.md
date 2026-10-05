@@ -127,16 +127,23 @@ supabase_bucket = "telemetry-screenshots"
 
 ## 五、验证状态（诚实版）
 
+> 2026-10-05：下面这张表里有 5 条从 ❌ 变成了 ✅，**都是在这一天用容器 `csvol`
+> （`chatspace-blender:5.2.2-local`，KasmVNC 在 16901、中继在 9876）实机跑出来的**，
+> 判据与原始读数写在每条的括号里。没有变的那几条仍然没验，不要当已交付。
+
 | | 状态 |
 | --- | --- |
 | 传输层（MCP stdio、握手、白名单、超时、进程树回收） | ✅ 已验：23 条测试 + 对**真** `mcp-for-blender` 的实机验证 |
 | 工具层（8 个工具、小步闸门、路径映射） | ✅ 已验：21 条测试 |
-| chat/ 全量 | ✅ 542 pass / 0 fail |
-| 社区版 addon 能不能在 Blender **5.2** 上装并启用 | ❌ **未验**（本机还没装 Blender） |
-| `patch/install.py` 端到端 | ❌ **未验**（需要 Blender） |
-| Dockerfile 能不能构建出来 | ❌ **未验**（写的时候 Docker 守护进程没起） |
-| 容器里的 KasmVNC 启动集成 | ❌ **未验** —— `entrypoint.sh` 里标了 ⚠️ 的那几处是最可能要调的 |
-| "agent 小步建模 → 导出 → 进资产库"真实链路 | ❌ **未验** —— 这是最大的未知数 |
+| chat/ 全量 | ✅ 573 pass / 0 fail（2026-10-05） |
+| 社区版 addon 能不能在 Blender **5.2** 上装并启用 | ✅ 已验：握手回 `protocol_version 13` / `addon_version [1,8]`、`up_to_date: true`（第 1 层） |
+| `patch/install.py` 端到端 | ✅ 已验：容器里 `[chatspace] 自检通过`、`addon socket 9876 已就绪（等了 14s）`、`中继 9877 已就绪` |
+| Dockerfile 能不能构建出来 | ✅ 已验：`chatspace-blender:5.2.2-local` 构建成功并长跑（`docker ps` 里 Up） |
+| 容器里的 KasmVNC 启动集成 | ✅ 已验：画面能进 ChatSpace 界面（见 §五之三），且 WS 握手到 101 |
+| "agent 小步建模 → 导出 → 进资产库"真实链路 | ✅ 已验：验收脚本**四层全绿**，导出 1408 字节 / 12 面 / Blender 5.2.2 LTS 的 GLB 并发布成资产（第 4 层） |
+
+**仍然没验的**：多个 agent 会话并发驱动同一个 Blender（一条 socket、一份场景，互相抢）、
+以及把 `CHATSPACE_BLENDER_WORKDIR` 换成"从云沙箱取回字节"那条上云路径。
 
 **首次构建时优先核对三件事**：
 
@@ -216,6 +223,103 @@ CHATSPACE_BLENDER_WORKDIR="$HOME/ChatSpace/blender-work" \
 
 然后对 agent 说「用 Blender 做一块带孔的安装板」。`BLENDER_ENABLED=1` 才会把这 8 个工具注册给它
 （默认关闭——没有 Blender 时不该让它看见这些工具）。
+
+---
+
+## 五之三、在工作台里看 Blender 的画面
+
+工作台顶栏那个立方体按钮（`aria-label` 在 `Show Blender live view` / `Hide Blender live view`
+之间切换）会打开一个浮动窗，里面就是容器里那台 Blender——不用另开浏览器标签。
+组件是 `app/src/widgets/BlenderLive/`，显隐状态在 `pages/AppDashboard` 里（组合根）。
+
+### ⚠️ 直接 iframe 嵌 `https://127.0.0.1:16901/` 是**做不到**的（实测，别再试）
+
+| 试法 | 结果 |
+| --- | --- |
+| `<iframe src="https://127.0.0.1:16901/">`，全新 profile | 空白 + 破图。CDP：`net::ERR_CERT_AUTHORITY_INVALID`（**自签证书**，浏览器不为 iframe 弹"继续访问"） |
+| 同上 + `--ignore-certificate-errors` | **纯黑，一个请求都没有**。证书变量摘掉后剩下的就是 **HTTP Basic**：跨源 iframe 拿不到凭据，浏览器也不弹原生登录框（`user:pass@` 会被剥掉），请求就静默死在那里 |
+
+所以 `app/blenderLiveProxy.ts` 把这个页面**同源代理**进来（`/blender-live/`），三件事一次顺平：
+证书校验在 Node 侧关掉、Basic 凭据由代理注入、iframe 与页面同源。
+好消息是 KasmVNC **没有** `X-Frame-Options`、也没有 `frame-ancestors`，本身不禁止被嵌。
+
+### ⚠️ WebSocket 在 `/websockify`，而且落在**根**上
+
+这一条此前被记错过（旧注释断言"WS 在根路径 `/`，`/websockify` 只是个遗留的 noVNC 设置项"）。
+**那个结论是错的**，证据三条：
+
+1. 浏览器侧（CDP `Network.webSocketCreated`）打的是 `ws://<host>/websockify`，子协议 `binary`；
+2. 容器自己的日志说得最直白：
+   `websocket 55: /websockify request failed websocket checks, missing Sec-WebSocket-Origin header`
+   → `"GET /websockify" 404 180`。**404 是"缺 Origin 头"造成的，不是"没有这个路由"**——
+   这就是当初误判的来源：一条 404 看起来像"路由不存在"；
+3. 直接对上游补上 `Origin` 再打 `/websockify` → **101 Switching Protocols**，回 `Sec-WebSocket-Protocol: binary`。
+
+还有一个容易漏的点：页面在 `/blender-live/` 下，**socket 却在根上**。noVNC 是用
+`location.host` + 它自己的 `path` 设置（值就是 `websockify`，**它真的在用**）拼 URL 的，
+不带代理前缀。所以代理必须接管**根级** `/websockify`，只接管自己的前缀是不够的
+——症状是页面加载得出来、然后**永远停在「连接中…」**。
+
+### ⚠️ 看不到整个 Blender：真凶是**远端窗口没最大化**，不是缩放模式
+
+这个坑花了几轮才定位对，因为**它的症状和"缩放模式不对"长得一模一样**。两件事必须一起成立：
+
+**① 远端 Blender 必须最大化（容器侧，`docker/custom-startup.sh`）。**
+
+那个脚本原来写死 `--window-geometry 0 0 1440 900`，而容器桌面是 1024×768 ——
+**Blender 的窗口比屏幕还大**，所以无论浏览器这侧怎么缩放，你都只能看到它的一部分。
+实测窗口是 `1440x900+5+29`，桌面只有 1024×768。**只看桌面分辨率会误判成"缩放问题"**。
+
+判据是拿**窗口几何**和**桌面尺寸**对比（容器里 `DISPLAY=:1`）：
+
+```bash
+xdpyinfo | grep dimensions        # 桌面
+wmctrl -lG | grep -i blender      # 窗口：x y w h
+```
+
+```
+桌面 1024×768  →  Blender 1440×900   ❌ 窗口比屏幕大，永远只看得到一角
+最大化之后      →  Blender 1024×713   ✅ 满宽
+```
+
+**最大化的窗口会跟着桌面分辨率走，浮动窗不会**（实测：桌面改 1280×800，窗口立刻变 1280×745）。
+所以启动脚本里补一步 `wmctrl -x -r Blender.Blender -b add,maximized_vert,maximized_horz`，
+并轮询到窗口出现为止（`wmctrl` 找不到窗口时退出码是 1，正好当判据）。
+
+**② 这侧用 `resize=scale`：把整个桌面缩进小窗。**
+
+KasmVNC 的 **Scaling Mode 默认是 `None`**：帧缓冲按 **1:1 像素**铺，超出 iframe 的部分
+**直接裁掉**，所以默认只看得见桌面左上角。
+
+| iframe 参数 | 行为 |
+| --- | --- |
+| 不给（默认 `None`） | 1:1 铺，只看得见左上角 |
+| **`resize=scale`** | **整个桌面缩进小窗** —— 350×197 的框里能看清整条菜单栏、视口、属性栏、时间轴 ✅ |
+
+⛔ **不要用 `resize=remote`（远端改分辨率）。** 它能让字更大，但代价是**把容器里那块桌面压成
+这个小窗的尺寸**（实测 1024×768 → 700×392），Blender 也跟着被压成 700×337 的小窗 ——
+既不真实、界面也挤成一团。用户的原话是"远端 Blender 窗口的长宽也变得很小，这不合理"。
+
+> 若哪天真要走 `remote`，**必须同时给 `enable_hidpi=1`**：它是界面里那个 "Native Resolution"，
+> **默认 false**；不开它，Retina（DPR=2）上报的尺寸会偏小约 4/3，画布于是把桌面放大 1.5 倍去填，
+> 看着"能全看到了"其实字是糊的。这一条实测过（`resize=remote` → 桌面 466×261；
+> 加上 `enable_hidpi=1` → 700×392，与画布设备像素逐个对齐）。
+
+**口径**：远端保持正常分辨率 + Blender 最大化；这侧 `resize=scale` 整体缩放着全。
+代价是字跟着缩小（1024×768 → 约 0.26 倍），要看清就点窗口右下角的展开按钮。
+外壳尺寸（22rem / 展开 54rem / 16:9）与 `ModelPreviewWindow` 一致，不因这条而改。
+
+### 判据怎么取（别只截个图就说过）
+
+- **别用 `Page.captureScreenshot` 验收**：这一页上 WebGPU 视口一直在呈现新帧，合成器等不到
+  "稳定帧"，`fromSurface:false` / `clip` / `Page.startScreencast` 实测**全都超时**
+  （本机 load 当时 27–44，见 AGENTS.md 关于过载的警告）。改用系统级 `screencapture -l <窗口号>`
+  按窗口号抓，不看前台遮挡。取窗口号的小工具在 `.tmp/blender-live/window-id.swift`。
+- **可信点击要按对协议**：`Page.bringToFront` + `mousePressed(buttons:1)` /
+  `mouseReleased(buttons:0)`。少了 `buttons` 字段会点不动按钮，而**同一个坐标真人点是好的**
+  ——那会把探针的缺陷记成产品 bug。
+- **改动期间跑探针会被 HMR 骗**：编辑源码时 Vite 会整页重载，把刚点开的窗重置掉，
+  看起来像"点了没反应"。等热更新静下来再跑，或者对比 `el.click()` 的结果。
 
 ---
 
