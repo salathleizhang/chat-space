@@ -108,9 +108,41 @@ bpy.ops.wm.save_userpref()
 fi
 
 echo "[chatspace] 启动 Blender（DISPLAY=${DISPLAY:-未设置}）…"
-"$BLENDER" --window-geometry 0 0 1440 900 &
+# ⚠️ **初始窗口尺寸按桌面实际大小给，不要写死 1440×900。**
+# 写死的那一版在 1024×768 的桌面上开出一个**比屏幕还大**的窗口，画面上于是永远只能看到
+# 它的一部分 —— 工作台那个实时画面窗无论怎么调都"看不到整个 Blender"。见下面最大化那段。
+DESKTOP_SIZE="$(xdpyinfo 2>/dev/null | awk '/dimensions:/{print $2; exit}')"
+WIN_W="${DESKTOP_SIZE%x*}"
+WIN_H="${DESKTOP_SIZE#*x}"
+[[ "$WIN_W" =~ ^[0-9]+$ ]] || WIN_W=1024
+[[ "$WIN_H" =~ ^[0-9]+$ ]] || WIN_H=768
+"$BLENDER" --window-geometry 0 0 "$WIN_W" "$WIN_H" &
 BLENDER_PID=$!
-echo "[chatspace] Blender pid=$BLENDER_PID"
+echo "[chatspace] Blender pid=$BLENDER_PID（初始窗口 ${WIN_W}×${WIN_H}，桌面 ${DESKTOP_SIZE:-未知}）"
+
+# ---- 把 Blender 窗口最大化 -------------------------------------------------
+#
+# **这不是洁癖，是"画面能不能看全"的前提。** 浮动窗**不会**跟着桌面分辨率走，最大化的窗会。
+# 实测：桌面从 700×392 改成 1280×800，最大化的 Blender 立刻变成 1280×745；
+# 而没最大化时它一直停在 1440×900，屏幕上只露出左上角。
+#
+# 放在等 socket **之前**：它与 MCP 链路无关，失败也不该挡住后面。窗口是异步出现的，
+# 所以轮询到出现为止（wmctrl 找不到窗口时退出码是 1，正好当判据）。
+MAXIMIZED=0
+if command -v wmctrl >/dev/null 2>&1; then
+  for i in $(seq 1 30); do
+    if wmctrl -x -r Blender.Blender -b add,maximized_vert,maximized_horz >/dev/null 2>&1; then
+      MAXIMIZED=1
+      echo "[chatspace] Blender 窗口已最大化（第 ${i} 次尝试）"
+      break
+    fi
+    sleep 1
+  done
+fi
+if [[ "$MAXIMIZED" != "1" ]]; then
+  echo "[chatspace] 警告：没能最大化 Blender 窗口（缺 wmctrl，或窗口一直没出现）。" >&2
+  echo "[chatspace]       后果：实时画面里只能看到 Blender 窗口的一部分。" >&2
+fi
 
 # 等 addon socket。**这一步让"容器起来了"和"能被驱动了"变成两个可区分的状态**：
 # 编排层/客户端一连就是通的，不用自己重试；而如果它一直不通，日志里看得到。
