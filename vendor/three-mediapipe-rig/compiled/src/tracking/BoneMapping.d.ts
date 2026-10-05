@@ -1,0 +1,55 @@
+/**
+ * The bone mapping to use for the rig.
+ */
+export type BoneMap = {
+    faceMesh: string;
+    head: string;
+    hips: string;
+    neck: string;
+    torso: string;
+    armL: string;
+    forearmL: string;
+    armR: string;
+    forearmR: string;
+    thighL: string;
+    shinL: string;
+    footL: string;
+    toesL: string;
+    thighR: string;
+    shinR: string;
+    footR: string;
+    toesR: string;
+    handL: string;
+    index1L: string;
+    index2L: string;
+    index3L: string;
+    middle1L: string;
+    middle2L: string;
+    middle3L: string;
+    ring1L: string;
+    ring2L: string;
+    ring3L: string;
+    pinky1L: string;
+    pinky2L: string;
+    pinky3L: string;
+    thumb1L: string;
+    thumb2L: string;
+    thumb3L: string;
+    handR: string;
+    index1R: string;
+    index2R: string;
+    index3R: string;
+    middle1R: string;
+    middle2R: string;
+    middle3R: string;
+    ring1R: string;
+    ring2R: string;
+    ring3R: string;
+    pinky1R: string;
+    pinky2R: string;
+    pinky3R: string;
+    thumb1R: string;
+    thumb2R: string;
+    thumb3R: string;
+};
+export declare const defaultBoneMap: BoneMap;

@@ -27,6 +27,7 @@ async function render(props: Partial<ViewportChromeProps>): Promise<HTMLElement>
     wireframe: { on: false, onToggle: () => {} },
     worldCollider: { visible: true, onToggle: () => {} },
     firstPerson: { active: false, onToggle: () => {} },
+    handTracking: { active: false, onToggle: () => {} },
     hasContent: true,
     objectCount: 10,
     selectedCount: 0,
@@ -65,6 +66,7 @@ const FULL_ORDER = [
   "Wireframe shading (Shift+Z)",
   "Hide world terrain (collider mesh)",
   "Enter first-person view",
+  "Enable hand tracking",
 ];
 
 afterEach(async () => {
@@ -88,6 +90,7 @@ describe("ViewportChrome", () => {
       grid: null,
       worldCollider: null,
       firstPerson: null,
+      handTracking: null,
       history: undefined,
     });
     expect(labels(container)).toEqual(["Wireframe shading (Shift+Z)"]);
@@ -117,15 +120,18 @@ describe("ViewportChrome", () => {
     expect(button(container, "Show grid")?.getAttribute("aria-pressed")).toBe("false");
   });
 
-  test("按钮文案跟着状态走：网格显隐、线框着色、地形参照、第一人称", async () => {
+  test("按钮文案跟着状态走：网格显隐、线框着色、地形参照、第一人称、手势模式", async () => {
     const on = await render({
       grid: { visible: false, onToggle: () => {} },
       wireframe: { on: true, onToggle: () => {} },
       firstPerson: { active: true, onToggle: () => {} },
+      handTracking: { active: true, onToggle: () => {} },
     });
     expect(labels(on)).toContain("Solid shading (Shift+Z)");
     expect(labels(on)).toContain("Show grid");
     expect(labels(on)).toContain("Return to orbit view");
+    expect(labels(on)).toContain("Disable hand tracking");
+    expect(button(on, "Disable hand tracking")?.getAttribute("aria-pressed")).toBe("true");
 
     const off = await render({ worldCollider: { visible: false, onToggle: () => {} } });
     expect(labels(off)).toContain("Show world terrain (collider mesh)");
@@ -150,6 +156,7 @@ describe("ViewportChrome", () => {
       projection: { value: "perspective", onToggle: () => calls.push("projection") },
       worldCollider: { visible: true, onToggle: () => calls.push("terrain") },
       firstPerson: { active: false, onToggle: () => calls.push("firstPerson") },
+      handTracking: { active: false, onToggle: () => calls.push("handTracking") },
     });
     const click = async (label: string) => {
       await act(async () => { button(container, label)!.click(); });
@@ -162,8 +169,10 @@ describe("ViewportChrome", () => {
     await click("Toggle perspective/orthographic view");
     await click("Hide world terrain (collider mesh)");
     await click("Enter first-person view");
+    await click("Enable hand tracking");
     expect(calls).toEqual([
       "mode:rotate", "space:local", "layout:4", "grid", "wireframe", "projection", "terrain", "firstPerson",
+      "handTracking",
     ]);
   });
 
@@ -191,6 +200,31 @@ describe("ViewportChrome", () => {
     expect(inWalk.textContent).toContain("Click the viewport to lock view");
     const orbit = await render({});
     expect(orbit.textContent).not.toContain("Click the viewport to lock view");
+  });
+
+  test("手势模式的提示：单独开时说捏合，与第一人称同时开时两件事都写在一句话里", async () => {
+    const hands = await render({ handTracking: { active: true, onToggle: () => {} } });
+    expect(hands.textContent).toContain("Pinch to grab");
+    expect(hands.textContent).not.toContain("Click the viewport to lock view");
+
+    const both = await render({
+      firstPerson: { active: true, onToggle: () => {} },
+      handTracking: { active: true, onToggle: () => {} },
+    });
+    expect(both.textContent).toContain("Click the viewport to lock view");
+    expect(both.textContent).toContain("Pinch to grab");
+    // 两块提示不能同时挂上去（会叠在同一个位置）
+    const hints = [...both.querySelectorAll("div")].filter((node) =>
+      node.className.includes("top-16") && node.className.includes("pointer-events-none"),
+    );
+    expect(hints).toHaveLength(1);
+  });
+
+  test("手势模式开着时出一个 Hand tracking 徽章", async () => {
+    const off = await render({});
+    expect(texts(off)).not.toContain("Hand tracking");
+    const on = await render({ handTracking: { active: true, onToggle: () => {} } });
+    expect(texts(on)).toContain("Hand tracking");
   });
 
   test("探针挂载点 data-pc-toolbar 只在显式传时出现（产品 DOM 里没有）", async () => {

@@ -8,6 +8,8 @@ import { CubeIcon } from "@phosphor-icons/react/Cube";
 import { CubeTransparentIcon } from "@phosphor-icons/react/CubeTransparent";
 import { GlobeSimpleIcon } from "@phosphor-icons/react/GlobeSimple";
 import { GridFourIcon } from "@phosphor-icons/react/GridFour";
+import { HandGrabbingIcon } from "@phosphor-icons/react/HandGrabbing";
+import { HandPointingIcon } from "@phosphor-icons/react/HandPointing";
 import { MountainsIcon } from "@phosphor-icons/react/Mountains";
 import { PerspectiveIcon } from "@phosphor-icons/react/Perspective";
 import { PersonSimpleWalkIcon } from "@phosphor-icons/react/PersonSimpleWalk";
@@ -32,7 +34,8 @@ import { TRANSFORM_MODES, type TransformMode, type TransformSpace } from "./tran
  * - **纯展示**：所有状态与副作用留在调用方（"进第一人称要强制单窗格"这种规则在父组件里）。
  * - 按钮的 `aria-label` 与 three 侧**同一套文案**：探针与可信驱动按它找按钮
  *   （`Single view` / `Two views` / `Four views (Blender layout)` / `Hide grid` / `Show grid` /
- *   `Undo` / `Redo` / `Enter first-person view` / `Toggle perspective/orthographic view` /
+ *   `Undo` / `Redo` / `Enter first-person view` / `Enable hand tracking` /
+ *   `Toggle perspective/orthographic view` /
  *   `Toggle world/local coordinates` / `…shading (Shift+Z)` / `Hide world terrain (collider mesh)`）。
  * - **能没有的控件就传 `null`**：调用方给不出这段话的前置条件时（没有选中、不是单窗格、
  *   没有世界地形层…）该按钮整只不出现，不许留一个点了没反应的按钮。
@@ -88,6 +91,11 @@ export interface ViewportChromeProps {
   worldCollider?: { visible: boolean; onToggle(): void } | null;
   /** 第一人称切换：场景里没有内容就传 `null` */
   firstPerson?: { active: boolean; onToggle(): void } | null;
+  /**
+   * 手势模式切换（摄像头 + MediaPipe 追踪双手）。场景里没有内容、或这条渲染路径还没接入
+   * （`?pcViewport=1` 的 PlayCanvas 分支）时传 `null`——按本组件的纪律，能没有的控件就整只不出现。
+   */
+  handTracking?: { active: boolean; onToggle(): void } | null;
   /** 底部徽章与第一人称提示整块出不出现（"场景里有没有内容"） */
   hasContent: boolean;
   /** 摆进场景的模型数（three 侧 `placedAssets.length`） */
@@ -105,6 +113,7 @@ export interface ViewportChromeProps {
 export function ViewportChrome(props: ViewportChromeProps) {
   const { history, transform, layout, projection, grid, wireframe, worldCollider, firstPerson } = props;
   const firstPersonActive = firstPerson?.active ?? false;
+  const handActive = props.handTracking?.active ?? false;
 
   return (
     <>
@@ -278,21 +287,50 @@ export function ViewportChrome(props: ViewportChromeProps) {
               />
             </Tooltip>
           )}
+          {/*
+            手势模式：摄像头 + MediaPipe 追踪双手，场景里出现一双手、捏合即抓取。
+            它**与第一人称不互斥**（两种模式都能开），所以这里不做任何联动禁用。
+          */}
+          {props.handTracking && (
+            <Tooltip
+              content={handActive ? "Turn hand tracking off" : "Hand tracking (webcam + MediaPipe)"}
+              side="top"
+            >
+              <ToolbarButton
+                selected={handActive}
+                aria-pressed={handActive}
+                icon={handActive ? HandGrabbingIcon : HandPointingIcon}
+                aria-label={handActive ? "Disable hand tracking" : "Enable hand tracking"}
+                onClick={props.handTracking.onToggle}
+              />
+            </Tooltip>
+          )}
         </Panel>
       </div>
 
       {props.hasContent && (
         <>
-          {firstPersonActive && (
+          {/*
+            两种模式各有提示，同时开着时**只出一块**：否则两块提示会叠在同一个位置
+            （第一人称那块本来就在 top-16）。文案按"当前能不能用鼠标看方向"分两种写法。
+          */}
+          {handActive ? (
+            <Panel className="pointer-events-none absolute top-16 left-1/2 -translate-x-1/2 px-3 py-1.5 text-xs text-ink-subtle">
+              {firstPersonActive
+                ? "Click the viewport to lock view · WASD to move · Pinch to grab · Esc to release mouse"
+                : "Move your hands to aim · Pinch to grab and move objects · Pinch again to drop"}
+            </Panel>
+          ) : firstPersonActive ? (
             <Panel className="pointer-events-none absolute top-16 left-1/2 -translate-x-1/2 px-3 py-1.5 text-xs text-ink-subtle">
               Click the viewport to lock view · WASD to move · Shift to sprint · Esc to release mouse
             </Panel>
-          )}
+          ) : null}
 
           <div className="pointer-events-none absolute bottom-24 left-1/2 flex -translate-x-1/2 items-center gap-2">
             <Badge>{props.objectCount} objects</Badge>
             {props.selectedCount > 0 && <Badge>Selected: {props.selectedCount}</Badge>}
             {wireframe.on && <Badge>Wireframe</Badge>}
+            {handActive && <Badge>Hand tracking</Badge>}
             {props.splatBackground && <Badge>Gaussian splat background</Badge>}
           </div>
         </>

@@ -33,6 +33,10 @@ const BLENDER_LIVE_USER = process.env.BLENDER_LIVE_USER ?? "kasm_user";
 const BLENDER_LIVE_PASS = process.env.BLENDER_LIVE_PASS ?? "chatspace";
 
 export default defineConfig({
+  // 本地迁入的库位于 app 之外，统一从宿主解析固定版本的 peer，避免重复 Three 实例。
+  resolve: {
+    dedupe: ["three", "@mediapipe/tasks-vision"],
+  },
   plugins: [
     react(),
     tailwindcss(),

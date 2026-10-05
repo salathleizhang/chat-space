@@ -30,6 +30,12 @@ import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundar
 import type { CameraTarget } from "./CameraRig";
 import { CloseupInspectionRig } from "./CloseupInspectionRig";
 import { FirstPersonRig } from "./FirstPersonRig";
+import { HandPreview } from "./HandPreview";
+import { HandRig } from "./HandRig";
+import { createHandTrackingStore, type HandPointer } from "./handTrackingStore";
+import type { PhysicalHand } from "./handLandmarks";
+import { handDebugEnabled, installHandDebug } from "./handDebug";
+import { useHandTracking } from "./useHandTracking";
 import { focusPoseFor, type FocusPose } from "./focusPose";
 import { dropPoseMoved, placementFromBodyPose, type BodyPose } from "./grabCommit";
 import { findGrabbedAsset } from "./grabSelection";
@@ -131,10 +137,22 @@ const FIRST_PERSON_LOCK_SELECTOR = "[data-viewport-first-person-lock]";
 /** 准星抓取没有界面，只是把 hook 挂进 `<Physics>` 里（hook 不能条件调用，所以包一层组件）。 */
 function FirstPersonGrab({
   enabled,
+  handPointer,
   onGrabAsset,
   onDropAsset,
 }: {
   enabled: boolean;
+  /**
+   * 手势来源（手势模式开着时给）。
+   *
+   * **物理抓取只有这一份实现**：准星与手势的差别只在"射线从哪来"——鼠标按下时用相机视线，
+   * 捏合时用"相机 → 手的捏合点"（`useObjectGrab` 的 `aim` 覆盖）。曾经让手势那侧（`HandRig`）
+   * 自己再挂一个 `useObjectGrab`，结果同一个场景里有两个抓取实现：鼠标点击与捏合各抓一次，
+   * 而诊断口（`__PHYSICS__.grabbing()`）只登记了其中一个——"手明明抓到了、读数却是 false"
+   * （真机踩过：`handRaycast` 命中 `slug:golden-retriever`（toi 2.02、dynamic），
+   * 而 `grabbing()` 是 false）。
+   */
+  handPointer?: (() => HandPointer | null) | null;
   /**
    * 抓到一件资产时的回调（**等价于第三人称里点中它**）：上层据此写 `selectedIds`，
    * 右侧栏随之打开，"拿起来"就顺带成了"选中它方便编辑"。
@@ -143,7 +161,46 @@ function FirstPersonGrab({
   /** 抓住的东西**落定**（停下）之后的姿态；上层据此写回摆放（见 `grabCommit.ts`） */
   onDropAsset?: (assetId: string, pose: BodyPose) => void;
 }) {
-  const grab = useObjectGrab({ enabled, onGrab: onGrabAsset, onDrop: onDropAsset });
+  const grab = useObjectGrab({
+    enabled,
+    /*
+      手势模式下**关掉指针输入**：那一下点击的语义是"手"，而同一个 hook 只有一份抓取状态，
+      两路输入同时驱动会互相拆关节。相机锁定（点击进入漫游）由 PointerLockControls 管，不受影响。
+    */
+    pointerInput: !handPointer,
+    aim: handPointer ?? undefined,
+    onGrab: onGrabAsset,
+    onDrop: onDropAsset,
+  });
+  /*
+    捏合的**边沿**在渲染帧里判（`tryGrab`/`release` 与物理步无关）：还要记住"是哪只手抓的"，
+    松手判据才是"**那只手**不捏了"而不是"没人捏了"。
+  */
+  const grabbedSlot = useRef<PhysicalHand | null>(null);
+  const pointerRef = useRef(handPointer);
+  pointerRef.current = handPointer;
+  const grabRef = useRef(grab);
+  grabRef.current = grab;
+  useFrame(() => {
+    const source = pointerRef.current;
+    if (!source) {
+      grabbedSlot.current = null;
+      return;
+    }
+    const pointer = source();
+    const pinching = pointer?.pinching === true;
+    const holding = grabbedSlot.current;
+    if (holding === null) {
+      if (!pinching || !pointer) return;
+      grabbedSlot.current = pointer.slot;
+      grabRef.current.tryGrab();
+      return;
+    }
+    if (!pinching || pointer?.slot !== holding) {
+      grabbedSlot.current = null;
+      grabRef.current.release();
+    }
+  });
   /*
     诊断口要调用**同一份**函数（含 `enabled` 与射线判据），而不是复制一份逻辑：
     复制出来的那份测过也不代表产品路径对。见 physicsDebug.ts 的纪律 ②。
@@ -480,6 +537,27 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
    * 用户此刻看到的画面。
    */
   const [wireframe, setWireframe] = useState(false);
+  /**
+   * 手势模式：摄像头 + MediaPipe 追踪双手，场景里出现一双手，捏合即抓取。
+   *
+   * 与第一人称**不互斥**（两种模式都能开，各自管各自的输入）：第一人称里手挂在眼睛前面、
+   * 抓取走物理关节；第三人称里手挂在轨道相机前面、抓取直接写摆放（见 HandRig）。
+   */
+  const [handMode, setHandMode] = useState(false);
+  /** 检测结果与状态的共享容器：检测循环在里面写，场景每帧命令式读（见 handTrackingStore） */
+  const handStore = useMemo(() => createHandTrackingStore(), []);
+  /** 摄像头预览小窗里那个 `<video>`：同一路流既给用户看也给检测器吃 */
+  const handVideoRef = useRef<HTMLVideoElement | null>(null);
+  useHandTracking({ enabled: handMode, store: handStore, videoRef: handVideoRef });
+  /** 诊断口只在 dev + `?handDebug=1` 时安装（沙箱里没有摄像头，注入是关键点通路） */
+  const handDebug = useMemo(
+    () => handDebugEnabled(typeof location === "undefined" ? "" : location.search),
+    [],
+  );
+  useEffect(() => {
+    if (!handDebug) return;
+    return installHandDebug({ store: handStore });
+  }, [handDebug, handStore]);
   /**
    * world 的地形参照层：默认开（GLB 照旧加载、挂进场景），但该层当前 **100% 透明、不画**，
    * 所以这个开关现在只决定"要不要把 collider 挂进场景"，画面不会变（见 WorldColliderMesh）。
@@ -856,6 +934,18 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
             />
             {/* 诊断口读的是引擎事实（rapier 的 rigidBodyStates），与渲染分支无关，所以挂在世界这一层 */}
             <PhysicsDebugBridge enabled={physicsDebug} />
+            {/*
+              手势模式的那双手（**常挂**，`enabled` 只决定画不画）：它必须在核心场景里、
+              且与物理同一个 provider——第一人称的抓取要复用 `useObjectGrab` 的球形关节。
+              两条交互通路由 `physicsGrabbing` 分流，见 HandRig 的文件头。
+            */}
+            <HandRig
+              store={handStore}
+              enabled={handMode}
+              placement={physicsRunning ? null : { objects, layout, live }}
+              onGrabAsset={handleGrabAsset}
+              onPlacementCommit={onTransformCommit}
+            />
             {/* 地面 + 兜底安全网：世界碰撞网格只是房间外壳，网格默认位常常在它外面。
                 `?physics=0` 时必须一起摘掉，否则对照臂里仍有物理在跑。 */}
             {physicsEnabled && <PhysicsGround />}
@@ -882,6 +972,8 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
                 <FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} spawn={firstPersonSpawn} />
                 <FirstPersonGrab
                   enabled={physicsEnabled}
+                  /* 手势模式开着时，捏合就是"按下/松开"；射线换成相机 → 捏合点 */
+                  handPointer={handMode ? () => handStore.getPointer() : undefined}
                   onGrabAsset={handleGrabAsset}
                   onDropAsset={handleGrabDrop}
                 />
@@ -952,7 +1044,7 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
           space: transformSpace,
           onSpace: setTransformSpace,
         } : null}
-        layout={firstPerson ? null : { value: paneLayout, onChange: setPaneLayout }}
+        layout={firstPerson || handMode ? null : { value: paneLayout, onChange: setPaneLayout }}
         projection={!firstPerson && singlePane ? {
           value: projectionFor(singlePane),
           onToggle: () => toggleProjection(singlePane),
@@ -971,11 +1063,27 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
             return next;
           }),
         } : null}
+        handTracking={hasContent ? {
+          active: handMode,
+          onToggle: () => setHandMode((current) => {
+            const next = !current;
+            /*
+              手挂在**一台相机**前面，而核心场景是所有窗格共享的：四窗格下同一个世界位置会被
+              四台相机各画一遍（看着像四只手，其实是一只被画了四次）。所以开启时压到单窗格——
+              与"进第一人称立刻单窗格"是同一条规则。切回来的事留给用户（布局按钮此时是隐藏的）。
+            */
+            if (next) setPaneLayout(1);
+            return next;
+          }),
+        } : null}
         hasContent={hasContent}
         objectCount={placedAssets.length}
         selectedCount={selectedIds.size}
         splatBackground={worldAsset != null}
       />
+
+      {/* 摄像头预览小窗（右上角）：状态与错误都写在这块面板上，见 HandPreview */}
+      <HandPreview store={handStore} videoRef={handVideoRef} visible={handMode} />
 
 
     </div>

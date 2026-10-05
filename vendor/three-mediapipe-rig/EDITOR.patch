@@ -1,0 +1,20 @@
+--- upstream/src/tracking/HandTracker.ts
++++ runtime/src/tracking/HandTracker.ts
+@@ -109,6 +109,8 @@
+ const DOWN = new THREE.Vector3(0,-1,0);
+ 
+ export class HandsTracker extends Tracker<typeof handMarks> {
++	/** Editor integration: permit tracking every orientation; upstream default stays unchanged. */
++	allowAllDirections = false;
+ 	private readonly sign:number;
+ 	private readonly isLeft:boolean;
+ 	/**
+@@ -181,7 +183,7 @@
+ 		const parlmDir = v2.copy(this.marks.palm.worldPosition).sub(this.marks.wrist.worldPosition).normalize();
+ 		const palmSide = v3.copy(this.marks.pinky1.worldPosition).sub(this.marks.index1.worldPosition).normalize();
+ 		 
+-		if( parlmDir.dot(DOWN)>0.8 )
++		if( !this.allowAllDirections && parlmDir.dot(DOWN)>0.8 )
+ 		{
+ 			return;
+ 		}

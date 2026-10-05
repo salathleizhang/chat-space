@@ -38,6 +38,20 @@ const SETTLE_ANGULAR_EPSILON = 0.15;
  */
 const SETTLE_TIMEOUT_MS = 5_000;
 
+/**
+ * 抓取瞄准的**外部来源**（手势模式）。
+ *
+ * 为什么是"覆盖"而不是"另一份抓取实现"：球形关节那套搬运（锚点跟手、每步前后钳速度、
+ * 松手等落定再落盘）是踩过坑才调好的（见本文件与 PHYSICS.md 第 9 节），手势抓取要复用的
+ * 正是它。区别只在**射线从哪来**：默认是相机视线（准星），手势模式是"相机 → 手的捏合点"。
+ * 返回 `null` 表示这一帧没有手可瞄准。
+ */
+export interface GrabAim {
+  /** 只读元组：手势那边的 `HandPointer` 用的就是只读形状，两边别再抄一遍 */
+  origin: readonly [number, number, number];
+  direction: readonly [number, number, number];
+}
+
 interface ActiveGrab {
   body: RapierRigidBody;
   /** 弹簧关节：锚点（kinematic）↔ 抓取点（物体上的那个点） */
@@ -117,12 +131,25 @@ export function useObjectGrab({
   enabled,
   onGrab,
   onDrop,
+  aim,
+  pointerInput = true,
 }: {
   enabled: boolean;
   /** 抓到资产时回调稳定 id（角色刚体/世界静态物不会触发） */
   onGrab?: (assetId: string) => void;
   /** 抓住的东西**落定**之后回调它的姿态（只有真的动过才由调用方决定要不要写回） */
   onDrop?: (assetId: string, pose: BodyPose) => void;
+  /**
+   * 瞄准来源的覆盖（手势模式）。给了它就**不再看相机视线**：射线由手的捏合点决定。
+   * 这一帧没有手（返回 null）时沿用上一次的手射线——手的检测偶尔漏一帧，不该让抓着的
+   * 物体瞬移到屏幕中心。
+   */
+  aim?: () => GrabAim | null;
+  /**
+   * 要不要接指针事件。手势模式下传 false：那时"按下/松开"由捏合状态驱动，
+   * 鼠标点击不该再抓一次（同一个 hook 只有一份 `activeRef`，两路输入会互相拆关节）。
+   */
+  pointerInput?: boolean;
 }) {
   const camera = useThree((state) => state.camera);
   const { rapier, world } = useRapier();
@@ -140,6 +167,58 @@ export function useObjectGrab({
   onGrabRef.current = onGrab;
   const onDropRef = useRef(onDrop);
   onDropRef.current = onDrop;
+  const aimRef = useRef(aim);
+  aimRef.current = aim;
+  /*
+    每帧解析出来的射线写在这块复用缓冲里（不在热路径里分配对象）。
+    `fromHand` 同时是"这一次是不是手势瞄准"的判据：它是 true 时**跳过指针锁定闸门**
+    （手势模式本来就不需要锁定鼠标，用户可能一边打字一边比手势）。
+  */
+  const rayRef = useRef({
+    origin: [0, 0, 0] as [number, number, number],
+    direction: [0, 0, 0] as [number, number, number],
+    fromHand: false,
+  });
+
+  /**
+   * 这一帧用哪支射线：手势覆盖优先，其次相机视线。
+   *
+   * 覆盖存在但这一帧没有手时**沿用上一次的手射线**（而不是掉回相机视线）：掉回去会让
+   * 抓着的物体在漏检那一帧里朝屏幕中心猛跳一下。
+   */
+  const resolveRay = useCallback(() => {
+    const provided = aimRef.current;
+    const scratch = rayRef.current;
+    if (provided) {
+      const override = provided();
+      if (override) {
+        const [ox, oy, oz] = override.origin;
+        const [dx, dy, dz] = override.direction;
+        const length = Math.hypot(dx, dy, dz);
+        if (length > 1e-6) {
+          scratch.origin[0] = ox;
+          scratch.origin[1] = oy;
+          scratch.origin[2] = oz;
+          scratch.direction[0] = dx / length;
+          scratch.direction[1] = dy / length;
+          scratch.direction[2] = dz / length;
+          scratch.fromHand = true;
+          return scratch;
+        }
+      }
+      if (scratch.fromHand) return scratch;
+    }
+    camera.getWorldPosition(_origin);
+    camera.getWorldDirection(_forward).normalize();
+    scratch.origin[0] = _origin.x;
+    scratch.origin[1] = _origin.y;
+    scratch.origin[2] = _origin.z;
+    scratch.direction[0] = _forward.x;
+    scratch.direction[1] = _forward.y;
+    scratch.direction[2] = _forward.z;
+    scratch.fromHand = false;
+    return scratch;
+  }, [camera]);
 
   /** 把一次等待落定的读数交出去。刚体可能已经被卸载（换资产/切布局），读它会抛，忽略即可 */
   const flushDrop = useCallback((entry: PendingDrop) => {
@@ -218,18 +297,23 @@ export function useObjectGrab({
 
   const tryGrab = useCallback(() => {
     if (!enabledRef.current || activeRef.current) return;
-    // 没锁定指针时这一下点击是"进入第一人称"，不该顺手抓一个东西。
-    // 沙箱拿不到真指针锁定时由诊断口的 forceInput 顶替（见 physicsDebug.ts）。
+    const aimed = resolveRay();
+    /*
+      没锁定指针时这一下点击是"进入第一人称"，不该顺手抓一个东西。
+      沙箱拿不到真指针锁定时由诊断口的 forceInput 顶替（见 physicsDebug.ts）。
+      **手势瞄准不走这道闸门**：捏合不是鼠标点击，用户此刻可能压根没点过画布。
+    */
     if (
-      !isForcedLocked()
+      !aimed.fromHand
+      && !isForcedLocked()
       && typeof document !== "undefined"
       && document.pointerLockElement === null
     ) {
       return;
     }
 
-    camera.getWorldPosition(_origin);
-    camera.getWorldDirection(_forward).normalize();
+    _origin.set(aimed.origin[0], aimed.origin[1], aimed.origin[2]);
+    _forward.set(aimed.direction[0], aimed.direction[1], aimed.direction[2]);
 
     const ray = new rapier.Ray(
       { x: _origin.x, y: _origin.y, z: _origin.z },
@@ -324,7 +408,7 @@ export function useObjectGrab({
     activeRef.current.assetId = assetId;
     // 抓住之后才通知"选中它"（不是射线一命中就叫）：`activeRef` 已经落位，"抓住了"与"选中了"是同一个事件
     if (assetId) onGrabRef.current?.(assetId);
-  }, [camera, clampGrabBody, ensureAnchor, rapier, world]);
+  }, [clampGrabBody, ensureAnchor, rapier, resolveRay, world]);
 
   useBeforePhysicsStep((physicsWorld) => {
     /*
@@ -358,16 +442,16 @@ export function useObjectGrab({
     const active = activeRef.current;
     if (!active) return;
 
-    camera.getWorldPosition(_origin);
-    camera.getWorldDirection(_forward).normalize();
     /*
-      把**锚点**挪到"手的当前位置"：视线上的固定距离点。弹簧负责让物体跟上它——
+      把**锚点**挪到"手的当前位置"：射线上的固定距离点。弹簧负责让物体跟上它——
       落后多少、垂下多少、停下后摆几回，全由弹簧的刚度/阻尼决定（常数见 `physics.ts`）。
+      射线来源与 `tryGrab` 同源（`resolveRay`）：手势抓取时锚点因此跟着手的捏合点走。
     */
+    const aimed = resolveRay();
     const target: [number, number, number] = [
-      _origin.x + _forward.x * active.depth,
-      _origin.y + _forward.y * active.depth,
-      _origin.z + _forward.z * active.depth,
+      aimed.origin[0] + aimed.direction[0] * active.depth,
+      aimed.origin[1] + aimed.direction[1] * active.depth,
+      aimed.origin[2] + aimed.direction[2] * active.depth,
     ];
 
     const timestep = physicsWorld.timestep || 1 / 60;
@@ -385,7 +469,7 @@ export function useObjectGrab({
   });
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !pointerInput) return;
 
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
@@ -410,7 +494,7 @@ export function useObjectGrab({
       document.removeEventListener("pointerlockchange", onCancel);
       release();
     };
-  }, [enabled, release, tryGrab]);
+  }, [enabled, pointerInput, release, tryGrab]);
 
   useEffect(() => {
     return () => {
