@@ -1,4 +1,5 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react/ArrowLeft";
+import { CubeIcon } from "@phosphor-icons/react/Cube";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -42,6 +43,17 @@ const ModelPreviewWindow = lazy(() =>
   })),
 );
 
+/*
+  Blender 实时画面。**懒加载是必须的，不是优化**：它内嵌一个 iframe，而 iframe 一旦在树上
+  就会拉起一条常开的 WebSocket 视频流（还占着容器里的一个客户端）。懒加载 + 条件渲染
+  两件事一起，才让"没打开 = 没有连接"成立。
+*/
+const BlenderLiveWindow = lazy(() =>
+  import("../../widgets/BlenderLive").then((module) => ({
+    default: module.BlenderLiveWindow,
+  })),
+);
+
 /**
  * `/app/:projectSlug` — 单项目工作台。布局是全屏 Viewport 画布 + 悬浮面板
  * （左上 ModelList、左下 Sidebar、底部居中 AgentDock）；共享状态与业务编排
@@ -68,6 +80,13 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
     : [];
   const launchConsumedRef = useRef(false);
   const [section, setSection] = useState<SectionId>("assets");
+  /**
+   * Blender 实时画面窗的显隐。
+   *
+   * 刻意**不住在** `section` / `preview` 那套里：它既不是左侧栏的一个分区，也不是某个资产的
+   * 预览，而是一个独立的、可以和工作台其它面板同时开着的窗。放在这里只是因为组合根在这。
+   */
+  const [blenderLive, setBlenderLive] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   /**
    * 选中的资产集合，**由模型列表与 3D 视口共用**：在场景里点中的模型，列表同一行
@@ -469,6 +488,21 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           <h1 className="max-w-[50vw] truncate text-sm font-medium text-ink-strong">
             {projectName || projectSlug}
           </h1>
+          {/* 文案随状态变，与 ViewportChrome 那套工具栏按钮同一约定（探针也按 aria-label 找）。 */}
+          <Tooltip
+            content={blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+            side="bottom"
+          >
+            <Button
+              variant={blenderLive ? "primary" : "ghost"}
+              shape="square"
+              size="sm"
+              icon={CubeIcon}
+              aria-label={blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+              aria-pressed={blenderLive}
+              onClick={() => setBlenderLive((value) => !value)}
+            />
+          </Tooltip>
         </Panel>
       </div>
       {projectError && (
@@ -543,6 +577,19 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
               onClose={closePreview}
               onInspectionCaptured={handleInspectionCaptured}
             />
+          </Suspense>
+        </div>
+      )}
+      {blenderLive && (
+        /*
+          Blender 实时画面。**位置是挑过的**：四个角分别被 Inspector / ModelPreviewWindow（右上）、
+          ModelList（左上）、Sidebar（左下）、Viewport 工具栏（右下 bottom-4 right-4）占着，
+          唯一空着的是「右下、工具栏之上」——工具栏约 42px 高 + 16px 边距，所以 bottom-20（80px）
+          正好让开，不压住任何已有控件。
+        */
+        <div className="absolute right-4 bottom-20 z-20 animate-chrome-enter">
+          <Suspense fallback={null}>
+            <BlenderLiveWindow onClose={() => setBlenderLive(false)} />
           </Suspense>
         </div>
       )}

@@ -16,10 +16,18 @@ import { Panel, Button, Badge } from "../../shared/ui";
  * 这是刻意的：两个窗都是"浮在工作台上的临时窗口"，样式/拖动/关闭的行为必须一致，
  * 否则用户要学两套。所以这里照抄它的形状：
  *
- *   · `Panel` + `w-[22rem]` + 圆角由全局 surface 提供
+ *   · `Panel` + 圆角由全局 surface 提供
  *   · 头部 `h-11`、`cursor-grab`、`active:cursor-grabbing`
  *   · 按钮 `top-3 right-3.5`（**不是垂直居中**）：全局 surface 圆角 35px，
  *     贴边居中的方形按钮会被 `overflow-hidden` 按弧线削掉
+ *
+ * ## 尺寸跟 `ModelPreviewWindow` 一致；**要缩的是容器里那块桌面，不是这个窗**
+ *
+ * 外壳尺寸刻意不动（`w-[22rem]` / 展开 `w-[54rem]` / `aspect-video`）：这是"浮在工作台上的
+ * 临时窗口"的统一形状，改它会让用户要学两套。
+ *
+ * 真正的做法是让**远端那块桌面跟着窗变小**（`?resize=remote`，见下面 iframe 处的长注释）。
+ * 桌面小了，Blender 才能在这么小的框里 1:1 看清；把 1024×768 塞进小框去缩，字只会糊成一团。
  *
  * ## 拖动只改 DOM transform，不写 React state
  *
@@ -115,11 +123,33 @@ export function BlenderLiveWindow({ onClose, title = "Blender", status }: Blende
 
       <div className="relative aspect-video w-full bg-black">
         {/*
+          ⚠️ **`?resize=scale`：把小窗当作"取景框"，把整个远端桌面缩进来。**
+
+          这条要成立需要**两件事一起**，缺任何一个都只能看见一角：
+
+            ① **远端那边 Blender 必须最大化** —— 这是容器侧的事，见 `docker/custom-startup.sh`。
+               实测它默认是个 **1440×900 的浮动窗**，而桌面只有 1024×768：**Blender 窗口本身
+               比桌面还大**，所以无论浏览器这侧怎么缩放，你都只能看到它的一部分。
+               最大化之后它会跟着桌面走（实测：桌面改 1280×800，它立刻变成 1280×745）。
+            ② **这侧用 `resize=scale`** —— KasmVNC 默认 `Scaling Mode: None`：远端帧缓冲按
+               1:1 像素铺、**超出 iframe 的部分直接裁掉**，所以默认只看得见桌面左上角。
+
+          ⛔ **不要用 `resize=remote`（远端改分辨率）。** 它看起来"字更大更清楚"，但代价是
+          **把容器里那块桌面压成这个小窗的尺寸**（实测 1024×768 → 700×392），Blender 也跟着
+          被压成 700×337 的小窗 —— 既不真实、界面也挤成一团。那正是"远端 Blender 窗口长宽也
+          变得很小，这不合理"。这个窗的职责是**看**，不该把被观看的工作环境改造成取景框的形状。
+
+          所以口径是：**远端保持正常分辨率 + Blender 最大化，这侧整体缩放着全**。
+          代价是字会跟着缩（1024×768 → 约 0.26 倍），要看清就点右下角的展开按钮。
+
+          另见 `blender/README.md` §五之三。
+        */}
+        {/*
           不要给 iframe 加 `sandbox`：KasmVNC 需要脚本 + WebSocket + 同源存储，
           收紧 sandbox 的结果是一张永远连不上的空壳（而且不报错）。
         */}
         <iframe
-          src="/blender-live/"
+          src="/blender-live/?resize=scale"
           title="Blender live view"
           className="h-full w-full border-0"
           onLoad={() => setLoaded(true)}
