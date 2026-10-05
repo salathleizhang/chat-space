@@ -80,6 +80,20 @@
   --animate-chrome-enter: chrome-enter 180ms ease-out both;
   --animate-chrome-enter-center: chrome-enter-center 180ms ease-out both;
 
+  /* 首页「产品特性」段的媒体位：现在放的是静态占位图,用一段极慢的推拉让它有
+     "动图"的呼吸感。真素材(录屏 mp4/webm)接上后这段动画自然就不用了。
+     调用方一律写 `motion-safe:animate-media-drift`,开了"减少动态效果"时不做动画。 */
+  --animate-media-drift: media-drift 22s ease-in-out infinite alternate;
+
+  @keyframes media-drift {
+    from {
+      transform: scale(1.02) translate3d(0, 0, 0);
+    }
+    to {
+      transform: scale(1.09) translate3d(-1.6%, -1.2%, 0);
+    }
+  }
+
   @keyframes chrome-enter {
     from {
       opacity: 0;

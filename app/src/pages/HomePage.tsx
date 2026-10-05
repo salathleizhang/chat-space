@@ -6,9 +6,12 @@ import { SquaresFourIcon } from "@phosphor-icons/react/SquaresFour";
 import { XIcon } from "@phosphor-icons/react/X";
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { preloadAppDashboard } from "../app/router";
 import { ACCEPTED_IMAGE_TYPES, imageFilesFromClipboard } from "../shared/lib/imageAttachment";
 import { createProject } from "../shared/lib/libraryApi";
 import { Button, Input, Panel, Tooltip } from "../shared/ui";
+import { FeatureShowcase, WorldShowcase } from "./HomeSections";
+import { PRODUCT_FEATURES, SHOWCASE_WORLDS, type ShowcaseWorld } from "./homeShowcase";
 
 const MODEL_ACTIONS = ["Model", "Unwrap", "UV-map", "Texture", "Skin", "Rig"] as const;
 const WORD_DURATION_MS = 2400;
@@ -103,6 +106,14 @@ export function HomePage() {
     if (files.length === 0) return;
     event.preventDefault();
     setImageFiles((current) => [...current, ...files]);
+  }
+
+  /**
+   * 点世界缩略图：有 `projectSlug` 就进那个世界所在的项目工作台（进去后视口会把该世界
+   * 作为当前世界渲染）；占位世界（还没接真实项目）回项目列表，不让用户点进一个空路由。
+   */
+  function openWorld(world: ShowcaseWorld) {
+    navigate(world.projectSlug ? `/app/${world.projectSlug}` : "/app");
   }
 
   return (
@@ -254,7 +265,15 @@ export function HomePage() {
           )}
         </section>
 
-        <section className="mt-20" aria-labelledby="cases-title">
+        <WorldShowcase
+          worlds={SHOWCASE_WORLDS}
+          onOpenWorld={openWorld}
+          onIntent={() => void preloadAppDashboard()}
+        />
+
+        <FeatureShowcase features={PRODUCT_FEATURES} />
+
+        <section className="mt-24" aria-labelledby="cases-title">
           <div className="mb-6 flex items-baseline justify-between">
             <h2 id="cases-title" className="text-sm font-medium text-project-hub-ink-strong">Cases</h2>
             <span className="text-xs text-project-hub-ink-subtle">0 total</span>
