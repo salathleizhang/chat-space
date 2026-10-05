@@ -91,11 +91,39 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
       });
 
       // ── ② WebSocket 升级 ──────────────────────────────────────────────
-      // 只认自己的前缀；别的一律不碰，交给 Vite 自己的 HMR 监听。
+      // 只认 KasmVNC 那一条路径；别的一律不碰，交给 Vite 自己的 HMR 监听。
       const httpServer = server.httpServer;
       if (!httpServer) return;
       httpServer.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-        if (!req.url?.startsWith(prefix)) return;
+        /*
+          **WS 在 `/websockify`，而且落在根上——不在我们的前缀底下。**
+
+          这一条此前被记错过（上一版注释断言"在根路径 `/`，`/websockify` 只是个遗留的
+          noVNC 设置项"）。**那个结论是错的**，依据是三条实测：
+
+            ① 浏览器侧（CDP 的 `Network.webSocketCreated`）打的是
+               `ws://127.0.0.1:5173/websockify`，子协议 `binary`，**握手没有响应**；
+            ② 容器自己日志说得很直白：
+               `websocket 55: /websockify request failed websocket checks,
+                missing Sec-WebSocket-Origin header` → `"GET /websockify" 404 180`
+               —— 也就是说这个路由**存在**，404 是"缺 Origin 头"造成的，不是"没有这个路由"；
+            ③ 直接对上游补上 `Origin` 再打 `/websockify` → **101 Switching Protocols**，
+               回 `Sec-WebSocket-Protocol: binary`。
+
+          为什么落在**根**上而不是 `/blender-live/`：noVNC 是从 `location.host` + 它自己的
+          `path` 设置（值就是 `websockify`，**不是遗留项，它真的在用**）拼 URL 的，
+          **不带我们代理的前缀**。所以页面可以在 `/blender-live/` 下，socket 却在根上。
+
+          子协议那条排除留着：Vite 自己的 HMR 一定带 `vite-hmr`，用它可以明确让开。
+        */
+        const protocol = String(req.headers["sec-websocket-protocol"] ?? "");
+        if (protocol.includes("vite-hmr")) return; // Vite 自己的热更新，不碰
+        const bare = (req.url ?? "/").split("?")[0] ?? "/";
+        const isOurs =
+          bare === `${prefix}/websockify` || // 带上前缀的情况（后端换写法时兜底）
+          bare === "/websockify" || // ← 实测就是这条
+          (bare !== "/" && bare.startsWith(`${prefix}/`));
+        if (!isOurs) return;
 
         // 升级请求要手写：http-proxy 那条路我们不再走了，所以
         // `Sec-WebSocket-*` 这几个头必须原样带过去，否则上游不认这是 WS。
@@ -108,7 +136,6 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
           `Sec-WebSocket-Version: ${req.headers["sec-websocket-version"] ?? "13"}`,
           `Authorization: ${auth}`,
         ];
-        const protocol = req.headers["sec-websocket-protocol"];
         if (protocol) lines.push(`Sec-WebSocket-Protocol: ${protocol}`);
         if (req.headers.origin) lines.push(`Origin: ${req.headers.origin}`);
 
@@ -122,6 +149,11 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
         */
         const tlsOptions: tls.ConnectionOptions = { host, port, rejectUnauthorized: false };
         if (!/^[\d.]+$/.test(host) && !host.includes(":")) tlsOptions.servername = host;
+        /*
+          **调试日志先留着**：这几轮一直卡在"请求发出去了、但上游不认为它是升级"。
+          把发出前的头和收回来的第一行打出来，一眼就知道少了什么——比猜快得多。
+        */
+        console.log(`[blender-live] WS 升级 → ${lines.join(" | ")}`);
         const upstreamSocket = tls.connect(
           tlsOptions,
           () => {
@@ -129,6 +161,9 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
             if (head?.length) upstreamSocket.write(head);
           },
         );
+        upstreamSocket.once("data", (chunk: Buffer) => {
+          console.log(`[blender-live] WS 上游回 → ${chunk.toString("latin1").split("\r\n")[0]}`);
+        });
 
         // 双向 pipe：升级成功后这就是一条裸字节通道，两边都不再解析 HTTP。
         upstreamSocket.on("error", (err: Error) => {
