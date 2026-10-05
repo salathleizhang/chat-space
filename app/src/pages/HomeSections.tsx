@@ -10,55 +10,55 @@ import type { ProductFeature, ShowcaseWorld } from "./homeShowcase";
  * 首页那个已经不小的组件再翻一倍。
  */
 
-/** 缩略图卡：图 + 世界名 + 一句话。整张卡是一个按钮。 */
+/**
+ * 世界卡：整张卡就是一张缩略图，不再有正文——卡面上只留世界名、尺度标签和
+ * 一个「打开」箭头，介绍文案没有信息量还占掉一半卡高。
+ *
+ * 圆角用 `rounded-surface`：和搜索框、项目页的文件夹卡同一套 token，
+ * 首页从上到下才是一个系统（`index.css` 的圆角层级：surface/inset/control/media）。
+ */
 function WorldCard({ world, onOpen }: { world: ShowcaseWorld; onOpen: (world: ShowcaseWorld) => void }) {
   /** 没有项目 slug = 占位项，点击只能回到项目列表 */
   const isPlaceholder = !world.projectSlug;
   return (
     <button
       type="button"
-      className="group flex w-full flex-col overflow-hidden rounded-media border border-project-hub-ink-faint/25 bg-project-hub-fill text-left transition-[border-color,box-shadow,translate] duration-200 ease-spring hover:border-project-hub-ink-faint/60 hover:shadow-[0_18px_36px_-22px_rgb(22_22_24/0.5)] motion-safe:hover:-translate-y-0.5"
+      className="group relative block w-full overflow-hidden rounded-surface border border-project-hub-ink-faint/25 bg-project-hub-ink-strong text-left transition-[border-color,box-shadow,translate] duration-200 ease-spring hover:border-project-hub-ink-faint/60 hover:shadow-[0_18px_36px_-22px_rgb(22_22_24/0.5)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-project-hub-ink-strong motion-safe:hover:-translate-y-0.5"
       onClick={() => onOpen(world)}
       aria-label={isPlaceholder ? `Browse projects (${world.name} is a placeholder world)` : `Enter world ${world.name}`}
     >
-      <span className="relative block aspect-[3/2] w-full overflow-hidden bg-project-hub-ink-strong">
-        <img
-          src={world.thumbnail}
-          alt={`${world.name} preview`}
-          loading="lazy"
-          decoding="async"
-          draggable={false}
-          className="h-full w-full object-cover transition-transform duration-500 ease-spring group-hover:scale-[1.05]"
-        />
-        {/* 底部渐变只为压住白字，不参与语义 */}
-        <span
-          aria-hidden="true"
-          className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/75 via-black/25 to-transparent"
-        />
-        {/* 标签走右上角而不是跟名字并排：4 列时卡片只有 ~230px，并排会把世界名挤到截断 */}
-        <span className="absolute top-2.5 right-2.5 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
-          {world.setting}
-        </span>
-        {isPlaceholder && (
-          <span className="absolute top-2.5 left-2.5 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white/90">
-            Placeholder
-          </span>
-        )}
-        <span className="absolute inset-x-3 bottom-2.5 block truncate text-sm font-semibold text-white drop-shadow-sm">
-          {world.name}
-        </span>
+      <img
+        src={world.thumbnail}
+        alt={`${world.name} preview`}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        className="aspect-[3/2] w-full object-cover transition-transform duration-500 ease-spring group-hover:scale-[1.05]"
+      />
+      {/* 底部渐变只为压住白字，不参与语义 */}
+      <span
+        aria-hidden="true"
+        className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/75 via-black/25 to-transparent"
+      />
+      {/* 标签走右上角而不是跟名字并排：4 列时卡片只有 ~230px，并排会把世界名挤到截断 */}
+      {/* 内缩 16px 而不是 12px：35px 的圆角下，12px 的标签会贴着圆弧 */}
+      <span className="absolute top-4 right-4 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+        {world.setting}
       </span>
-      <span className="flex flex-1 flex-col gap-2 px-3.5 pt-3 pb-3.5">
-        <span className="min-h-9 text-xs leading-4.5 text-project-hub-ink-subtle">{world.description}</span>
-        <span className="mt-auto flex items-center gap-1 text-[11px] font-medium text-project-hub-ink">
-          {isPlaceholder ? "Browse projects" : "Enter world"}
-          <ArrowUpRightIcon
-            size={12}
-            weight="bold"
-            aria-hidden="true"
-            className="transition-transform duration-200 ease-spring group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
-          />
+      {isPlaceholder && (
+        <span className="absolute top-4 left-4 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white/90">
+          Placeholder
         </span>
+      )}
+      <span className="absolute bottom-4 left-4 block pr-10 truncate text-sm font-semibold text-white drop-shadow-sm">
+        {world.name}
+      </span>
+      {/* 「打得开」这件事现在只由这个箭头表达，不再写一行字 */}
+      <span
+        aria-hidden="true"
+        className="absolute right-4 bottom-4 flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-sm transition-colors duration-200 group-hover:bg-white/35"
+      >
+        <ArrowUpRightIcon size={13} weight="bold" />
       </span>
     </button>
   );
@@ -105,7 +105,7 @@ export function WorldShowcase({
  */
 function FeatureMedia({ feature }: { feature: ProductFeature }) {
   return (
-    <div className="relative overflow-hidden rounded-media border border-project-hub-ink-faint/20 bg-project-hub-ink-strong shadow-[0_24px_60px_-32px_rgb(22_22_24/0.55)]">
+    <div className="relative overflow-hidden rounded-surface border border-project-hub-ink-faint/20 bg-project-hub-ink-strong shadow-[0_24px_60px_-32px_rgb(22_22_24/0.55)]">
       {feature.video ? (
         <video
           className="aspect-16/10 w-full object-cover"

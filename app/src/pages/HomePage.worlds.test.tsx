@@ -61,6 +61,16 @@ test("搜索框下面渲染 4 个世界缩略图，每张都有自己的图", as
   for (const card of cards) {
     expect(card.querySelector("img")?.className).toContain("object-cover");
   }
+  // 卡面上除了世界名和标签，不该再有任何正文（介绍段落已按要求去掉）
+  for (const [index, card] of cards.entries()) {
+    const world = SHOWCASE_WORLDS[index]!;
+    const text = (card.textContent ?? "")
+      .replace(world.name, "")
+      .replace(world.setting, "")
+      .replace("Placeholder", "")
+      .trim();
+    expect({ world: world.id, leftover: text }).toEqual({ world: world.id, leftover: "" });
+  }
 });
 
 test("点真实世界进它所在的项目工作台", async () => {
@@ -82,11 +92,11 @@ test("占位世界不点进空路由，而是回项目列表", async () => {
   const placeholderWorld = SHOWCASE_WORLDS.find((world) => !world.projectSlug)!;
   expect(placeholderWorld).toBeDefined();
 
-  // 占位世界没有项目 slug，卡片自己就说明白点击会去哪，且 aria-label 带上世界名
+  // 占位世界没有项目 slug：卡面用 Placeholder 角标说明身份，aria-label 说明点击会去哪
   const button = container!.querySelector<HTMLButtonElement>("button[aria-label^='Browse projects']");
   expect(button).not.toBeNull();
   expect(button!.getAttribute("aria-label")).toContain(placeholderWorld.name);
-  expect(button!.textContent).toContain("Browse projects");
+  expect(button!.textContent).toContain("Placeholder");
 
   await act(async () => button!.click());
   expect(readLocation()).toBe("/app");

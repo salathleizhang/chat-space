@@ -20,8 +20,6 @@ export interface ShowcaseWorld {
   name: string;
   /** 右上角短标签：室内 / 室外 / 尺度 */
   setting: string;
-  /** 卡面下的一句话介绍 */
-  description: string;
   /** 3:2 缩略图，`app/public/` 下的绝对路径 */
   thumbnail: string;
   /**
@@ -56,8 +54,6 @@ export const SHOWCASE_WORLDS: ShowcaseWorld[] = [
     id: "lounge",
     name: "Light-luxe living room",
     setting: "Interior",
-    description:
-      "An empty modern living room generated from a single reference photo. Walk it in first person, then furnish it with generated models.",
     thumbnail: "/worlds/lounge.webp",
     projectSlug: "p-muo3u17c",
   },
@@ -65,8 +61,6 @@ export const SHOWCASE_WORLDS: ShowcaseWorld[] = [
     id: "meadow",
     name: "Sunset meadow",
     setting: "Landscape",
-    description:
-      "A wide, obstacle-free pasture — flat ground and an unobstructed horizon make it an easy stage for placing props and characters.",
     thumbnail: "/worlds/meadow.webp",
     projectSlug: "p-mu5l6om3",
   },
@@ -74,16 +68,12 @@ export const SHOWCASE_WORLDS: ShowcaseWorld[] = [
     id: "atrium",
     name: "Sunlit atrium",
     setting: "Interior",
-    description:
-      "A four-storey glass atrium with polished floors and tall planters. Long shadows and reflective ground for material studies.",
     thumbnail: "/worlds/atrium.jpg",
   },
   {
     id: "coast",
     name: "Cliff coast",
     setting: "Landscape",
-    description:
-      "Golden-hour sea cliffs with wind-brushed grass in the foreground and a long open horizon for large-scale exteriors.",
     thumbnail: "/worlds/coast.jpg",
   },
 ];
