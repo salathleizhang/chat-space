@@ -30,6 +30,7 @@
  *   CHATSPACE_BLENDER_WORKDIR         **宿主机看到的**同一个目录
  */
 
+import { listTasks } from "../src/services/tasks";
 import { buildRequestContext } from "../src/services/workflowRuns";
 import {
   blenderExportTool,
@@ -158,22 +159,67 @@ if (!projectSlug) {
   console.log("     容器里 Blender 写的是容器路径，宿主机读的是另一个路径，两个都要给。");
 } else {
   try {
-    const r = (await blenderExportTool.execute!(
+    /*
+      **导出是异步的，所以验收必须等任务落定再读 `result`。**
+
+      工具刻意返回一个后台任务而不是同步结果（`blenderOps.ts` 里记了原因：同步发布时资产
+      确实写进了库，但 app 不会重新拉列表，用户得手动刷新才看得见）。此前这个脚本还按同步
+      结果读 `bytes`，于是拿到的是 `{task:{id,status:"running"}}` → `bytes` 恒为 undefined
+      → 无论导出成没成，一律报「导出产物太小」。**那是脚本与工具契约脱节，不是链路坏了。**
+
+      判据因此改成三步：等任务离开 running → 看它是 succeeded 还是 failed →
+      才从 `result` 里取事实。顺带把失败原因如实透出来（原来会把真实报错吞掉）。
+    */
+    const started = (await blenderExportTool.execute!(
       {
         assetSlug: "blender-verify",
         name: "Blender 验收件",
         intent: "验收脚本产出，可删",
       } as never,
       ctx,
-    )) as { glbPath?: string; bytes?: number; faces?: number; blenderVersion?: string; index?: number };
-    if ((r.bytes ?? 0) > 1024) {
-      ok(
-        "导出并发布成功",
-        `${r.glbPath} · ${r.bytes} 字节 · ${r.faces} 面 · Blender ${r.blenderVersion} · 第 ${r.index} 代`,
-      );
-      console.log(`     ↳ 宿主机上：cat ~/ChatSpace/${r.glbPath} 同级目录里应有 asset.json 与请求侧写`);
+    )) as { task?: { id?: string } };
+    const taskId = started.task?.id;
+    if (!taskId) {
+      bad("导出没起任务", JSON.stringify(started).slice(0, 160));
     } else {
-      bad("导出产物太小", JSON.stringify(r).slice(0, 160));
+      const deadline = Date.now() + 180_000;
+      // `listTasks()` 自己会 tick 任务闸门，所以这个轮询同时是外部时钟——即使进程内
+      // 定时器被压住，任务也能被推着走完（见 AGENTS.md 第二节第 15/16 条）。
+      const find = async () =>
+        (await listTasks(projectSlug)).find((candidate) => candidate.id === taskId);
+      let task = await find();
+      while (task?.status === "running" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        task = await find();
+      }
+
+      if (!task) {
+        bad("读不到导出任务", taskId);
+      } else if (task.status === "running") {
+        bad("导出超时", `等了 180s 仍未落定（phase=${task.phase}）`);
+      } else if (task.status === "failed") {
+        bad("导出失败", String(task.error ?? "").slice(0, 200));
+        if (/读不到文件/.test(String(task.error ?? ""))) {
+          console.log("     ↳ 这是共享目录两端没对上：容器写 /workspace，宿主机要能读到同一个目录。");
+        }
+      } else {
+        const r = (task.result ?? {}) as {
+          glbPath?: string;
+          bytes?: number;
+          faces?: number;
+          blenderVersion?: string;
+          index?: number;
+        };
+        if ((r.bytes ?? 0) > 1024) {
+          ok(
+            "导出并发布成功",
+            `${r.glbPath} · ${r.bytes} 字节 · ${r.faces} 面 · Blender ${r.blenderVersion} · 第 ${r.index} 代`,
+          );
+          console.log(`     ↳ 宿主机上：cat ~/ChatSpace/${r.glbPath} 同级目录里应有 asset.json 与请求侧写`);
+        } else {
+          bad("导出产物太小", JSON.stringify(r).slice(0, 160));
+        }
+      }
     }
   } catch (error) {
     bad("导出失败", String((error as Error).message).slice(0, 200));
