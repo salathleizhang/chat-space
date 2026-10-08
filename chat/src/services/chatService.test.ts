@@ -2,9 +2,9 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { projectCandidatesFile } from "../common/libraryPaths";
+import { projectCandidatesFile, projectFile } from "../common/libraryPaths";
 import type { ChatMessage } from "../dto/chat";
-import { CandidateRegistrySchema } from "../dto/library";
+import { CandidateRegistrySchema, ProjectSchema } from "../dto/library";
 import {
   answerContextText,
   toAnswerMessage,
@@ -15,11 +15,13 @@ import {
   listPendingGenerationTargets,
   planContextText,
   planFromToolResult,
+  streamChat,
   taskIdsFromToolResult,
   toResumeMessage,
   toolErrorMessage,
+  withReplyLanguageDirective,
 } from "./chatService";
-import { LocalFileStorage, writeJson } from "./assetStorage";
+import { LocalFileStorage, setAssetStorage, writeJson } from "./assetStorage";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-chat-context-test-"));
 const storage = new LocalFileStorage(root);
@@ -474,5 +476,160 @@ describe("buildChatRequestContext", () => {
     );
 
     expect(context.get<string>("imageGenerateModel")).toBe("seedream-5-pro");
+  });
+});
+
+describe("withReplyLanguageDirective", () => {
+  test("英文用户：指令追加在本轮最后一条 user 消息末尾", () => {
+    const messages = withReplyLanguageDirective(
+      [
+        { role: "system", content: "当前项目：demo（demo）。" },
+        { role: "user", content: "Generation every weapon to 3D" },
+      ],
+      [{ role: "user", content: "Generation every weapon to 3D" }],
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]!.content).toContain("Generation every weapon to 3D");
+    expect(messages[1]!.content).toContain("[Reply language] The user is writing in English");
+  });
+
+  /**
+   * 续跑轮（`[Background tasks finished]` …）是英文写的、又接在最后，最容易把语言带跑；
+   * 语言判定必须回到用户自己写的那句话上，而指令要落在**模型最后读到的那条消息**末尾。
+   */
+  test("续跑轮：语言按用户上一句真实发言，指令落在续跑轮末尾", () => {
+    const messages = withReplyLanguageDirective(
+      [
+        { role: "system", content: "当前项目：demo（demo）。" },
+        { role: "user", content: "做一把椅子" },
+        { role: "assistant", content: "开始生成。" },
+        { role: "user", content: "[Background tasks finished]\n- 3D generation (Tripo): succeeded" },
+      ],
+      [
+        { role: "user", content: "做一把椅子" },
+        { role: "assistant", content: "开始生成。" },
+      ],
+    );
+
+    const last = messages[3]!;
+    expect(last.role).toBe("user");
+    expect(last.content).toContain("【回复语言】");
+    // 中间那条用户消息不该被动过
+    expect(messages[1]!.content).toBe("做一把椅子");
+  });
+
+  test("带图消息：指令加成新的文本部件，图片部件保持原样", () => {
+    const messages = withReplyLanguageDirective(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "image", image: "data:image/png;base64,AAAA" },
+            { type: "text", text: "Please review this image." },
+          ],
+        },
+      ],
+      [
+        {
+          role: "user",
+          content: [
+            { type: "image", path: "projects/demo/source/0-image.png" },
+            { type: "text", text: "Please review this image." },
+          ],
+        },
+      ],
+    );
+
+    const content = messages[0]!.content;
+    expect(Array.isArray(content)).toBe(true);
+    if (!Array.isArray(content)) throw new Error("unreachable");
+    expect(content[0]).toEqual({ type: "image", image: "data:image/png;base64,AAAA" });
+    expect(content.at(-1)).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("writing in English"),
+    });
+  });
+
+  test("判定不出语言时原样返回（不注入任何东西）", () => {
+    const messages: Parameters<typeof withReplyLanguageDirective>[0] = [
+      { role: "user", content: "[Plan continues] 2 of 4 steps unfinished." },
+    ];
+    expect(withReplyLanguageDirective(messages, [
+      { role: "user", content: "[Plan continues] 2 of 4 steps unfinished." },
+    ])).toBe(messages);
+  });
+});
+
+/**
+ * 接线测试：语言判定的逻辑单测过了，不等于它真的接进了 streamChat——"注释里的约束
+ * 没人接线就等于没有"。这里把上游 LLM 换成一个只抓请求体的假 fetch，跑一次真实的
+ * streamChat，看发给模型的报文里到底有没有那行指令。
+ */
+describe("streamChat 的回复语言接线", () => {
+  test("英文用户的一轮请求里，语言指令真的出现在发给模型的最后一条 user 消息上", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "chatspace-reply-language-test-"));
+    const projectStorage = new LocalFileStorage(projectRoot);
+    const now = new Date().toISOString();
+    await writeJson(projectStorage, projectFile("demo"), ProjectSchema, {
+      schemaVersion: 1,
+      slug: "demo",
+      name: "Demo",
+      createdAt: now,
+      updatedAt: now,
+    });
+    setAssetStorage(projectStorage);
+
+    const bodies: string[] = [];
+    const originalFetch = globalThis.fetch;
+    const sse = [
+      'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}',
+      "",
+      'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n");
+    globalThis.fetch = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: RequestInit,
+    ) => {
+      bodies.push(typeof init?.body === "string" ? init.body : String(init?.body ?? ""));
+      return new Response(sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+
+    try {
+      // 上游是假的，真正的判据是"请求体里有没有那行指令"；流本身读不完也不算失败
+      try {
+        for await (const _chunk of streamChat({
+          projectSlug: "demo",
+          messages: [{ role: "user", content: "Generation every weapon to 3D" }],
+          llm: { apiKey: "sk-test", baseUrl: "http://127.0.0.1:9/v1", model: "test" },
+        })) {
+          // 不需要消费内容
+        }
+      } catch {
+        // 假响应不保证被上游解析器完整接受
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      setAssetStorage(undefined);
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+
+    const payload = bodies.join("\n");
+    expect(bodies.length).toBeGreaterThan(0);
+    // 用 includes 而不是 toContain：这条报文有好几兆，失败时不该把整段吐到测试输出里
+    expect(payload.includes("Generation every weapon to 3D"), "报文里没有这一轮的用户消息").toBe(
+      true,
+    );
+    expect(
+      payload.includes("The user is writing in English"),
+      "报文里没有服务端判定的回复语言指令",
+    ).toBe(true);
+    expect(payload.includes("Do not switch to Chinese")).toBe(true);
   });
 });

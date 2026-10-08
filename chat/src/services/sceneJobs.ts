@@ -22,7 +22,8 @@ import { mutateCandidates } from "./candidateRegistry";
 
 const mutationTails = new Map<string, Promise<unknown>>();
 
-function serial<T>(key: string, operation: () => Promise<T>): Promise<T> {
+function serial<T>(storage: AssetStorage, key: string, operation: () => Promise<T>): Promise<T> {
+  if (storage.withLock) return storage.withLock(key, operation);
   const previous = mutationTails.get(key) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(operation);
   mutationTails.set(key, current);
@@ -184,7 +185,7 @@ export async function ensureSceneSpecFromAnalysis(
   storage: AssetStorage,
   projectSlug: string,
 ): Promise<SceneSpec> {
-  return serial(projectSceneSpecFile(projectSlug), async () => {
+  return serial(storage, projectSceneSpecFile(projectSlug), async () => {
     const analysisPath = projectAnalysisFile(projectSlug);
     if (!(await storage.exists(analysisPath))) {
       throw new ChatServiceError(
@@ -301,7 +302,7 @@ export function mutateSceneJob(
   reducer: (job: SceneJob) => SceneJob | Promise<SceneJob>,
 ): Promise<SceneJob> {
   const path = projectSceneJobFile(projectSlug, jobId);
-  return serial(path, async () => {
+  return serial(storage, path, async () => {
     const current = await readSceneJob(storage, projectSlug, jobId);
     const next = SceneJobSchema.parse({
       ...(await reducer(current)),

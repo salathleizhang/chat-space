@@ -2,6 +2,8 @@
 
 ChatSpace 的 Vite + React + R3F 客户端。
 
+访问网站会直接进入页面，无需回答入口问题；首次访问和刷新均不依赖旧的答题解锁记录。
+
 ```bash
 bun run dev
 bun run build
@@ -63,6 +65,7 @@ const materials = await (await import('/src/shared/rendering/materials.browser.t
 
 - MediaPipe JS 固定 `0.10.17`，WASM 使用同版本 CDN 路径，模型使用 Google 官方地址；可用 `?handWasm=<目录>&handModel=<URL>` 覆盖。Three 保持项目固定版本与 WebGPU-only 渲染器。
 - 开启时切单窗格。图像关键点确定手的屏幕位置和距离，骨骼姿态取原始三维关键点。
+- 手模与抓取射线每帧跟随实际交互相机：第三人称从透视窗格的 OrbitControls 读取当前相机，第一人称使用根画布相机。更新排在相机移动之后、核心场景渲染之前；切换投影时读取新相机，屏幕范围计入相机 zoom。
 - 预览叠加 2D 关键点与检测帧数，用于区分摄像头、检测与显示问题。
 - 开发构建加 `?handDebug=1` 后，`window.__HAND__` 提供 `status / inject / pose / pointer / pump / detectOnImage`。`pose()` 报告 `driver: "three-mediapipe-rig/HandsTracker.bind"`、实际模型 URL、物理/显示手身份、外层旋转及三个拇指骨四元数。诊断注入与摄像头帧互斥。
 

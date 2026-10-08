@@ -1,5 +1,6 @@
 import { ChatServiceError, toErrorMessage } from "../common/errors";
 import { randomUUID } from "node:crypto";
+import { currentCloudContext, type CloudOperation } from "../cloud/context";
 import { runWithTaskPump, taskPumpStatus, tickTaskPumps } from "../common/taskPump";
 import {
   assetDir,
@@ -136,6 +137,7 @@ export interface TaskExecutionContext {
 }
 
 interface StartTaskMetadata {
+  cloudOperation?: CloudOperation;
   assetSlug?: string;
   batchId?: string;
   retry?: GenerationTask["retry"];
@@ -151,7 +153,15 @@ export function startCustomTask(
   executor: (context: TaskExecutionContext) => Promise<unknown>,
   metadata: StartTaskMetadata = {},
 ): GenerationTask {
-  const id = `task-${++taskSeq}-${Date.now().toString(36)}`;
+  const cloud = currentCloudContext();
+  if (cloud?.capture) {
+    cloud.capture.executor = executor;
+    return cloud.capture.task;
+  }
+  const { cloudOperation, ...publicMetadata } = metadata;
+  const operation = cloudOperation ?? (metadata.retry ? { operation: "3d", input: { retry: metadata.retry } } : undefined);
+  if (cloud && !operation) throw new ChatServiceError(`此操作尚未支持浏览器任务：${kind}`, 409, "browser_operation_unsupported");
+  const id = cloud ? `task-${randomUUID()}` : `task-${++taskSeq}-${Date.now().toString(36)}`;
   const now = new Date().toISOString();
   const task: GenerationTask = {
     id,
@@ -161,10 +171,14 @@ export function startCustomTask(
     status: "running",
     phase: "queued",
     bootId: BOOT_ID,
-    ...metadata,
+    ...publicMetadata,
     createdAt: now,
     updatedAt: now,
   };
+  if (cloud) {
+    cloud.pending.push(cloud.enqueue(task, operation!));
+    return task;
+  }
   tasks.set(id, task);
   // 闸门必须**先于 executor** 建立：executor 里的每一次等待都要能认出自己的闸门，
   // 这样本进程定时器停摆时，工作台每秒一次的 GET /api/tasks 仍能把链路推着走
@@ -271,7 +285,7 @@ export function startWorldTask(
       },
       (phase) => context.setPhase(phase),
     );
-  });
+  }, { cloudOperation: { operation: "world", input } });
 }
 
 export function startSkyboxTask(
@@ -324,7 +338,7 @@ export function startResumeTask(projectSlug: string, sidecarPath: string): Gener
         (phase) => context.setPhase(phase),
       );
     },
-    { resumeSidecar: sidecarPath },
+    { resumeSidecar: sidecarPath, cloudOperation: { operation: "resume", input: { sidecarPath } } },
   );
 }
 
@@ -336,6 +350,24 @@ export function startResumeTask(projectSlug: string, sidecarPath: string): Gener
 const autoResumedTasks = new Set<string>();
 
 export async function listTasks(projectSlug?: string): Promise<GenerationTask[]> {
+  // 浏览器任务由独立 worker 执行；当前请求的 bootId/内存表不能判断它是否中断。
+  if (currentCloudContext()) {
+    const storage = getAssetStorage();
+    const projects = projectSlug ? [projectSlug] : await storage.list("projects");
+    const found: GenerationTask[] = [];
+    for (const project of projects) {
+      for (const name of await storage.list(projectTasksDir(project))) {
+        if (!name.endsWith(".json")) continue;
+        found.push(await readJson(storage, `${projectTasksDir(project)}/${name}`, GenerationTaskSchema));
+      }
+    }
+    const stale = found.filter((task) => task.status === "running" && Date.now() - Date.parse(task.updatedAt) > STALLED_TASK_WARN_MS);
+    if (stale.length) {
+      const activeIds = await currentCloudContext()!.activeTaskIds?.() ?? new Set<string>();
+      for (const task of stale) task.stall = { silentForMs: Date.now() - Date.parse(task.updatedAt), pumpActive: activeIds.has(task.id) };
+    }
+    return found.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
   // **外部时钟**：工作台每 1 秒调一次这个接口（useTaskPolling），那条心跳来自浏览器进程，
   // 与本进程定时器的死活无关。生成链路的等待由它放行、超预算的在飞请求由它中止。
   // 放在这里而不是路由里：读任务列表的每一条路径（路由、Agent 工具、测试）都该推动任务。
@@ -481,6 +513,24 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
       merged.set(stalled.id, stalled);
       continue;
     }
+    /*
+      **磁盘上更新的那一份必须赢**。内存表不是权威：写盘路径不止这一张表。
+
+      2026-10-06 本机就是反例：`bun --hot` 重建模块后，老实例里还活着的 executor 在
+      自己的表上把世界任务写成 succeeded 并落盘，而新实例的 `listTasks` 只把磁盘上那条
+      running 认领回内存（上面 bootId 分支）。此后的每次读都被内存里的旧快照盖住——
+      接口一直报 05:44:40 running，磁盘上其实是 05:47:22 succeeded，而且 stall 诊断还会
+      说 `pumpActive=false`（根本没有执行者在照看它），用户看到的就是"已经生成完的世界
+      永远卡在生成中"。
+
+      判据用 `updatedAt`：GenerationTaskSchema 收的是 ISO 时间串，同格式可直接比大小。
+    */
+    const fromDisk = merged.get(task.id);
+    if (fromDisk && fromDisk.updatedAt > task.updatedAt) {
+      tasks.set(fromDisk.id, fromDisk);
+      merged.set(fromDisk.id, fromDisk);
+      continue;
+    }
     merged.set(task.id, task);
   }
   const now = Date.now();
@@ -493,7 +543,7 @@ export async function getTask(
   projectSlug: string,
   id: string,
 ): Promise<GenerationTask | undefined> {
-  const current = tasks.get(id);
+  const current = currentCloudContext() ? undefined : tasks.get(id);
   if (current?.projectSlug === projectSlug) return current;
   const path = projectTaskFile(projectSlug, id);
   return (await getAssetStorage().exists(path))

@@ -1,3 +1,4 @@
+import { CloudTaskPending } from "../../cloud/context";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
 import { formatRequestSidecarName, nextIndex } from "../../common/indexedFiles";
 import { assetDir } from "../../common/libraryPaths";
@@ -147,6 +148,7 @@ export async function runArk3dImageTo3d(
     await saveSidecar();
     return { files, sidecar: sidecarPath, taskId };
   } catch (error) {
+    if (error instanceof CloudTaskPending) throw error;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(error);
     await saveSidecar();

@@ -400,4 +400,34 @@ describe("卡死看门狗", () => {
     expect(listed?.status).toBe("failed");
     expect(listed?.error).toContain("resume-generation");
   });
+
+  /**
+   * 2026-10-06 本机事故的形状：`bun --hot` 重建模块后，老实例里的 executor 把终态写进了
+   * 磁盘（succeeded），新实例的内存表却还停在 running——接口于是永远报"生成中"，还配上
+   * `pumpActive=false`（没有任何执行者在照看它）。改之前内存表无条件盖掉磁盘，这条会红。
+   */
+  test("磁盘上更新的终态不会被内存里的旧快照盖住", async () => {
+    await createProject(storage, { name: "旧快照项目", slug: "stale-memory" });
+    const task = startCustomTask("world", "stale-memory", "世界生成", () => new Promise(() => {}), {
+      assetSlug: "world",
+    });
+    const path = await waitForTaskFile("stale-memory", task.id);
+
+    // 另一个模块实例写下的终态：状态是完成的，updatedAt 比内存里那份新
+    const record = await readJson(storage, path, GenerationTaskSchema);
+    await writeJson(storage, path, GenerationTaskSchema, {
+      ...record,
+      status: "succeeded",
+      phase: "completed",
+      updatedAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    const listed = (await listTasks("stale-memory")).find((entry) => entry.id === task.id);
+    expect(listed?.status).toBe("succeeded");
+    expect(listed?.phase).toBe("completed");
+
+    // 内存表也要一并修好：紧接着再读一次不能又退回 running（否则只有第一次读是对的）
+    const again = (await listTasks("stale-memory")).find((entry) => entry.id === task.id);
+    expect(again?.status).toBe("succeeded");
+  });
 });

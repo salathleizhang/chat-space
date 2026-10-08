@@ -1,3 +1,4 @@
+import { CloudTaskPending, currentCloudContext } from "../../cloud/context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
@@ -382,6 +383,9 @@ export async function resumeGeneration(
     } else if (sidecar.provider === "blockade-labs" && sidecar.model === "skybox/export") {
       await registerResumedSkybox(storage, projectSlugOf(sidecarPath), sidecar);
     }
+    if (currentCloudContext() && /\/tasks\/[^/]+\/work\//.test(sidecarPath)) {
+      await publishResumedModel(storage, projectSlugOf(sidecarPath), sidecarPath, sidecar, files, outputs);
+    }
     return { files, sidecar: sidecarPath };
   }
 
@@ -602,6 +606,7 @@ export async function resumeGeneration(
     await save({});
     return { files, sidecar: sidecarPath };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     await save({ status: "failed", error: toErrorMessage(err) });
     throw err;
   }
@@ -620,6 +625,11 @@ export const resumeGenerationTool = createTool({
     const projectSlug = requireCurrentProject(context);
     if (!input.sidecarPath.startsWith(`projects/${projectSlug}/`)) {
       throw new ChatServiceError("只能续跑当前项目中的生成任务", 403, "project_scope_violation");
+    }
+    if (currentCloudContext()) {
+      const { startResumeTask } = await import("../../services/tasks");
+      const task = startResumeTask(projectSlug, input.sidecarPath);
+      return { task: { id: task.id, subject: task.subject, status: task.status } };
     }
     return resumeGeneration(getAssetStorage(), input.sidecarPath, {
       worldLabsApiKey: optionalContextString(context, "worldLabsApiKey"),

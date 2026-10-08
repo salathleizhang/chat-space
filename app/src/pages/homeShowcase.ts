@@ -9,9 +9,8 @@
  * - `SHOWCASE_WORLDS` —— 搜索框下面的 4 张世界缩略图。`projectSlug` 有值就是真实世界，
  *   点击进入该世界的项目工作台（视口会把该世界作为当前世界渲染）；缺省表示占位项，
  *   点击回到项目列表。**把真实 slug 填上就接上了**，别的地方都不用改。
- * - `PRODUCT_FEATURES` —— 10 个特性，左右交替排版。现在 `image` 是静态占位图；
- *   等录屏做好，把 `video` 填上（`.mp4` / `.webm`），组件会自动优先渲染 `<video>`，
- *   `image` 退化成 poster，不用改组件。
+ * - `PRODUCT_FEATURES` —— 特性按顺序左右交替排版。已提供的 GIF 录屏转成
+ *   `.mp4` 接在 `video` 上，`image` 是同一录屏的首帧 poster；其余项仍用静态图。
  */
 
 export interface ShowcaseWorld {
@@ -36,7 +35,7 @@ export interface ProductFeature {
   tagline: string;
   body: string;
   bullets: string[];
-  /** 静态占位图；录屏接上后它变成 `<video>` 的 poster */
+  /** 静态预览图；有录屏时是同一录屏的首帧 poster */
   image: string;
   /** 动态素材（mp4/webm）。填上后组件优先渲染它，无需改组件 */
   video?: string;
@@ -79,58 +78,49 @@ export const SHOWCASE_WORLDS: ShowcaseWorld[] = [
 ];
 
 /**
- * 10 个产品特性，按展示顺序排列；组件按索引奇偶决定图像在左还是在右。
+ * 产品特性按展示顺序排列；组件按索引奇偶决定图像在左还是在右。
  *
  * 图像两张一组交替，所以列表顺序就是页面上的阅读顺序。
  */
 export const PRODUCT_FEATURES: ProductFeature[] = [
   {
     id: "model-generation",
-    title: "Model generation",
+    title: "Model generation & editing",
     tagline: "Text or image in, textured mesh out.",
-    body: "Describe a prop, or drop in a reference photo. ChatSpace generates the geometry, materials and textures, then puts the asset straight into the scene you are already looking at.",
+    body: "Describe a prop, or drop in a reference photo. ChatSpace generates the geometry, materials and textures, then puts the asset straight into your scene. Select a model and describe the changes you want to make.",
     bullets: [
       "Started from a prompt or a reference image",
       "Textured materials assigned on arrival",
       "Lands in the shared scene, ready to place",
     ],
     image: "/features/model-generation.jpg",
+    video: "/features/model-generation.mp4",
+  },
+  {
+    id: "world-generation",
+    title: "World generation",
+    tagline: "Turn a reference into a world you can build in.",
+    body: "Start from an image or a description to generate an environment. Ask for the furniture separately, then arrange the generated models inside your world.",
+    bullets: [
+      "Start from an image or a prompt",
+      "Generate the environment and individual models",
+      "Explore and arrange everything in one workspace",
+    ],
+    image: "/features/world-generation.jpg",
+    video: "/features/world-generation.mp4",
   },
   {
     id: "batch-editing",
-    title: "Batch editing",
-    tagline: "Operate on the whole set, not one asset at a time.",
-    body: "Multi-select any number of assets and move, rotate, scale or re-material them together. The whole batch is committed as a single step, so one undo rewinds all of it.",
+    title: "Batch generation & editing",
+    tagline: "Generate a whole set, then edit it together.",
+    body: "Describe several models in one request and let ChatSpace generate the set. Multi-select assets to move, rotate, scale or re-material them together, with one undo step for each batch transform.",
     bullets: [
       "Multi-select transform on one shared gizmo",
       "One undo step per batch",
-      "Mixes assets from different generations",
+      "Generate multiple models in one request",
     ],
     image: "/features/batch-editing.jpg",
-  },
-  {
-    id: "auto-uv",
-    title: "Automatic UV unwrap",
-    tagline: "Clean UV islands without leaving the conversation.",
-    body: "Every generated model arrives already unwrapped. Re-unwrap any asset on demand, and the new layout flows straight into the texture pipeline.",
-    bullets: [
-      "Unwrapped automatically on generation",
-      "Re-unwrap any asset on demand",
-      "Islands published for texture generation",
-    ],
-    image: "/features/auto-uv.jpg",
-  },
-  {
-    id: "auto-decimation",
-    title: "Automatic decimation",
-    tagline: "Pick a polygon budget, keep the silhouette.",
-    body: "Derive multiple levels of detail from a single asset. Worlds ship with a full ladder of resolutions so the viewport stays interactive at every zoom level.",
-    bullets: [
-      "Multiple LOD levels per asset",
-      "Percent-based reduction, never a rebake",
-      "Level of detail stays under your control",
-    ],
-    image: "/features/auto-decimation.jpg",
+    video: "/features/batch-editing.mp4",
   },
   {
     id: "auto-retopology",
@@ -158,7 +148,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   },
   {
     id: "shader-editing",
-    title: "Shader editing",
+    title: "Texture & shader editing",
     tagline: "Materials you can actually author.",
     body: "Inspect and edit the material graph of any asset: swap texture channels, drive roughness and metalness, or author your own node setup and watch it update live.",
     bullets: [
@@ -167,18 +157,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "Wireframe and shading modes for inspection",
     ],
     image: "/features/shader-editing.jpg",
-  },
-  {
-    id: "blender-bridge",
-    title: "Blender bridge",
-    tagline: "Round-trip through real Blender.",
-    body: "Send an asset — or the whole scene — to Blender and pull the result back into the same slot. Identity, placement and materials survive the handoff.",
-    bullets: [
-      "Asset and whole-scene handoff",
-      "Placement preserved on return",
-      "No re-import, no duplicate in the outliner",
-    ],
-    image: "/features/blender-bridge.jpg",
+    video: "/features/shader-editing.mp4",
   },
   {
     id: "remote-blender",
@@ -191,6 +170,20 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "Nothing to install on your own machine",
     ],
     image: "/features/remote-blender.jpg",
+    video: "/features/remote-blender.mp4",
+  },
+  {
+    id: "first-person-editing",
+    title: "First-person editing",
+    tagline: "Step into your scene and place things directly.",
+    body: "Explore the scene at eye level with mouse and keyboard controls. Grab a model, move it into place and release it; its placement is saved once it settles.",
+    bullets: [
+      "Mouse look and WASD movement",
+      "Grab and reposition models from inside the scene",
+      "Settled placements saved to undo history",
+    ],
+    image: "/features/first-person-editing.jpg",
+    video: "/features/first-person-editing.mp4",
   },
   {
     id: "gesture-control",
@@ -203,5 +196,6 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
       "Settles, then commits to undo history",
     ],
     image: "/features/gesture-control.jpg",
+    video: "/features/gesture-control.mp4",
   },
 ];

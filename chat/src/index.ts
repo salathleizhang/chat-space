@@ -9,10 +9,10 @@ const fetch = createLocalFetch(
   fileURLToPath(new URL("../../app/dist", import.meta.url)),
 );
 
-console.log(`[chat] ChatSpace listening on http://127.0.0.1:${config.port}/app`);
+console.log(`[chat] ChatSpace listening on http://${config.host}:${config.port}/app`);
 
 export default {
-  hostname: "127.0.0.1",
+  hostname: config.host,
   port: config.port,
   fetch,
   // SSE 长连接：放宽 Bun 默认 10s 空闲超时

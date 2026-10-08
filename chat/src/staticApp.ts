@@ -3,7 +3,7 @@ import { extname, resolve, sep } from "node:path";
 
 type ApiFetch = (request: Request) => Response | Promise<Response>;
 
-/** Serve the built SPA and local API from one loopback process. */
+/** Serve the built SPA and API from one Bun process. */
 export function createLocalFetch(apiFetch: ApiFetch, distDirectory: string): ApiFetch {
   const root = resolve(distDirectory);
   const indexFile = resolve(root, "index.html");

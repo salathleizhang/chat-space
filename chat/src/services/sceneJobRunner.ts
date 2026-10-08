@@ -1,9 +1,12 @@
 import { ChatServiceError, toErrorMessage } from "../common/errors";
 import { Deadline } from "../common/http";
+import { currentTaskPump } from "../common/taskPump";
+import { CloudTaskPending, currentCloudContext } from "../cloud/context";
 import {
   assetDir,
   assetIdentityFile,
   projectAssetsDir,
+  projectSourceDir,
 } from "../common/libraryPaths";
 import {
   AssetIdentitySchema,
@@ -26,6 +29,7 @@ import {
 import {
   findRunningTask,
   getTask,
+  listTasks,
   startCustomTask,
   type TaskExecutionContext,
 } from "./tasks";
@@ -125,7 +129,9 @@ async function waitForModelTask(projectSlug: string, taskId: string): Promise<st
     for (;;) {
       const task = await deadline.guard(getTask(projectSlug, taskId));
       if (!task || task.status === "running") {
-        await deadline.guard(new Promise((resolve) => setTimeout(resolve, 500)));
+        if (currentCloudContext()) throw new CloudTaskPending(10);
+        const pump = currentTaskPump();
+        await deadline.guard(pump ? pump.wait(500) : new Promise((resolve) => setTimeout(resolve, 500)));
         continue;
       }
       if (task.status === "failed") {
@@ -187,6 +193,14 @@ async function executePlateNode(
   spec: SceneSpec,
   keys: RunKeys,
 ): Promise<string[]> {
+  if (currentCloudContext()) {
+    const { composePlatePrompt } = await import("../mastra/tools/imageEdit");
+    const prompt = composePlatePrompt(spec.objects.map(({ slug, name, description }) => ({ slug, name, description })));
+    const existing = await succeededSidecar(storage, projectSourceDir(job.projectSlug), (sidecar) =>
+      sidecar.params.role === "plate" && sidecar.params.prompt === prompt &&
+      Array.isArray(sidecar.params.input_images) && sidecar.params.input_images.includes(spec.sourceImage));
+    if (existing) return existing.outputs.map((output) => output.path);
+  }
   const result = await runPlateGeneration(
     storage,
     {
@@ -266,6 +280,10 @@ async function executeModelNode(
     }
   }
 
+  // 队列再次投递时沿用已登记的子任务，不能重新提交付费模型。
+  if (currentCloudContext() && current.nodes[node.id]?.taskIds.length) {
+    return waitForModelTask(job.projectSlug, current.nodes[node.id]!.taskIds.at(-1)!);
+  }
   const task = startSeed3d3dBatch(
     job.projectSlug,
     [{ slug: object.slug, name: object.name, intent: object.description, sourceImages: [reference] }],
@@ -344,6 +362,10 @@ async function executeSceneNode(
       error: undefined,
     }));
   } catch (error) {
+    if (error instanceof CloudTaskPending) {
+      await updateNode(storage, job, original.id, (node) => ({ ...node, status: "pending", attempts: Math.max(0, node.attempts - 1) }));
+      throw error;
+    }
     await updateNode(storage, job, original.id, (node) => ({
       ...node,
       status: "failed",
@@ -383,12 +405,20 @@ export async function runSceneJob(
   if (unfinishedKinds.has("model")) requireRunKey(keys, "seed3dApiKey");
   if (unfinishedKinds.has("world")) requireRunKey(keys, "worldLabsApiKey");
 
-  await mutateSceneJob(storage, projectSlug, jobId, (job) => ({ ...job, status: "running" }));
+  await mutateSceneJob(storage, projectSlug, jobId, (job) => ({ ...job, status: "running",
+    ...(currentCloudContext() ? { nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [id,
+      node.status === "running" ? { ...node, status: "pending", attempts: Math.max(0, node.attempts - 1) } : node])) } : {}),
+  }));
   for (;;) {
     const job = await readSceneJob(storage, projectSlug, jobId);
     const activeNodes = Object.values(job.nodes).filter((node) => node.status !== "obsolete");
     const ready = activeNodes.filter((node) => isRunnable(node, job.nodes));
     if (ready.length > 0) {
+      if (currentCloudContext()) {
+        // 每次队列投递只推进一轮节点；已完成节点保留。
+        await executeSceneNode(storage, job, spec, ready[0]!, keys);
+        throw new CloudTaskPending(1);
+      }
       await Promise.all(ready.map((node) => executeSceneNode(storage, job, spec, node, keys)));
       continue;
     }
@@ -421,7 +451,9 @@ export async function startSceneJobExecution(
   keys: RunKeys,
 ) {
   const workflowId = `scene-job:${jobId}`;
-  const running = findRunningTask(projectSlug, workflowId);
+  const running = currentCloudContext()
+    ? (await listTasks(projectSlug)).find((task) => task.workflowId === workflowId && task.status === "running")
+    : findRunningTask(projectSlug, workflowId);
   if (running) return running;
   const task = startCustomTask(
     workflowId,
@@ -431,6 +463,7 @@ export async function startSceneJobExecution(
       await execution.setPhase("generating");
       return runSceneJob(projectSlug, jobId, keys);
     },
+    { cloudOperation: { operation: "scene-job", input: { jobId } } },
   );
   await mutateSceneJob(getAssetStorage(), projectSlug, jobId, (job) => ({
     ...job,

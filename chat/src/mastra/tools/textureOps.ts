@@ -44,7 +44,7 @@ export const generateTextureTool = createTool({
         // updatedAt 一动不动，看板上与卡死无法区分（2026-10-02 就是这么挂掉一次）。
         { apiKey: tripoKey, onPhase: (phase) => task.setPhase(phase) },
       ),
-      { assetSlug: input.assetSlug },
+      { assetSlug: input.assetSlug, cloudOperation: { operation: "texture", input } },
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };
   },

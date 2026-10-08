@@ -88,18 +88,21 @@ export function saveLlmSettings(settings: LlmSettings): boolean {
 
 export interface ThreeDModelSettings { model: string }
 
-/** 下拉列出的是具体模型，不是渠道；值与 chat/src/models/threeD.ts 的选择键逐字对应。 */
+/**
+ * 下拉列出的是具体模型，不是渠道；值与 chat/src/models/threeD.ts 的选择键逐字对应。
+ * 暂时隐藏的模型保留配置与后端接入；移除 hidden 标记即可重新展示。
+ */
 export const THREE_D_MODEL_PRESETS = [
   { value: "", label: "Auto" },
-  { value: "seed3d-2", label: "Seed3D 2.0" },
-  { value: "hyper3d-gen2", label: "Hyper3D Gen-2" },
-  { value: "hi3d-2", label: "Hi3D 2.0" },
+  { value: "seed3d-2", label: "Seed3D 2.0", hidden: true },
+  { value: "hyper3d-gen2", label: "Hyper3D Gen-2", hidden: true },
+  { value: "hi3d-2", label: "Hi3D 2.0", hidden: true },
   { value: "tripo-3-1", label: "Tripo 3.1" },
   { value: "tripo-p1", label: "Tripo P1" },
   { value: "tripo-p2", label: "Tripo P2" },
-];
+].filter((preset) => !preset.hidden);
 
-/** 旧版渠道偏好 → 该渠道的默认模型，迁移时保住用户原来的选择。 */
+/** 旧版渠道偏好 → 该渠道的默认模型；已隐藏的模型由 savedThreeDModel 回退到 Auto。 */
 const LEGACY_PROVIDER_MODELS: Record<string, string> = {
   "seed3d-direct": "seed3d-2",
   "hyper3d-volc": "hyper3d-gen2",

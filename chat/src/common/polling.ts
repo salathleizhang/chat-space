@@ -7,6 +7,7 @@ import {
   withHardTimeout,
 } from "./http";
 import { currentTaskPump } from "./taskPump";
+import { CloudTaskPending, currentCloudContext } from "../cloud/context";
 
 /**
  * 供应商轮询的公共骨架。
@@ -90,6 +91,7 @@ export async function pollProviderTask<T>(options: ProviderPoll<T>): Promise<T> 
         // 供应商明确回错的业务错误立刻冒泡；网络抖动/单次超时才重试。
         if (!isRetryableNetworkError(error)) throw error;
         if (deadline.expired) throw deadline.error();
+        if (currentCloudContext()?.polling) throw new CloudTaskPending(Math.max(1, Math.ceil(options.pollIntervalMs / 1000)));
         await deadline.guard(wait(options.pollIntervalMs));
         continue;
       } finally {
@@ -100,6 +102,8 @@ export async function pollProviderTask<T>(options: ProviderPoll<T>): Promise<T> 
       const failure = options.failureOf(result);
       if (failure) throw failure;
       if (deadline.expired) throw deadline.error();
+      // 云端查询一次即释放函数：等待交给持久化队列，不压着实例睡眠。
+      if (currentCloudContext()?.polling) throw new CloudTaskPending(Math.max(1, Math.ceil(options.pollIntervalMs / 1000)));
       await deadline.guard(wait(options.pollIntervalMs));
     }
   } finally {

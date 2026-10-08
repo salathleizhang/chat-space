@@ -22,6 +22,7 @@ import {
   type AssetStorage,
 } from "./assetStorage";
 import { readCandidates } from "./candidateRegistry";
+import { replyLanguageForMessages } from "./replyLanguage";
 import { buildRequestContext } from "./workflowRuns";
 
 /** Mastra 消息（贴 AI SDK ModelMessage 判别联合：只有 user 能带图片部件） */
@@ -345,6 +346,38 @@ export function toAnswerMessage(answer: AskUserAnswer): AgentMessage {
   return { role: "user", content: answerContextText(answer) };
 }
 
+/**
+ * 把服务端判定的回复语言指令追加到**本轮最后一条 user 消息**末尾。
+ *
+ * 位置是刻意的：固定指令在最前、中间隔着整段中文项目上下文与中文工具返回值，一条写在
+ * 那里的"跟随用户语言"压不住这些信号（2026-10-06 用户报"我说英文它回中文"，会话库里
+ * 英文开场得到整条中文回复的样本就在 `s-p-mupq6eua-mupq6eum`）。判断放在模型最后读到的
+ * 那条消息末尾，才和"这一轮该用什么语言"绑定在一起。
+ *
+ * 判定只看 `source`（客户端带来的会话历史，用户真实发言只在这里）。工作台续跑轮虽然也
+ * 借 user 角色，但不是用户发言，`replyLanguageForMessages` 会跳过它们。
+ */
+export function withReplyLanguageDirective(
+  messages: AgentMessage[],
+  source: readonly ChatMessage[],
+): AgentMessage[] {
+  const language = replyLanguageForMessages(source);
+  if (!language) return messages;
+  const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
+  if (lastUserIndex < 0) return messages;
+  const next = [...messages];
+  const target = next[lastUserIndex]!;
+  if (target.role !== "user") return messages;
+  next[lastUserIndex] = {
+    role: "user",
+    content:
+      typeof target.content === "string"
+        ? `${target.content}\n\n${language.directive}`
+        : [...target.content, { type: "text", text: language.directive }],
+  };
+  return next;
+}
+
 /** 把对话请求中的临时配置完整注入 Agent 工具上下文。 */
 export function buildChatRequestContext(
   request: ChatStreamRequest,
@@ -490,12 +523,15 @@ export async function* streamChat(
         : []),
     ].join("\n"),
   };
-  const messages = [
-    projectContext,
-    ...(await toAgentMessages(storage, request.messages, assetNamesBySlug)),
-    ...(request.resume ? [await toResumeMessage(storage, request.resume)] : []),
-    ...(request.answer ? [toAnswerMessage(request.answer)] : []),
-  ];
+  const messages = withReplyLanguageDirective(
+    [
+      projectContext,
+      ...(await toAgentMessages(storage, request.messages, assetNamesBySlug)),
+      ...(request.resume ? [await toResumeMessage(storage, request.resume)] : []),
+      ...(request.answer ? [toAnswerMessage(request.answer)] : []),
+    ],
+    request.messages,
+  );
   // 当前项目与供应商 key 注入工具上下文（都只活在请求生命周期）
   const output = await agent.stream(messages, {
     abortSignal,

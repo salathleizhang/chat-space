@@ -1,3 +1,4 @@
+import { CloudTaskPending } from "../../cloud/context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
@@ -117,6 +118,7 @@ export async function runHunyuanUvUnwrap(
     await saveSidecar();
     return { files, sidecar: sidecarPath, jobId };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();
@@ -148,6 +150,7 @@ export const unwrapUvTool = createTool({
           { projectSlug, assetSlug: input.assetSlug },
           { apiKey },
         ),
+      { assetSlug: input.assetSlug, cloudOperation: { operation: "uv", input } },
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };
   },

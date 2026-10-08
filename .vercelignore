@@ -1,0 +1,10 @@
+.git
+.vercel-api-bundle
+**/node_modules
+**/.env
+**/.env.*
+output
+.tmp
+.pc-research
+blender/docker/vendor
+*.log

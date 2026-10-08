@@ -1,3 +1,4 @@
+import { CloudTaskPending } from "../../cloud/context";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
 import { formatRequestSidecarName, nextIndex } from "../../common/indexedFiles";
@@ -158,6 +159,7 @@ export async function runSeed3dImageTo3d(
     await saveSidecar();
     return { files, sidecar: sidecarPath, taskId };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();

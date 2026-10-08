@@ -10,7 +10,9 @@ export const DOUBAO_EVOLVING_SELECTION = "doubao-seed-evolving";
 export const DOUBAO_PRO_SELECTION = "doubao-seed-2-1-pro-260915";
 
 const EnvSchema = z.object({
-  CHAT_PORT: z.coerce.number().int().positive().default(3901),
+  CHAT_PORT: z.coerce.number().int().positive().max(65535).optional(),
+  PORT: z.coerce.number().int().positive().max(65535).optional(),
+  CHAT_HOST: z.string().min(1).default("127.0.0.1"),
   CHATSPACE_LIBRARY_DIR: z.string().min(1).optional(),
   CHATSPACE_WEB_ORIGINS: z.string().optional(),
   VOLC_KEY: z.string().min(1).optional(),
@@ -115,7 +117,8 @@ export function serverResumeKeys(): {
 }
 
 export const config = {
-  port: env.CHAT_PORT,
+  port: env.CHAT_PORT ?? env.PORT ?? 3901,
+  host: env.CHAT_HOST,
   library: { root: env.CHATSPACE_LIBRARY_DIR ?? defaultLibraryRoot() },
   cors: { isAllowedOrigin: createAllowedOriginChecker(env.CHATSPACE_WEB_ORIGINS) },
   llm: {
@@ -138,7 +141,7 @@ export const config = {
    * MCP server 是本地代理，所以"Blender 在云端"只需要改这两个值，工具层一个字不动。
    */
   blender: {
-    enabled: env.BLENDER_ENABLED === true,
+    enabled: process.env.VERCEL !== "1" && env.BLENDER_ENABLED === true,
     host: env.BLENDER_HOST ?? "127.0.0.1",
     port: env.BLENDER_PORT ?? 9876,
     bin: env.BLENDER_MCP_BIN ?? "uvx",

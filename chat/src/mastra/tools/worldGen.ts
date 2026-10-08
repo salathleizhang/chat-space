@@ -1,3 +1,4 @@
+import { CloudTaskPending } from "../../cloud/context";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
 import {
@@ -211,6 +212,7 @@ export async function runWorldGeneration(
     await onPublished?.(params.worldSlug);
     return { worldJson: worldJsonPath, files, sidecar: sidecarPath, operationId };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();

@@ -1,0 +1,9 @@
+{
+  "extends": "./chat/tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun"]
+  },
+  "include": ["api/**/*.ts"]
+}

@@ -66,26 +66,29 @@ describe("server-only provider migration", () => {
   });
 
   test.each([
-    ["seed3d-direct", "seed3d-2"],
-    ["hyper3d-volc", "hyper3d-gen2"],
-    ["hi3d-volc", "hi3d-2"],
+    ["seed3d-direct", ""],
+    ["hyper3d-volc", ""],
+    ["hi3d-volc", ""],
     ["tripo-direct", "tripo-3-1"],
-  ])("旧版渠道偏好迁移到该渠道默认模型：%s → %s", (provider, model) => {
+  ])("旧版渠道偏好迁移，隐藏模型回退到 Auto：%s → %s", (provider, model) => {
     localStorage.setItem("chatspace.threeDProviderSettings:v1", JSON.stringify({ provider }));
     expect(loadThreeDModelSettings().model).toBe(model);
   });
 
   test("旧键（gabo 前缀）里的 3D 渠道偏好同样迁移", () => {
     localStorage.setItem("gabo.threeDProviderSettings:v1", JSON.stringify({ provider: "hi3d-volc" }));
-    expect(loadThreeDModelSettings().model).toBe("hi3d-2");
+    expect(loadThreeDModelSettings().model).toBe("");
   });
 
   test.each(["seed3d-2", "hyper3d-gen2", "hi3d-2", "tripo-3-1", "tripo-p1", "tripo-p2"])(
-    "保存并恢复 3D 模型选择：%s",
+    "保存并恢复 3D 模型选择，隐藏模型回退到 Auto：%s",
     (model) => {
+      const expected = ["seed3d-2", "hyper3d-gen2", "hi3d-2"].includes(model) ? "" : model;
+      localStorage.setItem("chatspace.threeDModelSettings:v1", JSON.stringify({ model }));
+      expect(loadThreeDModelSettings().model).toBe(expected);
       expect(saveThreeDModelSettings({ model })).toBe(true);
-      expect(loadThreeDModelSettings().model).toBe(model);
-      expect(JSON.parse(localStorage.getItem("chatspace.threeDModelSettings:v1")!)).toEqual({ model });
+      expect(loadThreeDModelSettings().model).toBe(expected);
+      expect(JSON.parse(localStorage.getItem("chatspace.threeDModelSettings:v1")!)).toEqual({ model: expected });
     },
   );
 

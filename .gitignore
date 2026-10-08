@@ -9,6 +9,7 @@ node_modules
 !.env.example
 .DS_Store
 .wrangler/
+.vercel/
 *.log
 
 # PlayCanvas migration research clones (shallow, ~990MB, not part of the build)
@@ -18,3 +19,9 @@ node_modules
 # `blender/docker/` 从它 COPY 进镜像，避免每次重建都从 download.blender.org 重下。
 # 实测源站速度在 3MB/s 与 180KB/s 之间跳，后者下一次要 45 分钟。
 blender/docker/vendor/
+.vercel
+.env*
+.vercel-api-bundle/
+
+# Generated browser-local worker (built before Vite copies public/)
+app/public/local-runtime.js

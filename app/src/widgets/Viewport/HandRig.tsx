@@ -118,6 +118,8 @@ interface PlacementDrag {
 
 export interface HandRigProps {
   store: HandTrackingStore;
+  /** 当前交互窗格的相机；第一人称使用根画布相机。每帧读取以支持投影切换。 */
+  cameraSource?: () => THREE.Camera | null;
   /** 手势模式开着没有。关掉时整双手隐藏、不发布射线、并把进行中的抓取收尾 */
   enabled: boolean;
   /** 直接写摆放这条通路的抓手：已挂载资产表 + 摆放表 + 实时摆放表（都由视口注入） */
@@ -138,26 +140,27 @@ export interface HandRigProps {
 export function extentsForCamera(camera: THREE.Camera, distance: number): ViewExtents {
   const perspective = camera as THREE.PerspectiveCamera;
   if (perspective.isPerspectiveCamera) {
-    return perspectiveExtents(perspective.fov, perspective.aspect, distance);
+    return perspectiveExtents(perspective.getEffectiveFOV(), perspective.aspect, distance);
   }
   const orthographic = camera as THREE.OrthographicCamera;
   if (orthographic.isOrthographicCamera) {
     const height = orthographic.top - orthographic.bottom;
     const aspect = height !== 0 ? (orthographic.right - orthographic.left) / height : 1;
-    return orthographicExtents(orthographic.top, orthographic.bottom, aspect);
+    return orthographicExtents(orthographic.top / orthographic.zoom, orthographic.bottom / orthographic.zoom, aspect);
   }
   return { width: 1, height: 1 };
 }
 
 export function HandRig({
   store,
+  cameraSource,
   enabled,
   placement,
   onGrabAsset,
   onPlacementCommit,
   maxGrabDistance = DRAG_MAX_DISTANCE,
 }: HandRigProps) {
-  const camera = useThree((state) => state.camera);
+  const rootCamera = useThree((state) => state.camera);
   const { rapier, world } = useRapier();
 
   /* ---------------------------------------------------------------- 作者配套手模与完整库绑定 */
@@ -227,6 +230,7 @@ export function HandRig({
   const scratch = useMemo(
     () => ({
       camPos: new THREE.Vector3(),
+      camQuat: new THREE.Quaternion(),
       offset: new THREE.Vector3(),
       tip: new THREE.Vector3(),
       thumb: new THREE.Vector3(),
@@ -355,6 +359,7 @@ export function HandRig({
   */
   useEffect(() => {
     setHandProbe(() => {
+      const camera = cameraSource?.() ?? rootCamera;
       const read = (slot: PhysicalHand) => {
         const instance = instancesRef.current?.find((candidate) => candidate.slot === slot);
         if (!instance) return null;
@@ -484,7 +489,7 @@ export function HandRig({
       };
     });
     return () => setHandProbe(null);
-  }, [store, scratch, camera, rapier, world]);
+  }, [store, scratch, rootCamera, cameraSource, rapier, world]);
 
   /* ---------------------------------------------------------------- 每帧更新 */
 
@@ -493,6 +498,7 @@ export function HandRig({
   /** 已经"接手"过的检测帧号：同一个帧号只续一次帧，检测停下就不再要帧 */
   const drawnFrameId = useRef(-1);
 
+  // 相机/轨道飞行在 priority 0 更新，核心场景在 1 渲染；手在两者之间同步。
   useFrame((_state, delta) => {
     renderTicks.current += 1;
     const frame = store.getFrame();
@@ -525,8 +531,11 @@ export function HandRig({
       hideAllHands();
       return;
     }
+    // 手模在核心场景，轨道相机在窗格 portal；不能用根 store 的静止默认相机。
+    const camera = cameraSource?.() ?? rootCamera;
     const extents = extentsForCamera(camera, HAND_DEPTH);
     const cameraPosition = camera.getWorldPosition(scratch.camPos);
+    const cameraQuaternion = camera.getWorldQuaternion(scratch.camQuat);
 
     // 本轮里可用的手与显示手模的捏合点世界坐标。
     const candidates: { slot: PhysicalHand; hand: TrackedHand; tipWorld: Vec3 }[] = [];
@@ -569,7 +578,7 @@ export function HandRig({
         ? imageExtent / extents.height
         : 1;
       const depth = perspective.isPerspectiveCamera
-        ? handDepthForSight(spanFraction, perspective.fov)
+        ? handDepthForSight(spanFraction, perspective.getEffectiveFOV())
         : HAND_DEPTH;
       const depthRatio = depth / HAND_DEPTH;
       const anchorX = (HAND_ANCHORS[slot][0] - 0.5) * extents.width;
@@ -580,9 +589,9 @@ export function HandRig({
           (anchorY + projection.palmOffset[1]) * depthRatio,
           -depth,
         )
-        .applyQuaternion(camera.quaternion);
+        .applyQuaternion(cameraQuaternion);
       instance.holder.position.copy(cameraPosition).add(scratch.offset);
-      instance.holder.quaternion.copy(camera.quaternion).multiply(EDITOR_HAND_ROTATION);
+      instance.holder.quaternion.copy(cameraQuaternion).multiply(EDITOR_HAND_ROTATION);
       instance.holder.scale.setScalar(instance.scale);
       instance.holder.visible = true;
       // Complete upstream palm/finger binding and Ghost.lerp; no previous
@@ -634,7 +643,7 @@ export function HandRig({
     // 发布给物理步（第一人称的抓取在物理步里读它，与渲染帧不是一个节奏）
     store.setPointer(pointer);
     applyInteraction(pointer);
-  });
+  }, 0.5);
 
   return (
     <>

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   mkdir,
   readdir,
@@ -15,10 +16,14 @@ import { config } from "../config";
 import { LogicalPathSchema } from "../dto/library";
 
 /**
- * 存储访问层：workflow/tool 不直接调文件系统 API，一律经此接口（云迁移纪律 ②）。
- * 所有 path 参数是相对资产库根的逻辑路径；本地实现拼磁盘路径，云版实现拼对象存储 key。
+ * 存储访问层：workflow/tool 不直接调文件系统 API，一律经此接口。
+ * 所有 path 参数是相对资产库根的逻辑路径；本机实现拼磁盘路径，浏览器实现使用 IndexedDB 逻辑键。
  */
 export interface AssetStorage {
+  /** 浏览器使用 Web Locks 串行化读改写；本机实现沿用调用方的进程锁。 */
+  withLock?<T>(path: string, operation: () => Promise<T>): Promise<T>;
+  /** 可选流读取，浏览器本地文件可直接使用 Blob.stream()。 */
+  readStream?(path: string): Promise<ReadableStream<Uint8Array>>;
   readText(path: string): Promise<string>;
   readBytes(path: string): Promise<Uint8Array>;
   writeText(path: string, text: string): Promise<void>;
@@ -34,7 +39,7 @@ export interface AssetStorage {
    */
   createExclusive(path: string, content: string): Promise<boolean>;
   remove(path: string): Promise<void>;
-  /** 本地同库发布用原子移动；云存储可用提交标记实现而不提供此能力。 */
+  /** 同库发布用原子移动；浏览器将目录键变更合并为一个事务。 */
   move?(sourcePath: string, targetPath: string): Promise<void>;
 }
 
@@ -217,8 +222,19 @@ export async function readAsDataUri(
 }
 
 let defaultStorage: AssetStorage | undefined;
+const storageContext = new AsyncLocalStorage<AssetStorage>();
+
+/** 每个 HTTP 请求/队列任务各自持有工作区，不能通过全局 setter 切换租户。 */
+export function withAssetStorage<T>(storage: AssetStorage, operation: () => T): T {
+  return storageContext.run(storage, operation);
+}
 
 export function getAssetStorage(): AssetStorage {
+  const scoped = storageContext.getStore();
+  if (scoped) return scoped;
+  if (process.env.VERCEL === "1") {
+    throw new ChatServiceError("云端工作区尚未初始化", 503, "cloud_storage_unavailable");
+  }
   defaultStorage ??= new LocalFileStorage(config.library.root);
   return defaultStorage;
 }

@@ -1,13 +1,11 @@
-import { StrictMode, useState } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { router } from "./app/router";
-import { AccessGatePage } from "./pages/AccessGatePage";
 import {
   clearStaleChunkReloadFlag,
   installStaleChunkReload,
 } from "./shared/lib/staleChunkReload";
-import { hasPassedAccessGate } from "./shared/storage/accessGate";
 import { clearLegacyApiKeys } from "./shared/storage/apiKeys";
 import "./index.css";
 
@@ -22,12 +20,10 @@ clearStaleChunkReloadFlag();
 
 clearLegacyApiKeys();
 
-/** 访问门禁挡在整个路由树之前：未答对时连页面 chunk 都不加载，
-    也就不会触发任何会消耗供应商 token 的请求。 */
+const LocalStorageNotice = lazy(() => import("./browser/LocalStorageNotice").then(module => ({ default: module.LocalStorageNotice })));
+
 function AppRoot() {
-  const [unlocked, setUnlocked] = useState(hasPassedAccessGate);
-  if (!unlocked) return <AccessGatePage onUnlock={() => setUnlocked(true)} />;
-  return <RouterProvider router={router} />;
+  return <><RouterProvider router={router} />{import.meta.env.VITE_BROWSER_LOCAL === "1" && <Suspense fallback={null}><LocalStorageNotice /></Suspense>}</>;
 }
 
 createRoot(document.getElementById("root")!).render(

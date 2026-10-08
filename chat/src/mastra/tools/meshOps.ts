@@ -23,6 +23,7 @@ function startTripoTask(
   context: unknown,
   kind: MeshOperation,
   subject: string,
+  input: Record<string, unknown>,
   run: (
     projectSlug: string,
     apiKey: string,
@@ -38,6 +39,7 @@ function startTripoTask(
   const task = startCustomTask(kind, projectSlug, subject, (task) =>
     // 绑骨/降面同样是「提交 → 轮询 → 下载」，阶段必须落盘（否则全程停在 queued）
     run(projectSlug, apiKey, (phase) => task.setPhase(phase)),
+    { assetSlug: String(input.assetSlug), cloudOperation: { operation: kind, input } },
   );
   return { task: { id: task.id, subject: task.subject, status: task.status } };
 }
@@ -60,7 +62,7 @@ export const retopologizeTool = createTool({
     bake: z.boolean().optional(),
   }),
   execute: async (input, context) =>
-    startTripoTask(context, "retopo", `重拓扑：${input.assetSlug}`, (projectSlug, apiKey, onPhase) =>
+    startTripoTask(context, "retopo", `重拓扑：${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
       // 结果里也带 modelInfo：交付时能如实报出"现在多少面"（降面任务本身不再触发降面卡片）
       runWithGeneratedModelInfo(getAssetStorage(), projectSlug, input.assetSlug, () =>
         runTripoRetopology(
@@ -92,7 +94,7 @@ export const rigModelTool = createTool({
     tripoRigModel: z.enum(["v1.0-20240301", "v2.5-20260210"]).optional(),
   }),
   execute: async (input, context) =>
-    startTripoTask(context, "rig", `绑骨蒙皮：${input.assetSlug}`, (projectSlug, apiKey, onPhase) =>
+    startTripoTask(context, "rig", `绑骨蒙皮：${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
       runTripoRig(
         getAssetStorage(),
         {

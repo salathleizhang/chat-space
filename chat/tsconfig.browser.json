@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable",
+      "DOM.AsyncIterable"
+    ],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": [
+    "../app/src/browser/**/*.ts",
+    "../app/src/browser/**/*.d.ts"
+  ],
+  "exclude": [
+    "../app/src/browser/client.ts"
+  ]
+}

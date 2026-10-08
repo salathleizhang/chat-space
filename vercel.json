@@ -1,0 +1,30 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "bunVersion": "1.x",
+  "regions": [
+    "iad1"
+  ],
+  "installCommand": "bun run chat/scripts/vercel-install.ts",
+  "buildCommand": "VITE_CHAT_URL= VITE_BROWSER_LOCAL=1 bun run build:vercel",
+  "outputDirectory": "app/dist",
+  "functions": {
+    "api/server.ts": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/server"
+    },
+    {
+      "source": "/app",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/app/:path*",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -22,21 +22,25 @@ import {
   writeSceneLayout,
 } from "../mastra/tools/projectTools";
 import { saveInspectionSheet, saveSceneInspectionSheet } from "../mastra/tools/inspectTools";
+import { uploadedBytes } from "../services/uploads";
+
+const uploadFields = { dataBase64: z.string().min(1).optional(), localPath: z.string().min(1).optional() };
+const hasUpload = (value: { dataBase64?: string; localPath?: string }) => [value.dataBase64, value.localPath].filter(Boolean).length === 1;
 
 export const projectRoutes = new Hono();
 
 const UploadInspectionSchema = z.object({
   inspectionId: z.string().min(1),
   /** base64 编码的 PNG 检查图（不含 data: 前缀） */
-  dataBase64: z.string().min(1),
-});
+  ...uploadFields,
+}).refine(hasUpload, "必须提供文件数据或本地文件引用");
 
 const UploadThumbnailSchema = z.object({
   /** 缩略图渲染自哪个模型产物（basename，如 `3-chair.glb`） */
   sourceFile: z.string().min(1),
   /** base64 编码的 PNG 缩略图（不含 data: 前缀） */
-  dataBase64: z.string().min(1),
-});
+  ...uploadFields,
+}).refine(hasUpload, "必须提供文件数据或本地文件引用");
 
 const CreateProjectSchema = z.object({
   name: z.string().min(1),
@@ -46,8 +50,8 @@ const CreateProjectSchema = z.object({
 const UploadSourceSchema = z.object({
   fileName: z.string().min(1),
   /** base64 编码的文件内容（不含 data: 前缀） */
-  dataBase64: z.string().min(1),
-});
+  ...uploadFields,
+}).refine(hasUpload, "必须提供文件数据或本地文件引用");
 
 const SOURCE_EXT_RE = /\.(png|jpe?g|webp)$/i;
 
@@ -131,20 +135,20 @@ projectRoutes.post("/:slug/sources", async (c) => {
   const ext = extMatch[1]!.toLowerCase();
   const path = `${sourceDir}/${formatIndexedName(index, fileSlug, ext)}`;
 
-  await storage.writeBytes(path, new Uint8Array(Buffer.from(req.dataBase64, "base64")));
+  await storage.writeBytes(path, await uploadedBytes(req));
   return c.json({ path }, 201);
 });
 
 const ModelAuxFileSchema = z.object({
   fileName: z.string().min(1),
-  dataBase64: z.string().min(1),
-});
+  ...uploadFields,
+}).refine(hasUpload, "必须提供文件数据或本地文件引用");
 
 const UploadModelSchema = z.object({
   fileName: z.string().min(1),
-  dataBase64: z.string().min(1),
+  ...uploadFields,
   auxFiles: z.array(ModelAuxFileSchema).optional(),
-});
+}).refine(hasUpload, "必须提供文件数据或本地文件引用");
 
 /** 本地模型导入：拖入视口/点击导入按钮，每次导入建一个全新资产 */
 projectRoutes.post("/:slug/models", async (c) => {
@@ -155,11 +159,11 @@ projectRoutes.post("/:slug/models", async (c) => {
   const result = await importLocalModel(storage, {
     projectSlug,
     fileName: req.fileName,
-    bytes: new Uint8Array(Buffer.from(req.dataBase64, "base64")),
-    auxFiles: (req.auxFiles ?? []).map((aux) => ({
+    bytes: await uploadedBytes(req),
+    auxFiles: await Promise.all((req.auxFiles ?? []).map(async (aux) => ({
       fileName: aux.fileName,
-      bytes: new Uint8Array(Buffer.from(aux.dataBase64, "base64")),
-    })),
+      bytes: await uploadedBytes(aux),
+    }))),
   });
   return c.json(result, 201);
 });
@@ -173,7 +177,7 @@ projectRoutes.post("/:slug/assets/:assetSlug/inspection", async (c) => {
     projectSlug,
     assetSlug,
     inspectionId: req.inspectionId,
-    bytes: new Uint8Array(Buffer.from(req.dataBase64, "base64")),
+    bytes: await uploadedBytes(req),
   });
   return c.json(result, 201);
 });
@@ -185,7 +189,7 @@ projectRoutes.post("/:slug/inspection", async (c) => {
   const result = await saveSceneInspectionSheet(getAssetStorage(), {
     projectSlug,
     inspectionId: req.inspectionId,
-    bytes: new Uint8Array(Buffer.from(req.dataBase64, "base64")),
+    bytes: await uploadedBytes(req),
   });
   return c.json(result, 201);
 });
@@ -206,7 +210,7 @@ projectRoutes.post("/:slug/assets/:assetSlug/thumbnail", async (c) => {
     projectSlug,
     assetSlug,
     sourceFile: req.sourceFile,
-    bytes: new Uint8Array(Buffer.from(req.dataBase64, "base64")),
+    bytes: await uploadedBytes(req),
   });
   return c.json(result, 201);
 });

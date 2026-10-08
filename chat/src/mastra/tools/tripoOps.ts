@@ -1,3 +1,4 @@
+import { CloudTaskPending } from "../../cloud/context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
@@ -303,6 +304,7 @@ export async function runTripoImageTo3d(
     );
     return { files, sidecar: sidecarPath, tripoTaskId: taskId };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();
@@ -433,6 +435,7 @@ export async function importAssetModelToTripo(
     await saveSidecar();
     return taskId;
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();
@@ -527,6 +530,7 @@ export async function runTripoSegmentation(
     );
     return { files, sidecar: sidecarPath, tripoTaskId: taskId };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();
@@ -619,6 +623,7 @@ export const segmentPartsTool = createTool({
           { projectSlug, assetSlug: input.assetSlug },
           { apiKey, onPhase: (phase) => task.setPhase(phase) },
         ),
+      { assetSlug: input.assetSlug, cloudOperation: { operation: "segment", input } },
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };
   },
@@ -949,6 +954,7 @@ export const generateCharacterTool = createTool({
           },
           { apiKey, onPhase: (phase) => task.setPhase(phase) },
         ),
+      { assetSlug: input.assetSlug, cloudOperation: { operation: "character", input } },
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };
   },
@@ -1024,6 +1030,7 @@ async function runTripoV3Job(
     );
     return { files, sidecar: sidecarPath, tripoTaskId: taskId };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();

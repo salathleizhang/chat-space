@@ -89,9 +89,11 @@ export async function requireProject(
 const metadataMutationTails = new Map<string, Promise<unknown>>();
 
 function withMetadataMutationLock<T>(
+  storage: AssetStorage,
   path: string,
   mutate: () => Promise<T>,
 ): Promise<T> {
+  if (storage.withLock) return storage.withLock(path, mutate);
   const previous = metadataMutationTails.get(path) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(mutate);
   metadataMutationTails.set(path, current);
@@ -107,7 +109,7 @@ function mutateProject(
   projectSlug: string,
   mutate: (project: Project) => Project | undefined | Promise<Project | undefined>,
 ): Promise<Project> {
-  return withMetadataMutationLock(projectFile(projectSlug), async () => {
+  return withMetadataMutationLock(storage, projectFile(projectSlug), async () => {
     const project = await requireProject(storage, projectSlug);
     const updated = await mutate(project);
     if (!updated) return project;
@@ -460,7 +462,7 @@ export async function writeSceneLayout(
   patch: ScenePatch,
 ): Promise<SceneLayout> {
   const path = projectSceneFile(projectSlug);
-  return withMetadataMutationLock(path, async () => {
+  return withMetadataMutationLock(storage, path, async () => {
     await requireProject(storage, projectSlug);
     // 磁盘上可能是按 slug 索引的旧文档，所以读之前要先拿到稳定 id 映射
     const current = (await storage.exists(path))
@@ -507,7 +509,7 @@ async function dropSceneEntries(
   assetId: string,
 ): Promise<void> {
   const path = projectSceneFile(projectSlug);
-  await withMetadataMutationLock(path, async () => {
+  await withMetadataMutationLock(storage, path, async () => {
     if (!(await storage.exists(path))) return;
     const scene = await readSceneLayout(storage, path, await assetIdsBySlug(storage, projectSlug));
     const hasTransform = assetId in scene.transforms;

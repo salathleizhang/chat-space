@@ -1,3 +1,4 @@
+import { CloudTaskPending } from "../../cloud/context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
@@ -313,6 +314,7 @@ export async function runCurrentSkyboxEdit(
       model: effectiveModel,
     };
   } catch (err) {
+    if (err instanceof CloudTaskPending) throw err;
     sidecar.status = "failed";
     sidecar.error = toErrorMessage(err);
     await saveSidecar();

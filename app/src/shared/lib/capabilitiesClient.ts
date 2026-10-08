@@ -1,4 +1,4 @@
-import { CHAT_BASE_URL } from "./sse";
+import { chatFetch } from "./sse";
 import {
   LLM_PROVIDER_IDS,
   type LlmProviderId,
@@ -11,7 +11,7 @@ import {
  */
 export async function fetchEnvLlmProviders(): Promise<LlmProviderId[] | null> {
   try {
-    const response = await fetch(`${CHAT_BASE_URL}/api/capabilities`);
+    const response = await chatFetch("/api/capabilities");
     if (!response.ok) {
       if (response.status >= 500) {
         console.warn(`Chat capabilities endpoint returned ${response.status}; no environment providers available`);

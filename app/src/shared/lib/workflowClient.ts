@@ -1,4 +1,4 @@
-import { fileToBase64 } from "./fileEncoding";
+import { fileUploadPayload } from "./cloudUpload";
 import { chatFetch, chatResponseError } from "./sse";
 
 async function postJson(path: string, body: unknown): Promise<Response> {
@@ -14,7 +14,7 @@ export async function uploadSource(
   file: File,
   signal?: AbortSignal,
 ): Promise<string> {
-  const dataBase64 = await fileToBase64(file);
+  const payload = await fileUploadPayload(file);
   if (signal?.aborted) throw signal.reason;
   const response = await chatFetch(`/api/projects/${projectSlug}/sources`, {
     method: "POST",
@@ -22,7 +22,7 @@ export async function uploadSource(
     signal,
     body: JSON.stringify({
       fileName: file.name,
-      dataBase64,
+      ...payload,
     }),
   });
   if (!response.ok) {

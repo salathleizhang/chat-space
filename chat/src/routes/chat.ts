@@ -4,6 +4,7 @@ import { toErrorMessage } from "../common/errors";
 import { withServerCredentials } from "../config";
 import { ChatStreamRequestSchema, type ChatStreamEvent } from "../dto/chat";
 import { streamChat, type ChatDelta } from "../services/chatService";
+import { currentCloudContext } from "../cloud/context";
 
 export const chatRoutes = new Hono();
 export const CHAT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -56,6 +57,8 @@ chatRoutes.post("/stream", async (c) => {
 
     try {
       for await (const delta of streamChat(request, controller.signal)) {
+        // 流式响应创建后工具仍会注册任务；必须在通知用户之前确认队列事实已持久化。
+        await Promise.all(currentCloudContext()?.pending ?? []);
         if (delta.type === "text") await emit({ type: "delta", text: delta.text });
         else if (delta.type === "tool")
           await emit({

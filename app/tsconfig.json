@@ -25,5 +25,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+  "exclude": ["src/browser/worker.ts", "src/browser/jobs.ts", "src/browser/config.ts", "src/browser/uploads.ts"]
 }

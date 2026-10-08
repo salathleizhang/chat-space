@@ -697,6 +697,11 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
   useLayoutEffect(() => { closeupPoseRef.current = closeupPose; }, [closeupPose]);
   /** 透视窗格的控制器：贴近检查的写入点（见 PaneCamera 的 controlsOutRef） */
   const perspControlsRef = useRef<PaneControls | null>(null);
+  // 轨道相机属于 WebGPUView 的 portal store，HandRig 的根 store 读不到它。
+  const handCameraSource = useCallback(
+    () => firstPerson ? null : perspControlsRef.current?.object ?? null,
+    [firstPerson],
+  );
   const [hoveredByLayer, setHoveredByLayer] = useState<Record<number, string>>({});
   const handleHover = useCallback((layer: number, id: string, entered: boolean) => {
     setHoveredByLayer((current) => {
@@ -941,6 +946,7 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
             */}
             <HandRig
               store={handStore}
+              cameraSource={handCameraSource}
               enabled={handMode}
               placement={physicsRunning ? null : { objects, layout, live }}
               onGrabAsset={handleGrabAsset}

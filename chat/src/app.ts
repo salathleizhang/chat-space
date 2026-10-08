@@ -16,7 +16,8 @@ export function createApp(): Hono {
   // CORS 只控制浏览器读取响应；服务端也要拒绝不受信任页面发出的写请求。
   app.use("*", async (c, next) => {
     const origin = c.req.header("Origin");
-    if (origin && !config.cors.isAllowedOrigin(origin)) {
+    const sameOriginCloud = process.env.VERCEL === "1" && origin === new URL(c.req.url).origin;
+    if (origin && !sameOriginCloud && !config.cors.isAllowedOrigin(origin)) {
       return c.json({ error: { message: "不允许此网页访问本机 ChatSpace 服务" } }, 403);
     }
     await next();

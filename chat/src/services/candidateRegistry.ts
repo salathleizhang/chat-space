@@ -31,14 +31,16 @@ export function mutateCandidates(
   ) => CandidateRegistry | undefined | Promise<CandidateRegistry | undefined>,
 ): Promise<boolean> {
   const path = projectCandidatesFile(projectSlug);
-  const previous = mutationTails.get(path) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(async () => {
+  const operation = async () => {
     const candidates = await readCandidates(storage, projectSlug);
     const next = await reducer(candidates);
     if (next === undefined) return false;
     await writeJson(storage, path, CandidateRegistrySchema, next);
     return true;
-  });
+  };
+  if (storage.withLock) return storage.withLock(path, operation);
+  const previous = mutationTails.get(path) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
   mutationTails.set(path, current);
   return current.finally(() => {
     if (mutationTails.get(path) === current) mutationTails.delete(path);

@@ -7,7 +7,7 @@ import { HomePage } from "./HomePage";
 import { PRODUCT_FEATURES, SHOWCASE_WORLDS } from "./homeShowcase";
 
 /**
- * 首页新增的两段：搜索框下面的 4 个世界缩略图、以及 10 个特性段落。
+ * 首页新增的两段：搜索框下面的 4 个世界缩略图、以及产品特性段落。
  *
  * 这里钉的是**接线**而不是文案：卡数、缩略图地址、点击落点（真实世界 → 该项目工作台；
  * 占位世界 → 项目列表）、以及左右交替的排版。文案改了不该让测试红。
@@ -102,19 +102,32 @@ test("占位世界不点进空路由，而是回项目列表", async () => {
   expect(readLocation()).toBe("/app");
 });
 
-test("渲染 10 个特性段落，图像左右交替", async () => {
+test("渲染所有特性段落，录屏和静态图左右交替", async () => {
   await renderHome();
 
-  expect(PRODUCT_FEATURES).toHaveLength(10);
+  expect(PRODUCT_FEATURES).toHaveLength(9);
 
   const articles = Array.from(container!.querySelectorAll("article"));
-  expect(articles).toHaveLength(10);
+  expect(articles).toHaveLength(PRODUCT_FEATURES.length);
   expect(articles.map((article) => article.querySelector("h3")?.textContent)).toEqual(
     PRODUCT_FEATURES.map((feature) => feature.title),
   );
 
-  const images = articles.map((article) => article.querySelector("img")?.getAttribute("src"));
-  expect(images).toEqual(PRODUCT_FEATURES.map((feature) => feature.image));
+  for (const [index, article] of articles.entries()) {
+    const feature = PRODUCT_FEATURES[index]!;
+    if (feature.video) {
+      const video = article.querySelector("video");
+      expect(video?.getAttribute("src")).toBe(feature.video);
+      expect(video?.getAttribute("poster")).toBe(feature.image);
+      expect(video?.autoplay).toBe(true);
+      expect(video?.loop).toBe(true);
+      expect(video?.muted).toBe(true);
+      expect(video?.hasAttribute("playsinline")).toBe(true);
+      expect(video?.className).toContain("object-contain");
+    } else {
+      expect(article.querySelector("img")?.getAttribute("src")).toBe(feature.image);
+    }
+  }
 
   // 偶数行媒体在左（无 order），奇数行媒体推到右侧（lg:order-2）——这就是"左右交替"
   const mediaCells = articles.map((article) => article.firstElementChild as HTMLElement);

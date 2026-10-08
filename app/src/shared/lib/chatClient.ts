@@ -1,4 +1,4 @@
-import { CHAT_BASE_URL, toFriendlyErrorMessage } from "./sse";
+import { chatFetch, toFriendlyErrorMessage } from "./sse";
 import type { LlmProviderId } from "../storage/apiKeys";
 import type { ProjectPlan } from "./libraryApi";
 
@@ -141,7 +141,7 @@ export async function streamChat(
   signal?: AbortSignal,
 ): Promise<void> {
   try {
-    const response = await fetch(`${CHAT_BASE_URL}/api/chat/stream`, {
+    const response = await chatFetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

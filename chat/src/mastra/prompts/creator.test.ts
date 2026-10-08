@@ -20,6 +20,21 @@ describe("creator 回复协议", () => {
   });
 
   /**
+   * 2026-10-06 用户反馈：说英文收到中文回复。根因是上下文里的语言信号本来就是混的——
+   * 服务端注入的项目上下文/计划/工具返回值是中文，工作台续跑指令是英文——提示词里一条
+   * "跟随用户"压不住它。服务端现在自己判定语言、并在本轮最后一条用户消息末尾追加一行
+   * 指令（`replyLanguage.ts`）；提示词这边要说明两件事：内部上下文的语言**不代表**回复
+   * 语言，服务端那行指令才是权威判定。
+   */
+  test("内部上下文的中英文都不代表回复语言，服务端追加的指令才算", () => {
+    expect(CREATOR_INSTRUCTIONS).toContain("上下文里的语言不代表回复语言");
+    expect(CREATOR_INSTRUCTIONS).toContain("固定用中文");
+    expect(CREATOR_INSTRUCTIONS).toContain("固定用英文");
+    expect(CREATOR_INSTRUCTIONS).toContain("最后一条用户消息末尾");
+    expect(CREATOR_INSTRUCTIONS).toContain("权威判定");
+  });
+
+  /**
    * 自检的触发口径是产品决策，写在提示词里就容易被后人"顺手"改回"生成完就查"。
    * 这几条把口径钉住：单模型不查、用户点名才查、整场景检查是唯一的自动例外。
    */

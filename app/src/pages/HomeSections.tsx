@@ -99,18 +99,18 @@ export function WorldShowcase({
 /**
  * 特性的媒体块。
  *
- * 现在 `PRODUCT_FEATURES` 里只有静态图，所以走 `<img>` 分支，并挂一个极慢的
- * `media-drift` 让它看起来是「动图」；等录屏接上（填 `video`）就直接换成分支里的
- * `<video>`，`image` 退化成 poster。
+ * 有录屏时播放静音循环视频，首帧预览与录屏同源；视频保留完整画面，避免裁掉字幕。
+ * 尚无录屏的特性继续显示静态预览。
  */
 function FeatureMedia({ feature }: { feature: ProductFeature }) {
   return (
     <div className="relative overflow-hidden rounded-surface border border-project-hub-ink-faint/20 bg-project-hub-ink-strong shadow-[0_24px_60px_-32px_rgb(22_22_24/0.55)]">
       {feature.video ? (
         <video
-          className="aspect-16/10 w-full object-cover"
+          className="aspect-video w-full object-contain"
           src={feature.video}
           poster={feature.image}
+          aria-label={`${feature.title} demo`}
           autoPlay
           loop
           muted

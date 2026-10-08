@@ -43,7 +43,7 @@ libraryRoutes.get("/export", async (c) => {
     return c.json({ error: { code: "not_found", message: `文件不存在：${source}` } }, 404);
   }
   const result = await convertModel(storage, source, format);
-  return new Response(result.bytes.buffer.slice(0) as ArrayBuffer, {
+  return new Response(storage.readStream ? new Blob([result.bytes.buffer.slice(0) as ArrayBuffer]).stream() : result.bytes.buffer.slice(0) as ArrayBuffer, {
     headers: {
       "Content-Type": result.mimeType,
       "Content-Disposition": contentDisposition(result.fileName),
@@ -85,7 +85,7 @@ libraryRoutes.post("/export-batch", async (c) => {
 
   if (converted.length === 1 && skipped.length === 0) {
     const only = converted[0]!;
-    return new Response(only.bytes.buffer.slice(0) as ArrayBuffer, {
+    return new Response(storage.readStream ? new Blob([only.bytes.buffer.slice(0) as ArrayBuffer]).stream() : only.bytes.buffer.slice(0) as ArrayBuffer, {
       headers: {
         "Content-Type": only.mimeType,
         "Content-Disposition": contentDisposition(only.fileName),
@@ -110,7 +110,7 @@ libraryRoutes.post("/export-batch", async (c) => {
   }
 
   const zipBytes = await zip.generateAsync({ type: "uint8array" });
-  return new Response(zipBytes.buffer.slice(0) as ArrayBuffer, {
+  return new Response(storage.readStream ? new Blob([zipBytes.buffer.slice(0) as ArrayBuffer]).stream() : zipBytes.buffer.slice(0) as ArrayBuffer, {
     headers: {
       "Content-Type": "application/zip",
       "Content-Disposition": contentDisposition(`export-${req.format}.zip`),
@@ -130,9 +130,9 @@ libraryRoutes.get("/*", async (c) => {
       404,
     );
   }
-  const bytes = await storage.readBytes(logicalPath);
+  const body = storage.readStream ? await storage.readStream(logicalPath) : (await storage.readBytes(logicalPath)).buffer.slice(0) as ArrayBuffer;
   const ext = logicalPath.split(".").pop()?.toLowerCase() ?? "";
-  return new Response(bytes.buffer.slice(0) as ArrayBuffer, {
+  return new Response(body, {
     headers: {
       "Content-Type": CONTENT_TYPES[ext] ?? "application/octet-stream",
       "Cache-Control": "no-cache",

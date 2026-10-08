@@ -1,6 +1,6 @@
 # ChatSpace
 
-以原版界面与交互为基线，保留真实本地工程文件。网页由 Cloudflare Pages 托管；本机 Bun 服务负责工程目录、Agent 和生成任务。
+以原版界面与交互为基线，保留真实工程文件。本机模式由 Bun 服务管理工程文件、Agent 和生成任务。Vercel 公开版将项目、聊天、任务回执、图片与模型保存在每个访问者自己的浏览器（IndexedDB）；服务端只转发供应商请求，不使用 Postgres、Blob 或云端生成队列。配置与备份说明见 [deploy/README.md](deploy/README.md)。
 
 界面基线来自原项目 commit `7a701ee8db050f33b767b8f1490738cb543c3679`。工作台与交互沿用原版；设置弹窗改为显示本机供应商配置状态，不再向网页索取 API key。
 
@@ -66,7 +66,7 @@ Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度�
 
 火山影眸 Hyper3D、数美 Hi3D 的默认模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
 
-3D 生成下拉菜单选的是具体模型，不是渠道；选定的模型同时决定渠道与提交给供应商的模型 ID，`start-3d-batch` 由服务端按该选择钉住，Agent 传的 `provider` 参数会被忽略（留空 `Auto` 才由 Agent 判断）：
+3D 生成下拉菜单选的是具体模型，不是渠道；目前显示 Auto、Tripo 3.1、Tripo P1、Tripo P2，Seed3D、Hyper3D、Hi3D 暂时隐藏，后端接入保留。选定的模型同时决定渠道与提交给供应商的模型 ID，`start-3d-batch` 由服务端按该选择钉住，Agent 传的 `provider` 参数会被忽略（留空 `Auto` 才由 Agent 判断）。完整接入表如下：
 
 | 菜单项 | 渠道 | 默认 Model ID | 覆盖变量 |
 | --- | --- | --- | --- |
@@ -77,7 +77,7 @@ Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度�
 | Tripo P1 | `tripo-direct` | `P1-20260311` | — |
 | Tripo P2 | `tripo-direct` | `P2-20260801` | — |
 
-菜单项与模型 ID 的对应关系在 `chat/src/models/threeD.ts`（选择键是稳定契约，模型 ID 才允许被 env 覆盖）。旧版浏览器里保存的渠道偏好（Seed3D / Hyper3D / Hi3D / Tripo3D）会在加载时迁移成对应渠道的默认模型。完整场景 SceneJob 的单物体模型目前固定用 Seed3D，不跟随这个选择。
+菜单项与模型 ID 的对应关系在 `chat/src/models/threeD.ts`（选择键是稳定契约，模型 ID 才允许被 env 覆盖）。展示开关在 `app/src/shared/storage/apiKeys.ts`：移除对应模型的 `hidden` 标记即可恢复。旧版浏览器里保存的 Tripo3D 渠道偏好会在加载时迁移成 Tripo 3.1，已保存的隐藏模型及其旧渠道偏好回退到 Auto。完整场景 SceneJob 的单物体模型目前固定用 Seed3D，不跟随这个选择。
 
 运行检查：
 
@@ -103,7 +103,7 @@ Pages 只发布 `app` 的 Vite 构建产物；本机服务仍需在用户电脑�
 | 仓库根目录 | `/` |
 | 构建命令 | `bun install --frozen-lockfile && bun run build` |
 | 输出目录 | `app/dist` |
-| 环境变量 | `BUN_VERSION=1.3.14`、`SKIP_DEPENDENCY_INSTALL=1` |
+| 环境变量 | `BUN_VERSION=1.3.14`、`SKIP_DEPENDENCY_INSTALL=1`、`VITE_CHAT_URL=http://127.0.0.1:3901` |
 
 Pages 对没有根级 `404.html` 的 SPA 默认回退到 `index.html`，因此 `/app/:projectSlug` 可直接打开。设置稳定的 Pages 自定义域名后，将该完整 origin 加入本机服务的 `CHATSPACE_WEB_ORIGINS`，例如 `https://chatspace.example.com`。浏览器首次访问本机服务时可能要求本地网络权限。
 

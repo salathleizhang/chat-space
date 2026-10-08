@@ -1,4 +1,4 @@
-import { fileToBase64 } from "./fileEncoding";
+import { fileUploadPayload, pngUploadPayload } from "./cloudUpload";
 import { CHAT_BASE_URL, chatFetch, chatResponseError } from "./sse";
 
 /** 与 chat/src/dto/library.ts、projectTools 的派生状态对齐的客户端类型 */
@@ -453,7 +453,7 @@ export async function uploadInspection(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ inspectionId, dataBase64 }),
+      body: JSON.stringify({ inspectionId, ...await pngUploadPayload(dataBase64) }),
     },
   );
   if (!response.ok) {
@@ -476,7 +476,7 @@ export async function uploadSceneInspection(
   const response = await chatFetch(`/api/projects/${projectSlug}/inspection`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ inspectionId, dataBase64 }),
+    body: JSON.stringify({ inspectionId, ...await pngUploadPayload(dataBase64) }),
   });
   if (!response.ok) {
     throw await chatResponseError(response, `Failed to upload scene inspection image (${response.status})`);
@@ -496,7 +496,7 @@ export async function uploadThumbnail(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceFile, dataBase64 }),
+      body: JSON.stringify({ sourceFile, ...await pngUploadPayload(dataBase64) }),
     },
   );
   if (!response.ok) {
@@ -511,19 +511,19 @@ export async function uploadModel(
   primary: File,
   auxFiles: File[] = [],
 ): Promise<{ assetSlug: string; path: string }> {
-  const [dataBase64, aux] = await Promise.all([
-    fileToBase64(primary),
+  const [payload, aux] = await Promise.all([
+    fileUploadPayload(primary),
     Promise.all(
       auxFiles.map(async (file) => ({
         fileName: file.name,
-        dataBase64: await fileToBase64(file),
+        ...await fileUploadPayload(file),
       })),
     ),
   ]);
   const response = await chatFetch(`/api/projects/${projectSlug}/models`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileName: primary.name, dataBase64, auxFiles: aux }),
+    body: JSON.stringify({ fileName: primary.name, ...payload, auxFiles: aux }),
   });
   if (!response.ok) {
     throw await chatResponseError(response, `Failed to import model (${response.status})`);

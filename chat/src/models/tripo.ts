@@ -98,7 +98,7 @@ export async function uploadTripoFile(
 ): Promise<string> {
   const fetchFn = options.fetchFn ?? fetch;
   const form = new FormData();
-  form.append("file", new Blob([bytes]), fileName);
+  form.append("file", new Blob([new Uint8Array(bytes)]), fileName);
   const response = await fetchWithTimeout(
     fetchFn,
     `${V3_BASE}/files`,
@@ -433,7 +433,7 @@ export async function sigV4PutObject(
           `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${scope}, ` +
           `SignedHeaders=${S3_SIGNED_HEADERS}, Signature=${signature}`,
       },
-      body: bytes,
+      body: new Uint8Array(bytes),
     },
     UPLOAD_REQUEST_TIMEOUT_MS,
     "Tripo S3 直传",

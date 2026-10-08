@@ -1334,17 +1334,20 @@ describe("AgentDock 3D 模型选择", () => {
     ) as HTMLButtonElement;
 
     await act(async () => threeDSelect.click());
-    for (const label of ["Seed3D 2.0", "Hyper3D Gen-2", "Hi3D 2.0", "Tripo 3.1", "Tripo P1", "Tripo P2"]) {
+    for (const label of ["Tripo 3.1", "Tripo P1", "Tripo P2"]) {
       expect(document.body.textContent).toContain(label);
     }
-    const hi3d = Array.from(document.body.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("Hi3D 2.0"),
+    for (const label of ["Seed3D 2.0", "Hyper3D Gen-2", "Hi3D 2.0"]) {
+      expect(document.body.textContent).not.toContain(label);
+    }
+    const tripo = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Tripo P1"),
     ) as HTMLButtonElement;
-    await act(async () => hi3d.click());
+    await act(async () => tripo.click());
 
-    expect(threeDSelect.textContent).toContain("Hi3D 2.0");
+    expect(threeDSelect.textContent).toContain("Tripo P1");
     expect(JSON.parse(localStorage.getItem("chatspace.threeDModelSettings:v1")!)).toEqual({
-      model: "hi3d-2",
+      model: "tripo-p1",
     });
   });
 

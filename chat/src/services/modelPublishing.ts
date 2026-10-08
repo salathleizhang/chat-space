@@ -32,11 +32,14 @@ export interface GenerationObject {
 }
 
 class StagedAssetStorage implements AssetStorage {
+  readonly withLock?: AssetStorage["withLock"];
   constructor(
     private readonly base: AssetStorage,
     private readonly finalDir: string,
     private readonly workDir: string,
-  ) {}
+  ) {
+    if (base.withLock) this.withLock = (path, operation) => base.withLock!(this.map(path), operation);
+  }
 
   private map(path: string): string {
     return path === this.finalDir || path.startsWith(`${this.finalDir}/`)
