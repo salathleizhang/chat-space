@@ -22,9 +22,21 @@ Production / Preview 的数据库与 Blob 连接及相关环境变量已断开�
 原生产工作区「我的第一个项目」已通过备份导入到 Chrome 的 Vercel 域名下。
 不需要建表或连接存储。
 
-本次通过 CLI 部署本机工作区；这些迁移改动尚未提交或推送 GitHub。
-下一次 Git 自动部署前必须同步改动，旧 main 不包含本版本。
+浏览器本地模式已提交到 GitHub `main`，2026-10-08 已从提交 `45470e7` 完成生产部署。
 不要把 `output/cloud-backup`、`.env` 或临时凭证上传到 Vercel；`.vercelignore` 已排除它们。
+
+## Git 自动部署
+
+Vercel 项目连接 `salathleizhang/chat-space`，生产分支为 `main`，自动创建部署已启用。
+推送到 `main` 后，Vercel 构建网页与供应商转发 API，成功后更新正式域名。
+此流程不会更新用户本机运行的 Bun 或 Blender 进程。
+
+若推送后没有新部署，先在 Vercel Account Settings → Authentication 核对 GitHub 账号连接，
+再核对项目 Settings → Git 的仓库绑定、生产分支和构建跳过设置。
+GitHub 的 Vercel App 必须有这个仓库的访问权限。
+排查依据见 [Vercel 官方说明](https://vercel.com/kb/guide/why-aren-t-commits-triggering-deployments-on-vercel)。
+
+Cloudflare 仅负责正式域名的 DNS；这个仓库的 Workers 自动构建关联已解除。
 
 ## 本地保存和备份
 

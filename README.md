@@ -94,19 +94,26 @@ bun run start
 
 打开 `http://127.0.0.1:3901/`。这个端口同时提供网页和 `/api`。首页输入项目名称可直接创建项目；右上角按钮进入 `/app` 并打开创建弹窗。工程文件默认保存在 `~/ChatSpace`；可用 `CHATSPACE_LIBRARY_DIR` 指定目录。`CHAT_PORT` 可更换端口，本地正式网页会自动连接同一端口。修改前端代码后需重新构建。
 
-## Cloudflare Pages
+## 线上部署：Vercel
 
-Pages 只发布 `app` 的 Vite 构建产物；本机服务仍需在用户电脑运行。
+公开版由 Vercel 同时提供网页与无状态供应商转发 API，访问者不需要运行本机 Bun 服务。
+项目与资产保存在访问者自己的浏览器中，完整配置及备份说明见 [deploy/README.md](deploy/README.md)。
 
 | 设置 | 值 |
 | --- | --- |
+| Vercel 项目 | `salathleizhangs-projects/chat-space-app` |
+| GitHub 仓库 | `salathleizhang/chat-space` |
+| 生产分支 | `main` |
 | 仓库根目录 | `/` |
-| 构建命令 | `bun install --frozen-lockfile && bun run build` |
+| 安装命令 | `bun run chat/scripts/vercel-install.ts` |
+| 构建命令 | `VITE_CHAT_URL= VITE_BROWSER_LOCAL=1 bun run build:vercel` |
 | 输出目录 | `app/dist` |
-| 环境变量 | `BUN_VERSION=1.3.14`、`SKIP_DEPENDENCY_INSTALL=1`、`VITE_CHAT_URL=http://127.0.0.1:3901` |
+| 正式域名 | `https://www.junwei.cool` |
 
-Pages 对没有根级 `404.html` 的 SPA 默认回退到 `index.html`，因此 `/app/:projectSlug` 可直接打开。设置稳定的 Pages 自定义域名后，将该完整 origin 加入本机服务的 `CHATSPACE_WEB_ORIGINS`，例如 `https://chatspace.example.com`。浏览器首次访问本机服务时可能要求本地网络权限。
+推送到 `main` 后由 Vercel Git 集成触发生产构建；构建成功后更新正式域名。
+构建与 `/api`、`/app` 路由规则以根目录 `vercel.json` 为准。
 
-工程和会话仍位于本机工程目录。网页向本机服务直连，Cloudflare 不接收项目 API 请求；调用第三方生成供应商时，任务输入会发送给相应供应商。Cloudflare 的实际部署及联通性验证按当前开发安排暂缓。
+Cloudflare 负责 `junwei.cool` 的 DNS 解析，`www` 指向 Vercel。
+仓库的 Cloudflare Workers 自动构建关联已于 2026-10-08 解除；它不承担公开版网页或 API 的部署。
 
 协议依据：[火山 Seedream 图片编辑](https://www.volcengine.com/docs/82379/1829186)、[火山影眸 Hyper3D](https://docs.volcengine.com/docs/82379/2279947?lang=zh)、[火山数美 Hi3D](https://docs.volcengine.com/docs/82379/2307070?lang=zh)、[Tripo3D API v3](https://developers.tripo3d.ai/en/docs/migration-v2-to-v3)、[World Labs API](https://docs.worldlabs.ai/api)。
