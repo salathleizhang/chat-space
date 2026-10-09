@@ -57,7 +57,7 @@ export async function runBrowserJob(id: string) {
           resumed = await resumeGeneration(storage, path, serverResumeKeys(), execution.setPhase);
         }
         if (["scene-job", "resume"].includes(job.descriptor.operation)) return executeCloudOperation(task, job.descriptor, execution);
-        const required: Record<string, string> = { segment: "v3/mesh/segment", rig: "/animations/rig", retopo: "/mesh/decimate", texture: "/models/texture", character: "/animations/rig" };
+        const required: Record<string, string> = { segment: "v3/mesh/segment", rig: "/animations/rig", animation: "/animations/retarget", retopo: "/mesh/decimate", texture: "/models/texture", character: "/animations/rig" };
         if (required[job.descriptor.operation]) {
           const receipts = await Promise.all(job.receipts.map(path => readJson(storage, path, RequestSidecarSchema)));
           if (!receipts.some(receipt => receipt.model === required[job.descriptor.operation])) {

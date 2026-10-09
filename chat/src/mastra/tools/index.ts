@@ -7,7 +7,7 @@ export { generateCleanPlateTool } from "./cleanPlate";
 export { unwrapUvTool } from "./hunyuanOps";
 export { identifyAssetTool } from "./identifyTools";
 export { inspectTool } from "./inspectTools";
-export { retopologizeTool, rigModelTool } from "./meshOps";
+export { generateAnimationTool, retopologizeTool, rigModelTool } from "./meshOps";
 export { generateTextureTool } from "./textureOps";
 export { analyzeReferenceTool } from "./referenceAnalysis";
 export { updatePlanTool } from "./planTools";

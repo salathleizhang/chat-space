@@ -2,8 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withCloudContext, type CloudOperation } from "../../cloud/context";
+import { executeCloudOperation } from "../../cloud/operations";
 import { assetDir, assetIdentityFile, projectSourceDir } from "../../common/libraryPaths";
 import { AssetIdentitySchema, RequestSidecarSchema } from "../../dto/library";
+import type { GenerationTask } from "../../dto/tasks";
 import { TRIPO_P2_MODEL } from "../../models/tripo";
 import {
   LocalFileStorage,
@@ -13,6 +16,7 @@ import {
 } from "../../services/assetStorage";
 import { clearTasks, listTasks } from "../../services/tasks";
 import { generateTextureTool } from "./textureOps";
+import { generateAnimationTool } from "./meshOps";
 import { createProject, getProjectState } from "./projectTools";
 import {
   runTripoAnimationRetarget,
@@ -514,6 +518,93 @@ describe("runTripoSegmentation", () => {
 });
 
 describe("Tripo v3 mesh and animation capabilities", () => {
+  test("没有成功绑骨记录时不提交动画或自动绑骨", async () => {
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    await expect(runTripoAnimationRetarget(storage,
+      { projectSlug: "tp", assetSlug: "unrigged", animation: "preset:biped:walk" },
+      { apiKey: "tsk-1", fetchFn },
+    )).rejects.toThrow("请先用 rig-model 绑骨");
+    expect(calls).toEqual([]);
+  });
+
+  test("动画工具任务完成并落盘含几何的烘焙 GLB", async () => {
+    const dir = assetDir("tp", "animated-hero");
+    await storage.writeBytes(`${dir}/0-animated-hero.glb`, GLB_BYTES);
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    await runTripoRig(storage, { projectSlug: "tp", assetSlug: "animated-hero" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 });
+    const originalFetch = globalThis.fetch;
+    setAssetStorage(storage);
+    globalThis.fetch = fetchFn;
+    try {
+      const started = await generateAnimationTool.execute!(
+        { assetSlug: "animated-hero", animation: "preset:biped:run", animateInPlace: true },
+        { requestContext: new Map([["projectSlug", "tp"], ["tripo3dApiKey", "tsk-1"]]) } as never,
+      ) as { task: { id: string } };
+      let task: GenerationTask | undefined;
+      const deadline = Date.now() + 5_000;
+      do {
+        task = (await listTasks("tp")).find(entry => entry.id === started.task.id);
+        if (task?.status !== "running") break;
+        if (Date.now() > deadline) throw new Error("动画任务未完成");
+        await Bun.sleep(10);
+      } while (true);
+      expect(task?.workflowId).toBe("animation");
+      expect(task?.assetSlug).toBe("animated-hero");
+      expect(task?.status).toBe("succeeded");
+      expect(task?.phase).toBe("completed");
+      const result = task?.result as { files: string[]; sidecar: string };
+      expect(result.files.some(path => path.endsWith(".glb"))).toBe(true);
+      expect(await storage.exists(result.files[0]!)).toBe(true);
+      expect((await readJson(storage, result.sidecar, RequestSidecarSchema)).providerTaskId).toBe("anim-1");
+      expect(calls.find(entry => entry.url.endsWith("/animations/retarget"))?.body).toEqual({
+        input: "rig-1", animation: "preset:biped:run", out_format: "glb",
+        bake_animation: true, export_with_geometry: true, animate_in_place: true,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearTasks();
+      setAssetStorage(undefined);
+    }
+  });
+
+  test("浏览器任务排队后可通过动画操作执行，入队不提交供应商请求", async () => {
+    const dir = assetDir("tp", "cloud-hero");
+    await storage.writeBytes(`${dir}/0-cloud-hero.glb`, GLB_BYTES);
+    const { fetchFn, calls } = makeFakeTripoFetch();
+    await runTripoRig(storage, { projectSlug: "tp", assetSlug: "cloud-hero" },
+      { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 });
+    const originalFetch = globalThis.fetch;
+    setAssetStorage(storage);
+    globalThis.fetch = fetchFn;
+    try {
+      const queued: { task: GenerationTask; operation: CloudOperation }[] = [];
+      const scope = { workspace: "browser", pending: [] as Promise<unknown>[],
+        enqueue: async (task: GenerationTask, operation: CloudOperation) => { queued.push({ task, operation }); } };
+      const input = { assetSlug: "cloud-hero", animation: "preset:biped:walk", animateInPlace: true };
+      const before = calls.length;
+      await withCloudContext(scope, () => generateAnimationTool.execute!(input,
+        { requestContext: new Map([["projectSlug", "tp"], ["tripo3dApiKey", "tsk-1"]]) } as never));
+      await Promise.all(scope.pending);
+      expect(calls.length).toBe(before);
+      expect(queued[0]?.operation).toEqual({ operation: "animation", input });
+      const phases: string[] = [];
+      const job = queued[0]!;
+      const result = await executeCloudOperation(job.task, job.operation, {
+        id: job.task.id, setPhase: async phase => { phases.push(phase); }, setAssetSlug: async () => {},
+      }) as { files: string[] };
+      expect(result.files.some(path => path.endsWith(".glb"))).toBe(true);
+      expect(phases).toContain("generating");
+      expect(phases).toContain("downloading");
+      expect(calls.find(entry => entry.url.endsWith("/animations/retarget"))?.body).toMatchObject({
+        input: "rig-1", animation: "preset:biped:walk", animate_in_place: true,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      setAssetStorage(undefined);
+    }
+  });
+
   test("智能重拓扑使用 /mesh/decimate 并校验 quad 面数上限", async () => {
     const dir = assetDir("tp", "retopo-crate");
     await storage.writeBytes(`${dir}/0-retopo-crate.glb`, GLB_BYTES);

@@ -69,7 +69,7 @@ describe("creator 工具可用性", () => {
     expect(segmentSchema.properties).not.toHaveProperty("channel");
     expect(tools["retopologize"]).toBeDefined();
     expect(tools["rig-model"]).toBeDefined();
-    expect(Object.keys(tools)).not.toContain("generate-animation");
+    expect(tools["generate-animation"]).toBeDefined();
     expect(tools["generate-character"]).toBeDefined();
     expect(Object.keys(tools)).not.toContain("unwrap-uv");
     expect(Object.keys(tools)).not.toContain("build-cad-model");

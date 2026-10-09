@@ -373,7 +373,7 @@ async function findLatestTripoRigTaskId(
   }
   if (!best) {
     throw new ChatServiceError(
-      `资产「${assetSlug}」还没有成功的 Tripo 绑骨记录，请先用 rig-model(channel=tripo) 绑骨`,
+      `资产「${assetSlug}」还没有成功的 Tripo 绑骨记录，请先用 rig-model 绑骨`,
       409,
       "tripo_rig_missing",
     );

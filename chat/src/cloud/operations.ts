@@ -48,7 +48,7 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
     return capture.executor(execution);
   }
   const assetSlug = String(input.assetSlug);
-  const { runTripoTexture, runTripoSegmentation, runTripoRetopology, runTripoRig, runTripoCharacter } = await import("../mastra/tools/tripoOps");
+  const { runTripoTexture, runTripoSegmentation, runTripoRetopology, runTripoRig, runTripoCharacter, runTripoAnimationRetarget } = await import("../mastra/tools/tripoOps");
   if (job.operation === "texture") return runTripoTexture(storage, { projectSlug, assetSlug,
     prompt: input.stylePrompt as string, pbr: input.enablePbr as boolean, textureQuality: input.textureQuality as never, delight: input.delight as boolean | undefined }, tripo);
   if (job.operation === "segment") return runTripoSegmentation(storage, { projectSlug, assetSlug }, tripo);
@@ -56,6 +56,8 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
     faceLimit: input.targetPolycount as number | undefined, quad: input.topology === "quad", model: input.tripoModel as never, bake: input.bake as boolean | undefined }, tripo);
   if (job.operation === "rig") return runTripoRig(storage, { projectSlug, assetSlug,
     rigType: input.rigType as never, spec: input.spec as never, model: input.tripoRigModel as never }, tripo);
+  if (job.operation === "animation") return runTripoAnimationRetarget(storage, { projectSlug, assetSlug,
+    animation: input.animation as string, animateInPlace: input.animateInPlace as boolean | undefined }, tripo);
   if (job.operation === "character") return runTripoCharacter(storage, { projectSlug, assetSlug,
     image: input.image as string | undefined, spec: input.spec as never, rigModel: input.tripoRigModel as never }, tripo);
   if (job.operation === "uv") {

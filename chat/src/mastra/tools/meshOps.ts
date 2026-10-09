@@ -11,13 +11,14 @@ import {
   requireCurrentProject,
 } from "./requestContext";
 import {
+  runTripoAnimationRetarget,
   runTripoRetopology,
   runTripoRig,
 } from "./tripoOps";
 
 /** 模型后处理统一使用 Tripo v3；UV 展开是唯一保留的混元能力。 */
 
-export type MeshOperation = "retopo" | "rig";
+export type MeshOperation = "retopo" | "rig" | "animation";
 
 function startTripoTask(
   context: unknown,
@@ -37,7 +38,7 @@ function startTripoTask(
     "本机 chat/.env 未配置 TRIPO_KEY",
   );
   const task = startCustomTask(kind, projectSlug, subject, (task) =>
-    // 绑骨/降面同样是「提交 → 轮询 → 下载」，阶段必须落盘（否则全程停在 queued）
+    // 后处理都是「提交 → 轮询 → 下载」，阶段必须落盘（否则全程停在 queued）
     run(projectSlug, apiKey, (phase) => task.setPhase(phase)),
     { assetSlug: String(input.assetSlug), cloudOperation: { operation: kind, input } },
   );
@@ -104,6 +105,25 @@ export const rigModelTool = createTool({
           spec: input.spec,
           model: input.tripoRigModel,
         },
+        { apiKey, onPhase },
+      ),
+    ),
+});
+
+export const generateAnimationTool = createTool({
+  id: "generate-animation",
+  description:
+    "通过 Tripo v3 /animations/retarget 将官方预设动作应用到已有模型（付费操作——启动前须经用户同意）。必须先完成 rig-model 或 generate-character，工具引用该资产最近一次成功的 Tripo 绑骨任务，不会自动重新绑骨。animation 是官方 preset: 标识：v1.0 人形使用 preset:biped:walk/run/idle 等；v2.5 人形使用 preset:walk/run/idle 等，四足使用 preset:quadruped:walk。动作必须匹配绑骨版本和骨架类型，不支持自由文本生成动作。输出包含模型几何与烘焙动画的 GLB；animateInPlace=true 时原地播放。任务化返回，用 list-generation-tasks 跟进。",
+  inputSchema: z.object({
+    assetSlug: SlugSchema,
+    animation: z.string().regex(/^preset:[A-Za-z0-9_:-]+$/),
+    animateInPlace: z.boolean().optional(),
+  }),
+  execute: async (input, context) =>
+    startTripoTask(context, "animation", `动画生成：${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
+      runTripoAnimationRetarget(
+        getAssetStorage(),
+        { projectSlug, ...input },
         { apiKey, onPhase },
       ),
     ),
