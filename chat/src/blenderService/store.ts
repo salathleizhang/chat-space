@@ -132,7 +132,9 @@ export class BlenderStore {
     return this.db.transaction(() => {
       const row = this.session(id);
       if (row.epoch !== epoch || !from.includes(row.state)) throw new BlenderConflict("Stale lease or invalid transition");
-      this.db.query("UPDATE sessions SET state=?,instance=?,updatedAt=? WHERE id=?").run(state, instance ?? row.instance, Date.now(), id);
+      const now = Date.now();
+      this.db.query("UPDATE sessions SET state=?,instance=?,updatedAt=?,lastActivity=? WHERE id=?")
+        .run(state, instance ?? row.instance, now, state === "ready" && row.state === "preparing" ? now : row.lastActivity, id);
       const resource = instance ?? row.instance;
       if (resource) {
         const other = this.db.query("SELECT instanceId FROM resource_leases WHERE instanceId=? AND sessionId<>? AND state<>'expired'").get(resource, id);
@@ -147,6 +149,17 @@ export class BlenderStore {
     const row = this.session(id, owner);
     this.db.query("UPDATE sessions SET stopReason=?,state=CASE WHEN state='queued' THEN 'paused' ELSE state END,updatedAt=? WHERE id=?").run(reason, Date.now(), id);
     return this.session(row.id);
+  }
+  recordDesktopActivity(id: string, owner: string, epoch: number, now = Date.now()): void {
+    this.db.transaction(() => {
+      const session = this.session(id, owner);
+      const live = session.state === "ready" || session.state === "saving" && this.effect(id, epoch, "save-mode") === "continue";
+      if (session.epoch !== epoch || session.itemId !== "interactive" || !live || session.stopReason || session.deadline <= now) {
+        throw new BlenderConflict("Manual desktop lease unavailable");
+      }
+      // Read/connection heartbeats and checkpoints never call this or extend the budget.
+      this.db.query("UPDATE sessions SET lastActivity=? WHERE id=?").run(now, id);
+    }).immediate();
   }
   submit(owner: string, sessionId: string, epoch: number, key: string, tool: string, args: Record<string, unknown>, operationId: string = randomUUID()): Operation {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(key) || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(operationId)) throw new BlenderConflict("Invalid operation key or id");

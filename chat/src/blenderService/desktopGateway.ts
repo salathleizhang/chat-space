@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { Duplex } from "node:stream";
 import { issueIdentity } from "./auth";
 import { onTaskPumpTick, tickTaskPumps } from "../common/taskPump";
+import { DESKTOP_ACTIVITY_SCRIPT, withDesktopActivity } from "./desktopActivity";
 
 type Grant = { owner: string; session: string; epoch: number; target: string; instance: string; desktop: string; deadline: number; readOnly?: boolean };
 const HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-authenticate", "proxy-authorization"]);
@@ -14,7 +15,7 @@ export function createDesktopGateway(settings: { secret: string; api: string; or
   const pendingSockets = new Set<Duplex>();
   const api = new URL(settings.api), origin = new URL(settings.origin);
   if (!['127.0.0.1', 'localhost'].includes(api.hostname) || api.protocol !== "http:" || origin.protocol !== "https:") throw new Error("Invalid desktop gateway settings");
-  async function authorize(input: { ticket: string } | Pick<Grant, "owner" | "session" | "epoch">): Promise<Grant> {
+  async function authorize(input: ({ ticket: string } | Pick<Grant, "owner" | "session" | "epoch">) & { activity?: boolean }): Promise<Grant> {
     const token = issueIdentity({ owner: "__gateway", scope: "api", expires: Date.now() + 30_000 }, settings.secret);
     const controller = new AbortController(), deadline = Date.now() + 10_000;
     const unsubscribe = onTaskPumpTick(() => { if (Date.now() >= deadline) controller.abort(); });
@@ -55,9 +56,15 @@ export function createDesktopGateway(settings: { secret: string; api: string; or
       res.writeHead(204).end(); return;
     }
     try {
-      if (!['GET', 'HEAD'].includes(req.method ?? "")) throw new Error("Invalid desktop method");
-      const scope = scopedRequest(req), grant = await authorize({ ticket: scope.ticket });
+      const scope = scopedRequest(req), pathname = scope.path.split("?")[0];
+      const activity = pathname === "/__lease/activity" && req.method === "POST";
+      if (activity ? req.headers.origin !== origin.origin || scope.bootstrapping : !['GET', 'HEAD'].includes(req.method ?? "")) throw new Error("Invalid desktop method or origin");
+      const grant = await authorize({ ticket: scope.ticket, ...(activity ? { activity: true } : {}) });
       if (grant.session !== scope.id) throw new Error("Wrong desktop session");
+      if (activity) {
+        if (grant.readOnly) throw new Error("Read-only desktop");
+        res.writeHead(204, { "Cache-Control": "no-store" }).end(); return;
+      }
       if (scope.bootstrapping) {
         const cookieTicket = issueIdentity({ owner: grant.owner, session: grant.session, epoch: grant.epoch, scope: "desktop", expires: Date.now() + 5 * 60_000 }, settings.secret);
         const redirect = new URL(req.url!, origin); redirect.searchParams.delete("ticket");
@@ -65,16 +72,36 @@ export function createDesktopGateway(settings: { secret: string; api: string; or
           "Set-Cookie": `${scope.cookieName}=${cookieTicket}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=300`, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" }).end(); return;
       }
       if (scope.path.split("?")[0] === "/__lease/renew") { res.writeHead(204, { "Cache-Control": "no-store" }).end(); return; }
+      if (pathname === "/__lease/activity.js") {
+        if (grant.readOnly) throw new Error("Read-only desktop");
+        res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" }).end(req.method === "HEAD" ? undefined : DESKTOP_ACTIVITY_SCRIPT); return;
+      }
       const target = upstreamURL(scope.path, grant.target);
       const upstream = https.request(target, { method: req.method, headers: { Authorization: "Basic " + Buffer.from(`${grant.readOnly ? "kasm_viewer" : "kasm_user"}:${grant.desktop}`).toString("base64"),
-        "x-faas-instance-name": grant.instance }, rejectUnauthorized: true }, response => {
+        "x-faas-instance-name": grant.instance, "Accept-Encoding": "identity" }, rejectUnauthorized: true }, response => {
         const headers: http.OutgoingHttpHeaders = {};
         for (const [key, value] of Object.entries(response.headers)) if (!HOP.has(key) && !["set-cookie", "www-authenticate", "location"].includes(key)) headers[key] = value;
         headers['Cache-Control'] = 'private, no-store'; headers['Referrer-Policy'] = 'no-referrer'; headers['Cross-Origin-Resource-Policy'] = 'cross-origin';
         headers['Content-Security-Policy'] = `frame-ancestors ${settings.frames.join(" ")}`;
-        res.writeHead(response.statusCode ?? 502, headers); response.pipe(res);
+        if (!grant.readOnly && req.method === "GET" && response.statusCode === 200 && String(headers['content-type']).includes("text/html")) {
+          // Inject the input reporter only in manual HTML, never into the WebSocket stream.
+          const chunks: Buffer[] = []; let bytes = 0;
+          response.on("data", (chunk: Buffer) => {
+            bytes += chunk.length;
+            if (bytes > 2 * 1024 * 1024) { response.destroy(); if (!res.headersSent) res.writeHead(502); res.end(); }
+            else chunks.push(chunk);
+          });
+          response.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+          response.on("end", () => {
+            if (res.writableEnded) return;
+            if (headers['content-encoding'] && headers['content-encoding'] !== 'identity') { res.writeHead(502).end(); return; }
+            for (const key of ['content-length', 'etag', 'last-modified']) delete headers[key];
+            res.writeHead(200, headers).end(withDesktopActivity(Buffer.concat(chunks).toString("utf8"), grant.session));
+          });
+        } else { res.writeHead(response.statusCode ?? 502, headers); response.pipe(res); }
       });
       upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+      res.on("close", () => upstream.destroy());
       req.on("close", () => { if (!req.complete) upstream.destroy(); }); upstream.end();
     } catch { res.writeHead(401, { "Cache-Control": "no-store" }).end("Desktop session unavailable"); }
   });

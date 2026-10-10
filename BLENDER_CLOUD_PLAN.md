@@ -430,3 +430,10 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - 新镜像已上传私有 CR：`5.2.2-managed-20261011`；Registry 回读摘要 `sha256:1485b04a2886e05e7b364357df56c14d2991f87f39bd6a6bc44fb8cd1db39443`。火山北京控制台确认 **已预热**，镜像 ID `1e1bj472zl`；截图 `output/blender-service/managed-preheat-complete.png`。没有切换原应用镜像或创建新计费实例。
 - 最终全量 `BLENDER_ENABLED=0 bun run check` 退出 0：**app 953 pass / chat 640 pass / 0 fail**，包含未知内部执行器恢复、迟到规划回复不覆盖取消、缺失回执不能清除待确认请求的回归。Python 控制测试 **22 pass**。真实 Node/TLS 二进制 WS 回显、撤销租约及路由过滤通过。浏览器生产构建与独立 API bundle 通过；`build:vercel` 最后脚本按其保护在本机拒绝执行，未绕过或覆盖源码。
 - 部署文件见 `deploy/blender-service/`：常驻调度器、Node 网关、独立巡检/超时恢复、Caddy TLS 和环境样例。尚待确认私有桶/地域、暂停邀测和持久主机；AK/SK 不能贴聊天。公开分配关闭。跨用户可信清理、人工/Agent 控制权切换、累计额度及跨设备账号仍待实施/验收，**整项 Goal 尚未完成**。
+
+### 手动桌面空闲判断补齐（2026-10-11）
+
+- 修正“手工建模没有工具命令就被误判空闲”的缺口：Node 网关仅给手动会话的桌面 HTML 加入同源输入记录脚本，真实按键、点击、滚轮和按住按钮的拖动每十秒最多记录一次。活动请求使用 HttpOnly 桌面凭证，服务端核验 owner/session/epoch、状态和截止时间；拒绝跨域请求及只读批次。画面 WS、状态查询、Cookie 续期和自动检查点不会延长活动时间，活动也不增加运行预算。
+- 排队和启动期间不消耗“可用桌面空闲五分钟”；准备完毕时初始化活动时间。后续自动保存完成不重置它。回归验证有操作的手工会话保持 ready，无操作会话进入保存后暂停。
+- 真实 Chrome 在嵌套路径测试页面验证外部脚本地址与可信输入：打开/刷新不加次数，点击一次、刷新后连续输入两键共记录两次。截图 `output/blender-service/activity-input-ui.png`。该页面是本机输入事件夹具，不能代替真实火山/Kasm 操作验收。Node/TLS 夹具验证 HTML 注入、旧 ETag 移除、只读不注入和活动请求的 Origin 过滤。
+- 全量 `BLENDER_ENABLED=0 bun run check` 退出 0：**app 953 pass / chat 643 pass / 0 fail**。新增三条针对输入事件、活动鉴权与空闲状态机的回归。云端前置条件和跨用户清理、控制权切换、累计额度的待办仍保留。

@@ -32,11 +32,15 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
   app.post("/internal/desktop", async c => {
     const gateway = verifyIdentity(c.req.header("Authorization")?.replace(/^Bearer /, "") ?? "", settings.secret, "api");
     if (gateway?.owner !== "__gateway" || !secrets || !settings.target) return c.json({ error: "Unauthorized" }, 401);
-    const input = await c.req.json() as { ticket?: string; owner?: string; session?: string; epoch?: number };
+    const input = await c.req.json() as { ticket?: string; owner?: string; session?: string; epoch?: number; activity?: boolean };
     const grant = input.ticket ? verifyIdentity(input.ticket, settings.secret, "desktop") : input;
     if (!grant?.owner || !grant.session || !grant.epoch) return c.json({ error: "Invalid desktop grant" }, 401);
     const session = store.session(grant.session, grant.owner);
     if (session.epoch !== grant.epoch || !(session.state === "ready" || session.state === "saving" && store.effect(session.id, session.epoch, "save-mode") === "continue") || session.stopReason || session.deadline <= Date.now()) return c.json({ error: "Desktop lease revoked" }, 409);
+    if (input.activity) {
+      if (jobs?.get(session.id)) throw new BlenderConflict("Batch viewers cannot keep a manual editor active");
+      store.recordDesktopActivity(session.id, session.owner, session.epoch);
+    }
     const value = secrets.open(store.credentials(session.id, session.epoch), session.id, session.epoch);
     return c.json({ owner: session.owner, session: session.id, epoch: session.epoch, target: settings.target,
       instance: session.instance, desktop: value.desktop, deadline: session.deadline, readOnly: Boolean(jobs?.get(session.id)) });

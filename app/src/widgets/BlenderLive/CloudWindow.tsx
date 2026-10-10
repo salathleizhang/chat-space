@@ -71,6 +71,7 @@ export function BlenderCloudWindow({ projectSlug, onClose, onImported }: { proje
         <div className="min-w-0 flex-1 space-y-3">
           {session ? <>
             <p className="text-sm">{job?.label ?? "独立 Blender"} · {sessionLabels[session.state]}</p>
+            <p className="text-xs text-ink-muted">{job ? "画面只读，关闭观看后后台任务继续执行。" : "手动操作会保持活跃；五分钟无操作后保存并暂停，单次运行最长六十分钟。"}</p>
             {session.state === "ready" && <Button size="sm" disabled={busy} onClick={() => void act(async () => {
               const data = await blenderService<{ url: string }>(`sessions/${session.id}/desktop`, {});
               setView({ id: session.id, epoch: session.epoch, url: data.url });

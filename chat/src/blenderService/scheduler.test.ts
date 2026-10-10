@@ -46,3 +46,31 @@ test("unknown create result is reconciled; no second billed create and slot rema
     expect(store.reserveNext()).toBeNull();
   } finally { scheduler.close(); store.close(); }
 });
+test("manual input prevents idle pause but checkpoint completion does not refresh idle time", async () => {
+  const f = fixture();
+  try {
+    const active = f.store.create("alice", "project", "build", 3_600_000, crypto.randomUUID(), "interactive");
+    const idle = f.store.create("alice", "project", "build", 3_600_000, crypto.randomUUID(), "interactive");
+    for (const created of [active, idle]) {
+      const s = f.store.reserveNext()!;
+      expect(s.id).toBe(created.id);
+      f.store.transition(s.id, 1, ["allocating"], "preparing", "sandbox-" + s.id);
+      f.store.db.query("UPDATE sessions SET lastActivity=1 WHERE id=?").run(s.id);
+      f.store.transition(s.id, 1, ["preparing"], "ready");
+      // Time spent waiting in the queue is not time spent idle in a usable desktop.
+      expect(f.store.session(s.id).lastActivity).toBeGreaterThan(1);
+      f.store.setEffect(s.id, 1, "checkpoint-at", String(Date.now()));
+      f.store.db.query("UPDATE sessions SET lastActivity=? WHERE id=?").run(Date.now() - 310_000, s.id);
+    }
+    f.store.recordDesktopActivity(active.id, "alice", 1);
+    const activeAt = f.store.session(active.id).lastActivity;
+    f.store.setEffect(active.id, 1, "save-mode", "continue");
+    f.store.transition(active.id, 1, ["ready"], "saving");
+    f.store.transition(active.id, 1, ["saving"], "ready");
+    expect(f.store.session(active.id).lastActivity).toBe(activeAt);
+    f.scheduler.tick(); await f.scheduler.drain();
+    expect(f.store.session(active.id).state).toBe("ready");
+    expect(f.store.session(idle.id).state).toBe("saving");
+    expect(f.store.effect(idle.id, 1, "save-mode")).toBe("end");
+  } finally { f.scheduler.close(); f.store.close(); }
+});
