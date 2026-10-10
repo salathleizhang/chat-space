@@ -54,7 +54,7 @@ async function driveJobs() {
 }
 export async function browserFetch(path: string, init?: RequestInit): Promise<Response> {
   await ensureBrowserLocal();
-  if (path.startsWith("/api/capabilities")) return fetch(path, init);
+  if (path.startsWith("/api/capabilities") || path.startsWith("/api/blender/")) return fetch(path, { ...init, credentials: "same-origin" });
   if (path.startsWith("/api/tasks")) void driveJobs().catch(console.error);
   const response = await workerRequest({ path, method: init?.method ?? "GET", body: typeof init?.body === "string" ? init.body : undefined }, init?.signal ?? undefined);
   return response;

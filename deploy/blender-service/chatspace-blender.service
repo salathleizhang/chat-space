@@ -1,0 +1,26 @@
+[Unit]
+Description=ChatSpace durable Blender scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatspace
+Group=chatspace
+WorkingDirectory=/opt/chatspace/repo/chat
+EnvironmentFile=/etc/chatspace/blender-service.conf
+StateDirectory=chatspace-blender
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/bin/bun dist/blender-service/server.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/chatspace-blender
+
+[Install]
+WantedBy=multi-user.target

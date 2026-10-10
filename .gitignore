@@ -25,3 +25,6 @@ blender/docker/vendor/
 
 # Generated browser-local worker (built before Vite copies public/)
 app/public/local-runtime.js
+
+# Python control regression tests
+blender/docker/__pycache__/

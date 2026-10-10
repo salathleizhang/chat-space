@@ -1,0 +1,7 @@
+[Unit]
+Description=Restart unresponsive Blender controller and revoke old desktop sockets
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart chatspace-blender.service chatspace-blender-desktop.service
+TimeoutStartSec=60

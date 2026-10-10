@@ -90,6 +90,11 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(int(response.headers["Content-Length"]), len(body))
         self.assertEqual(gzip.decompress(body), b"desktop bytes")
 
+    async def test_viewer_credentials_keep_read_only_account_upstream(self):
+        response = await self.client.get("/vnc.html", headers={"Authorization": self.settings.viewer_authorization})
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["auth"], self.settings.viewer_authorization)
+
     async def test_binary_websocket_roundtrip_and_cleanup(self):
         ws = await self.client.ws_connect("/websockify", headers={**self.auth, "Origin": "https://website.example"},
                                           protocols=("binary",))

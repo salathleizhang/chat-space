@@ -2,6 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { config } from "../../config";
 import type { LlmConfig } from "../../dto/chat";
 import { CREATOR_INSTRUCTIONS } from "../prompts/creator";
+import { BLENDER_SERVICE_TOOLS } from "../tools/blenderService";
 import {
   analyzeSceneTool,
   analyzeReferenceTool,
@@ -87,6 +88,7 @@ export function createCreatorAgent(
         白名单与理由见 `tools/blenderOps.ts` 与 `models/blenderMcp.ts` 的模块文档。
       */
       ...(config.blender.enabled ? BLENDER_TOOLS : {}),
+      ...(config.blender.cloudService ? BLENDER_SERVICE_TOOLS : {}),
     },
     model: {
       providerId: "byok-openai-compatible",

@@ -44,6 +44,11 @@ class Settings:
     def authorization(self):
         return "Basic " + base64.b64encode(f"kasm_user:{self.password}".encode()).decode()
 
+    @property
+    def viewer_authorization(self):
+        # The pinned Kasm startup creates kasm_viewer with read permission only.
+        return "Basic " + base64.b64encode(f"kasm_viewer:{self.password}".encode()).decode()
+
     def fingerprint(self):
         pem = self.certificate.read_text()
         certificate = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", pem, re.S)
@@ -79,7 +84,8 @@ def create_app(settings: Settings):
 
     async def proxy(request):
         supplied = request.headers.get("Authorization", "").encode()
-        if not hmac.compare_digest(supplied, settings.authorization.encode()):
+        if not (hmac.compare_digest(supplied, settings.authorization.encode()) or
+                hmac.compare_digest(supplied, settings.viewer_authorization.encode())):
             raise web.HTTPUnauthorized(headers={"WWW-Authenticate": 'Basic realm="ChatSpace Blender"'})
         if request.method not in {"GET", "HEAD", "POST"}:
             raise web.HTTPMethodNotAllowed(request.method, ["GET", "HEAD", "POST"])

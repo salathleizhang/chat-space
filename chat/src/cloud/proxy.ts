@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config, configuredEnvLlmProviders, configuredProviders } from "../config";
 import { workspaceIdentity } from "./identity";
+import { forwardBlender, serviceConfigured } from "./blenderProxy";
 
 /** Stateless credential proxy. No project, conversation, task or asset is stored here. */
 export function allowedProviderUrl(value: string): URL | undefined {
@@ -46,14 +47,16 @@ function limited(visitor: string) {
 export async function proxyFetch(request: Request): Promise<Response> {
   const address = new URL(request.url);
   if (address.pathname === "/api/health") return Response.json({ ok: true, service: "chatspace-chat", storage: "browser-local" });
-  if (address.pathname === "/api/capabilities") return Response.json({ llmProviders: configuredEnvLlmProviders, providers: configuredProviders });
+  if (address.pathname === "/api/capabilities") return Response.json({ llmProviders: configuredEnvLlmProviders, providers: configuredProviders, blenderCloud: serviceConfigured() });
   const origin = request.headers.get("origin");
   if (origin && origin !== address.origin) return Response.json({ error: { message: "只允许当前网站使用 AI 转发" } }, { status: 403 });
   const secret = process.env.CHATSPACE_SESSION_SECRET ?? "";
   try {
     const identity = workspaceIdentity(request.headers.get("cookie"), secret);
     let response: Response;
-    if (address.pathname === "/api/download" && ["GET", "HEAD"].includes(request.method)) {
+    if (address.pathname.startsWith("/api/blender/")) {
+      response = await forwardBlender(request, identity.id);
+    } else if (address.pathname === "/api/download" && ["GET", "HEAD"].includes(request.method)) {
       let target = verifiedDownload(address.searchParams.get("ticket") ?? "", secret);
       if (!target) return Response.json({ error: { message: "下载凭证无效" } }, { status: 403 });
       const headers = new Headers(); const range = request.headers.get("range"); if (range) headers.set("Range", range);

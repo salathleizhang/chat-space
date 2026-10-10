@@ -53,6 +53,7 @@ const BlenderLiveWindow = lazy(() =>
     default: module.BlenderLiveWindow,
   })),
 );
+const BlenderCloudWindow = lazy(() => import("../../widgets/BlenderLive/CloudWindow").then(module => ({ default: module.BlenderCloudWindow })));
 
 /**
  * `/app/:projectSlug` — 单项目工作台。布局是全屏 Viewport 画布 + 悬浮面板
@@ -589,7 +590,9 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         */
         <div className="absolute right-4 bottom-20 z-20 animate-chrome-enter">
           <Suspense fallback={null}>
-            <BlenderLiveWindow projectSlug={projectSlug} onClose={() => setBlenderLive(false)} />
+            {import.meta.env.VITE_BROWSER_LOCAL === "1"
+              ? <BlenderCloudWindow projectSlug={projectSlug} onClose={() => setBlenderLive(false)} onImported={bumpRefresh} />
+              : <BlenderLiveWindow projectSlug={projectSlug} onClose={() => setBlenderLive(false)} />}
           </Suspense>
         </div>
       )}

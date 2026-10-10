@@ -1,0 +1,25 @@
+# Copy to /etc/chatspace/blender-service.conf, owned by root, mode 0600.
+# Values are read by systemd, never exposed to browser or sandbox Python.
+BLENDER_SERVICE_SECRET=REPLACE_WITH_AT_LEAST_32_RANDOM_CHARACTERS
+BLENDER_SERVICE_DATABASE=/var/lib/chatspace-blender/service.sqlite
+BLENDER_SERVICE_PORT=3907
+BLENDER_GATEWAY_PORT=3908
+BLENDER_FUNCTION_ID=201j2k8z
+# Preheated image id MUST correspond to the tested managed image digest below.
+BLENDER_IMAGE_INFO_ID=1e1bj472zl
+BLENDER_SERVICE_BUILD=sha256:1485b04a2886e05e7b364357df56c14d2991f87f39bd6a6bc44fb8cd1db39443
+BLENDER_LIVE_TARGET=https://saobidloj9b5hmpajmjko.apigateway-cn-beijing.volceapi.com/
+BLENDER_DESKTOP_ORIGIN=https://blender.example.com
+BLENDER_WEB_ORIGINS=https://www.junwei.cool,https://chat-space-app.vercel.app
+# Enable ONLY after the actual account passes pause/resume + TOS acceptance.
+BLENDER_PAUSE_ENABLED=0
+VOLC_REGION=cn-beijing
+VOLC_ACCESSKEY=REPLACE_WITH_SCOPED_IAM_ACCESS_KEY
+VOLC_SECRETKEY=REPLACE_WITH_SCOPED_IAM_SECRET_KEY
+BLENDER_TOS_BUCKET=REPLACE_WITH_PRIVATE_BUCKET
+BLENDER_TOS_ENDPOINT=tos-cn-beijing.volces.com
+TOS_ACCESS_KEY=REPLACE_WITH_BUCKET_SCOPED_ACCESS_KEY
+TOS_SECRET_KEY=REPLACE_WITH_BUCKET_SCOPED_SECRET_KEY
+# Batch modeling is disabled unless BOTH are supplied.
+VOLC_KEY=REPLACE_WITH_SERVER_SIDE_ARK_KEY
+BLENDER_AGENT_MODEL=REPLACE_WITH_VERIFIED_MODEL_OR_ENDPOINT_ID

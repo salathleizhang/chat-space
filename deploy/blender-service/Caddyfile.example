@@ -1,0 +1,13 @@
+# Replace both names with real domains whose DNS resolves to the service host.
+# Use a desktop subdomain of the website domain so iframe cookies remain same-site.
+blender-api.example.com {
+    @private path /internal/* /health
+    respond @private 404
+    reverse_proxy 127.0.0.1:3907
+}
+
+blender.example.com {
+    @private path /internal/*
+    respond @private 404
+    reverse_proxy 127.0.0.1:3908
+}

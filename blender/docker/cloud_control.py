@@ -109,6 +109,8 @@ def install_control(app, token, bridge=None, root=EXPORT_ROOT):
 
     async def call(request):
         authorize(request)
+        if os.environ.get("CHATSPACE_MANAGED") == "1":
+            raise web.HTTPForbidden(text="Managed instance requires durable operation endpoint")
         try:
             data = await request.json()
         except (ValueError, UnicodeError):
@@ -143,6 +145,8 @@ def install_control(app, token, bridge=None, root=EXPORT_ROOT):
 
     async def file(request):
         authorize(request)
+        if authorize_lease:
+            authorize_lease(request)
         directory = export_directory(request.match_info["export_id"])
         path = directory / "model.glb"
         if path.is_symlink():
@@ -156,6 +160,15 @@ def install_control(app, token, bridge=None, root=EXPORT_ROOT):
         if path.stat().st_size > MAX_FILE_BYTES:
             raise web.HTTPRequestEntityTooLarge(max_size=MAX_FILE_BYTES, actual_size=path.stat().st_size)
         return web.FileResponse(path, headers={"Cache-Control": "no-store", "Content-Type": "model/gltf-binary"})
+
+    authorize_lease = None
+    if os.environ.get("CHATSPACE_MANAGED") == "1":
+        from managed_control import install_managed
+        session = os.environ.get("CHATSPACE_SESSION_ID", "")
+        epoch = int(os.environ.get("CHATSPACE_LEASE_EPOCH", "0"))
+        if not EXPORT_ID.fullmatch(session) or epoch < 1:
+            raise ValueError("Managed instance requires session and lease epoch")
+        authorize_lease = install_managed(app, authorize, bridge, ALLOWED_TOOLS, root.parent / "managed", session, epoch)
 
     async def cleanup(_app):
         await bridge.stop()

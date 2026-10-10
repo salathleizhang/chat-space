@@ -8,6 +8,7 @@ RUN python3 -m venv /opt/cloud-gateway \
     && rm /tmp/cloud-requirements.txt
 COPY --chmod=644 cloud_gateway.py /opt/cloud-gateway/cloud_gateway.py
 COPY --chmod=644 cloud_control.py /opt/cloud-gateway/cloud_control.py
+COPY --chmod=644 managed_control.py /opt/cloud-gateway/managed_control.py
 COPY --chmod=755 cloud-entrypoint.sh /opt/cloud-gateway/entrypoint.sh
 # The pinned customized base predates the desktop-sized/maximized window fix.
 # Kasm runs custom_startup.sh; kasm_startup.sh is not its startup hook.
