@@ -3,6 +3,7 @@ import { config } from "./config";
 import { corsMiddleware } from "./middleware/cors";
 import { errorHandler } from "./middleware/error";
 import { capabilityRoutes } from "./routes/capabilities";
+import { blenderRoutes } from "./routes/blender";
 import { chatRoutes } from "./routes/chat";
 import { libraryRoutes } from "./routes/library";
 import { projectRoutes } from "./routes/projects";
@@ -27,6 +28,7 @@ export function createApp(): Hono {
 
   app.get("/health", (c) => c.json({ ok: true, service: "chatspace-chat" }));
   app.route("/capabilities", capabilityRoutes);
+  app.route("/blender", blenderRoutes);
   app.route("/chat", chatRoutes);
   app.route("/projects", projectRoutes);
   app.route("/tasks", taskRoutes);

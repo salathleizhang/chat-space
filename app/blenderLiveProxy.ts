@@ -1,5 +1,7 @@
 import tls from "node:tls";
+import net from "node:net";
 import https from "node:https";
+import http from "node:http";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { Plugin } from "vite";
@@ -37,6 +39,8 @@ export interface BlenderLiveProxyOptions {
   target: string;
   user: string;
   pass: string;
+  /** 火山统一域名：HTTP 和 WebSocket 都必须路由到同一个实例。 */
+  instanceName?: string;
 }
 
 /** 把 `/blender-live/foo` 还原成上游要的 `/foo`。 */
@@ -50,9 +54,17 @@ export function upstreamPath(prefix: string, url: string | undefined): string {
 export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
   const prefix = options.prefix ?? "/blender-live";
   const upstream = new URL(options.target);
+  if (upstream.username || upstream.password) throw new Error("Use proxy credential options, not URL credentials");
+  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(upstream.hostname);
+  if (upstream.protocol !== "https:" && !(upstream.protocol === "http:" && loopback)) {
+    throw new Error("Cloud desktop target must use HTTPS; HTTP is allowed only on loopback");
+  }
+  if (options.instanceName && /[\r\n]/.test(options.instanceName)) throw new Error("Invalid sandbox instance name");
   const port = Number(upstream.port || (upstream.protocol === "https:" ? 443 : 80));
   const host = upstream.hostname;
   const auth = `Basic ${Buffer.from(`${options.user}:${options.pass}`).toString("base64")}`;
+  const routing = options.instanceName ? { "x-faas-instance-name": options.instanceName } : {};
+  const isHttps = upstream.protocol === "https:";
 
   const fail = (what: string, message: string) =>
     console.warn(
@@ -68,15 +80,21 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
       // 放在 Vite 自己的中间件之前，避免被 HTML fallback 接走（那样 iframe 会拿到
       // index.html，表现为一张空白页——这个仓库在 PlayCanvas 那边踩过同样的坑）。
       server.middlewares.use((req, res, next) => {
-        if (!req.url?.startsWith(prefix)) return next();
-        const proxyReq = https.request({
+        const bare = req.url?.split("?")[0];
+        if (bare !== prefix && !bare?.startsWith(`${prefix}/`)) return next();
+        if (bare === `${prefix}/connection`) {
+          res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify({ transport: options.instanceName ? "cloud" : "local", instanceName: options.instanceName ?? null }));
+          return;
+        }
+        const proxyReq = (isHttps ? https : http).request({
           hostname: host,
           port,
           path: upstreamPath(prefix, req.url),
           method: req.method,
-          // 自签证书：这是本机开发代理，上游证书不由它背书。
-          rejectUnauthorized: false,
-          headers: { ...req.headers, host: `${host}:${port}`, authorization: auth },
+          // 仅本机 Kasm 允许自签；云端必须验证服务端证书。
+          rejectUnauthorized: !loopback,
+          headers: { ...req.headers, host: upstream.host, authorization: auth, ...routing },
         });
         proxyReq.on("response", (proxyRes: IncomingMessage) => {
           res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
@@ -138,6 +156,7 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
         ];
         if (protocol) lines.push(`Sec-WebSocket-Protocol: ${protocol}`);
         if (req.headers.origin) lines.push(`Origin: ${req.headers.origin}`);
+        if (options.instanceName) lines.push(`x-faas-instance-name: ${options.instanceName}`);
 
         /*
           ⚠️ **`servername` 只在 host 是主机名时才能给。** 实测踩到过：
@@ -147,23 +166,16 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
           浏览器侧只看到 `Expected 101 status code`，完全看不出是 TLS 参数的问题。
           SNI 对 IP 目标本来也没有意义（带外信息、KasmVNC 也不用它选证书）。
         */
-        const tlsOptions: tls.ConnectionOptions = { host, port, rejectUnauthorized: false };
-        if (!/^[\d.]+$/.test(host) && !host.includes(":")) tlsOptions.servername = host;
-        /*
-          **调试日志先留着**：这几轮一直卡在"请求发出去了、但上游不认为它是升级"。
-          把发出前的头和收回来的第一行打出来，一眼就知道少了什么——比猜快得多。
-        */
-        console.log(`[blender-live] WS 升级 → ${lines.join(" | ")}`);
-        const upstreamSocket = tls.connect(
-          tlsOptions,
-          () => {
+        const tlsOptions: tls.ConnectionOptions = { host, port, rejectUnauthorized: !loopback };
+        if (!net.isIP(host)) tlsOptions.servername = host;
+        // 不记录握手头：Authorization 中含完整凭证。
+        const connected = () => {
             upstreamSocket.write(`${lines.join("\r\n")}\r\n\r\n`);
             if (head?.length) upstreamSocket.write(head);
-          },
-        );
-        upstreamSocket.once("data", (chunk: Buffer) => {
-          console.log(`[blender-live] WS 上游回 → ${chunk.toString("latin1").split("\r\n")[0]}`);
-        });
+        };
+        const upstreamSocket = isHttps
+          ? tls.connect(tlsOptions, connected)
+          : net.connect({ host, port }, connected);
 
         // 双向 pipe：升级成功后这就是一条裸字节通道，两边都不再解析 HTTP。
         upstreamSocket.on("error", (err: Error) => {
@@ -171,6 +183,8 @@ export function blenderLiveProxy(options: BlenderLiveProxyOptions): Plugin {
           socket.destroy();
         });
         socket.on("error", () => upstreamSocket.destroy());
+        socket.on("close", () => upstreamSocket.destroy());
+        upstreamSocket.on("close", () => socket.destroy());
         upstreamSocket.pipe(socket);
         socket.pipe(upstreamSocket);
       });

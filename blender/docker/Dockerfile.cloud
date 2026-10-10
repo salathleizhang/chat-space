@@ -1,0 +1,21 @@
+# A small derivative of the uploaded customized Blender, including userpref.blend.
+ARG BLENDER_IMAGE=blender-cn-beijing.cr.volces.com/chatspace/chatspace-blender@sha256:2e27df4d6d982e41d0aa02353df499eeda9935e0015c4fb26e988c01a06f227f
+FROM --platform=linux/amd64 ${BLENDER_IMAGE}
+USER root
+COPY cloud-requirements.txt /tmp/cloud-requirements.txt
+RUN python3 -m venv /opt/cloud-gateway \
+    && /opt/cloud-gateway/bin/pip install --no-cache-dir -r /tmp/cloud-requirements.txt \
+    && rm /tmp/cloud-requirements.txt
+COPY --chmod=644 cloud_gateway.py /opt/cloud-gateway/cloud_gateway.py
+COPY --chmod=644 cloud_control.py /opt/cloud-gateway/cloud_control.py
+COPY --chmod=755 cloud-entrypoint.sh /opt/cloud-gateway/entrypoint.sh
+# The pinned customized base predates the desktop-sized/maximized window fix.
+# Kasm runs custom_startup.sh; kasm_startup.sh is not its startup hook.
+COPY --chmod=755 custom-startup.sh /dockerstartup/custom_startup.sh
+RUN mkdir -p /workspace/.chatspace/exports && chown -R 1000:1000 /workspace/.chatspace
+# Credentials must be provided at deployment, never baked into this image.
+ENV VNC_PW="" VNC_VIEW_ONLY_PW="" BLENDER_CONTROL_TOKEN="" PYTHONPATH=/opt/cloud-gateway
+EXPOSE 8080
+USER 1000
+ENTRYPOINT ["/opt/cloud-gateway/entrypoint.sh"]
+CMD []

@@ -137,8 +137,8 @@ export const config = {
     imageModel: env.TRIPO_IMAGE_MODEL,
   },
   /**
-   * Blender 会话。`host`/`port` 是 **Blender 所在那台机器**的 addon socket 地址——
-   * MCP server 是本地代理，所以"Blender 在云端"只需要改这两个值，工具层一个字不动。
+   * 本机 Blender 的 addon 地址。火山沙箱另外使用 blenderCloud.ts 的 HTTPS
+   * 实例路由与后端凭据；不能把 HTTP 网关域名当成原始 TCP 主机。
    */
   blender: {
     enabled: process.env.VERCEL !== "1" && env.BLENDER_ENABLED === true,

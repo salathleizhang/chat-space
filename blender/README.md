@@ -2,6 +2,8 @@
 
 给 ChatSpace 的 agent 一个真正的 DCC：**建模 → 导出 → 进资产库**，并且**人能看到它在干什么**。
 
+云端按需服务的设计与分阶段验收见 [Blender 云服务实施计划](../BLENDER_CLOUD_PLAN.md)。单工程公网命令、GLB 导出、开发工作台桌面与键鼠已验收，配置见 [云端单会话接入](CLOUD_CONNECTION.md)。窗口修复镜像已在本机验证，尚待更新火山应用；网站生产接入、共享池与 TOS 保存尚未交付。
+
 ```
 chat/ (Mastra, 我们的 8 个工具)
    ⇅ MCP / stdio
@@ -57,6 +59,25 @@ python3 blender/patch/install.py --blender /Applications/Blender.app/Contents/Ma
 
 macOS 上**不需要**共享目录配置（Blender 与 chat/ 同一个文件系统），
 `blender-export` 会走 `os.tmpdir()` 那条路。
+
+### C. 火山沙箱的 HTTP 桌面入口（Phase 0）
+
+`docker/Dockerfile.cloud` 派生自已上传的定制镜像，保留 Blender、插件和偏好设置。它通过 `cloud-entrypoint.sh` 启动原桌面链，同时在 `0.0.0.0:8080` 提供 HTTP / WebSocket 入口。到容器内部 `https://127.0.0.1:6901` 的连接校验当前 Kasm 证书的 SHA-256 指纹，不关闭 TLS 校验。
+
+```bash
+docker build --platform linux/amd64 -f blender/docker/Dockerfile.cloud \
+  -t chatspace-blender:5.2.2-cloud-20261009 blender/docker
+docker run --rm --platform linux/amd64 --network none \
+  --entrypoint /opt/cloud-gateway/bin/python \
+  -v "$PWD/blender/docker:/gateway-tests:ro" -w /gateway-tests \
+  chatspace-blender:5.2.2-cloud-20261009 -m unittest -v test_cloud_gateway
+```
+
+部署时必须设置 `VNC_PW`（20–72 位 ASCII 字母、数字或 `_!@#%+=.,:-`），未设置或使用本地默认口令会拒绝启动。密码不写入镜像。所有网页与 WebSocket 请求均须使用 `kasm_user` 的 Basic 鉴权；公网入口必须使用网关 HTTPS。沙箱应用监听端口改为 **8080**，启动命令使用新镜像解析出来的 `/opt/cloud-gateway/entrypoint.sh`。
+
+网站本地开发代理已支持云端：服务端环境设置 `BLENDER_LIVE_TARGET=https://<网关统一域名>`、`BLENDER_LIVE_USER=kasm_user`、`BLENDER_LIVE_PASS=<部署口令>`、`BLENDER_LIVE_INSTANCE_NAME=<正在运行的实例名>`。HTTP 和 `/websockify` 都注入 `x-faas-instance-name`，避免静态文件或画面连接落到错误实例。凭证不发到浏览器，也不打印握手鉴权头。
+
+这仍是单个测试实例的 Vite 开发代理。生产长连接网关、按会话路由、多用户授权、插件 RPC 适配与 TOS 文件闭环仍按计划实施，不能靠部署静态网页获得这些能力。此入口没有公开 Blender 的原始命令 socket。
 
 ---
 

@@ -1,5 +1,7 @@
 import { ArrowsInIcon, ArrowsOutIcon, XIcon } from "@phosphor-icons/react";
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { chatFetch } from "../../shared/lib/sse";
+import { connectionProblem, type DesktopConnection, type ToolConnection } from "./connection";
 import { Panel, Button, Badge } from "../../shared/ui";
 
 /**
@@ -26,8 +28,8 @@ import { Panel, Button, Badge } from "../../shared/ui";
  * 外壳尺寸刻意不动（`w-[22rem]` / 展开 `w-[54rem]` / `aspect-video`）：这是"浮在工作台上的
  * 临时窗口"的统一形状，改它会让用户要学两套。
  *
- * 真正的做法是让**远端那块桌面跟着窗变小**（`?resize=remote`，见下面 iframe 处的长注释）。
- * 桌面小了，Blender 才能在这么小的框里 1:1 看清；把 1024×768 塞进小框去缩，字只会糊成一团。
+ * 远端保持正常桌面分辨率、Blender 最大化，这侧用 `?resize=scale` 整体缩放。
+ * 要看清细节就展开小窗；不要把远端桌面改成预览框的尺寸。
  *
  * ## 拖动只改 DOM transform，不写 React state
  *
@@ -37,6 +39,7 @@ import { Panel, Button, Badge } from "../../shared/ui";
  */
 
 export interface BlenderLiveWindowProps {
+  projectSlug: string;
   onClose: () => void;
   /** 头部显示的标题；默认「Blender」 */
   title?: string;
@@ -44,9 +47,29 @@ export interface BlenderLiveWindowProps {
   status?: string | null;
 }
 
-export function BlenderLiveWindow({ onClose, title = "Blender", status }: BlenderLiveWindowProps) {
+export function BlenderLiveWindow({ projectSlug, onClose, title = "Blender", status }: BlenderLiveWindowProps) {
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [connection, setConnection] = useState<{ label: string; problem: string | null } | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setConnection(null);
+    setLoaded(false);
+    Promise.all([
+      fetch("/blender-live/connection", { signal: controller.signal }),
+      chatFetch("/api/blender/connection", { signal: controller.signal }),
+    ]).then(async ([desktopResponse, toolResponse]) => {
+      if (!desktopResponse.ok || !toolResponse.ok) throw new Error("会话服务暂时不可用。");
+      const [desktop, tools] = await Promise.all([desktopResponse.json(), toolResponse.json()]) as [DesktopConnection, ToolConnection];
+      if (!["local", "cloud"].includes(desktop.transport) || !["local", "cloud"].includes(tools.transport)) throw new Error("Blender 会话配置尚未完成。");
+      if (!controller.signal.aborted) setConnection({ label: desktop.transport === "cloud" ? "云端 Blender" : "本机 Blender",
+        problem: connectionProblem(desktop, tools, projectSlug) });
+    }).catch(() => {
+      if (!controller.signal.aborted) setConnection({ label: "Blender", problem: "无法确认 Blender 会话，请检查连接配置后重新打开。" });
+    });
+    return () => controller.abort();
+  }, [projectSlug]);
 
   const offsetRef = useRef({ x: 0, y: 0 });
   const dragRef = useRef<{
@@ -102,9 +125,9 @@ export function BlenderLiveWindow({ onClose, title = "Blender", status }: Blende
         onPointerUp={handleDragPointerUp}
         onPointerCancel={handleDragPointerUp}
       >
-        {status && (
+        {(status || connection?.label) && (
           <div className="pointer-events-none absolute top-3 left-3.5">
-            <Badge>{status}</Badge>
+            <Badge>{status ?? connection?.label}</Badge>
           </div>
         )}
         <span className="pointer-events-none max-w-[65%] truncate text-sm font-medium text-ink-strong">
@@ -148,13 +171,17 @@ export function BlenderLiveWindow({ onClose, title = "Blender", status }: Blende
           不要给 iframe 加 `sandbox`：KasmVNC 需要脚本 + WebSocket + 同源存储，
           收紧 sandbox 的结果是一张永远连不上的空壳（而且不报错）。
         */}
-        <iframe
+        {connection && !connection.problem && <iframe
           src="/blender-live/?resize=scale"
           title="Blender live view"
           className="h-full w-full border-0"
           onLoad={() => setLoaded(true)}
-        />
-        {!loaded && (
+        />}
+        {connection?.problem ? (
+          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-white/80" role="alert">
+            {connection.problem}
+          </div>
+        ) : !loaded && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-white/70">
             正在连接 Blender…
           </div>

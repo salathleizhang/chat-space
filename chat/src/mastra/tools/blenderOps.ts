@@ -14,6 +14,7 @@ import {
 import { assetDir } from "../../common/libraryPaths";
 import { RequestSidecarSchema, SlugSchema, type RequestSidecar } from "../../dto/library";
 import { getBlenderMcp, addonStatusFromText } from "../../models/blenderMcp";
+import { BlenderCloudClient, assertBlenderProject } from "../../models/blenderCloud";
 import { config } from "../../config";
 import { getAssetStorage, writeJson, type AssetStorage } from "../../services/assetStorage";
 import { startCustomTask } from "../../services/tasks";
@@ -280,7 +281,9 @@ export const SAFE_CLEAR_SNIPPET = [
  * `blenderOps.test.ts` 里有一条会失败的测试钉住"这 8 个工具的 schema 里不许出现 projectSlug"。
  */
 function projectOf(context: unknown): string {
-  return requireCurrentProject(context as never);
+  const projectSlug = requireCurrentProject(context as never);
+  assertBlenderProject(projectSlug);
+  return projectSlug;
 }
 
 interface StepOutcome {
@@ -684,12 +687,15 @@ export async function runBlenderExport(
   input: Omit<BlenderExportInput, "projectSlug">,
 ): Promise<BlenderExportResult> {
   await requireProject(storage, projectSlug);
+  assertBlenderProject(projectSlug);
 
   const mcp = getBlenderMcp();
   const version = await mcp.call("get_addon_status", {}, { timeoutMs: 30_000 }).catch(() => null);
 
-  const scratch = blenderScratchDir();
-  await mkdir(scratch.localPath, { recursive: true });
+  const cloud = mcp instanceof BlenderCloudClient ? mcp : null;
+  const exportId = randomUUID();
+  const scratch = cloud ? { blenderPath: `/workspace/.chatspace/exports/${exportId}`, localPath: "" } : blenderScratchDir();
+  if (!cloud) await mkdir(scratch.localPath, { recursive: true });
   const exported = join(scratch.blenderPath, "model.glb");
 
   try {
@@ -704,8 +710,8 @@ export async function runBlenderExport(
     );
 
     // 读的是**映射之后**的路径 —— Blender 写的那个路径 chat/ 可能根本看不见。
-    const file = Bun.file(resolveBlenderOutputPath(exported));
-    if (!(await file.exists())) {
+    const file = cloud ? null : Bun.file(resolveBlenderOutputPath(exported));
+    if (file && !(await file.exists())) {
       throw new ChatServiceError(
         `Blender 报告导出完成，但从 chat/ 这边读不到文件。\n` +
           `Blender 写的路径：${exported}\n` +
@@ -717,7 +723,7 @@ export async function runBlenderExport(
         "blender_export_missing_file",
       );
     }
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    const bytes = cloud ? await cloud.downloadExport(exportId) : new Uint8Array(await file!.arrayBuffer());
     if (bytes.byteLength < 1024) {
       throw new ChatServiceError(
         `导出的 GLB 只有 ${bytes.byteLength} 字节，几乎肯定是坏的（导出中途失败）`,
@@ -793,7 +799,8 @@ export async function runBlenderExport(
     };
   } finally {
     // 临时目录只用来中转字节；失败也要清掉，否则每次失败都留一个 GLB。
-    await rm(scratch.localPath, { recursive: true, force: true }).catch(() => undefined);
+    if (cloud) await cloud.removeExport(exportId).catch(() => undefined);
+    else await rm(scratch.localPath, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

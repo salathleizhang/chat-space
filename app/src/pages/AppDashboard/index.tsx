@@ -589,7 +589,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         */
         <div className="absolute right-4 bottom-20 z-20 animate-chrome-enter">
           <Suspense fallback={null}>
-            <BlenderLiveWindow onClose={() => setBlenderLive(false)} />
+            <BlenderLiveWindow projectSlug={projectSlug} onClose={() => setBlenderLive(false)} />
           </Suspense>
         </div>
       )}

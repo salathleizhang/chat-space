@@ -15,7 +15,7 @@ import { blenderLiveProxy } from "./blenderLiveProxy";
  *      iframe 的 URL **不能**带 `user:pass@`（浏览器会剥掉），于是会弹一个原生登录框
  *   3. **跨源 + `Cross-Origin-Embedder-Policy: require-corp`** → 跨源嵌入的额外约束
  *
- * 代理一次解决三个：证书校验在 Node 侧关掉（`secure: false`）、Basic 凭据由代理注入
+ * 代理一次解决三个：仅本机目标允许自签证书、Basic 凭据由代理注入
  * （浏览器永远看不到）、而代理与页面**同源**（都在 5173）→ iframe 是同源，
  * COEP / 跨源问题整个消失。
  *
@@ -24,7 +24,8 @@ import { blenderLiveProxy } from "./blenderLiveProxy";
  * KasmVNC **没有** `X-Frame-Options`、也没有 `frame-ancestors` —— 它本身不禁止被嵌，
  * 所以只要把上面三条顺平，iframe 就能用。
  *
- * 环境变量：`BLENDER_LIVE_TARGET` / `BLENDER_LIVE_USER` / `BLENDER_LIVE_PASS`。
+ * 环境变量：`BLENDER_LIVE_TARGET` / `BLENDER_LIVE_USER` / `BLENDER_LIVE_PASS`
+ * / `BLENDER_LIVE_INSTANCE_NAME`（火山统一域名下的测试实例名）。
  * 注意这台机器上容器是用 16901 起的（手动 `docker run`）；`docker compose up` 起的
  * 话是 6901。换端口只改这一个变量。
  */
@@ -44,6 +45,7 @@ export default defineConfig({
       target: BLENDER_LIVE_TARGET,
       user: BLENDER_LIVE_USER,
       pass: BLENDER_LIVE_PASS,
+      instanceName: process.env.BLENDER_LIVE_INSTANCE_NAME,
     }),
   ],
   server: {

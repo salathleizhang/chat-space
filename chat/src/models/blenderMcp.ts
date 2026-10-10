@@ -2,6 +2,7 @@ import type { FileSink } from "bun";
 import { ChatServiceError, toErrorMessage } from "../common/errors";
 import { withHardTimeout } from "../common/http";
 import { config } from "../config";
+import { BlenderCloudClient, readBlenderCloudSettings } from "./blenderCloud";
 
 /**
  * Blender MCP 传输层：一个**最小的 MCP stdio 客户端**，只做传输与白名单，不做工具定义。
@@ -658,13 +659,19 @@ function cancelQuietly(stream: unknown): void {
   }
 }
 
-let shared: BlenderMcpClient | null = null;
+let shared: BlenderMcpClient | BlenderCloudClient | null = null;
 /** 进程内单例。**一个 Blender 只该有一个桥接**——多个会各自 spawn 一个 MCP server，
  *  而它们连的是同一个 addon socket（社区版 backlog 只有 5），徒增超时归因难度。
  *
- *  默认值全部来自 `config.blender`，所以"把 Blender 换到云端"只是改 `BLENDER_HOST` /
- *  `BLENDER_PORT`，这个文件与工具层都不用动。 */
-export function getBlenderMcp(): BlenderMcpClient {
+ * 云端使用独立 Bearer 凭据与 HTTP 实例路由，不公开原始 addon TCP。 */
+export function getBlenderMcp(): BlenderMcpClient | BlenderCloudClient {
+  if (!shared) {
+    const cloud = readBlenderCloudSettings();
+    if (cloud) return (shared = new BlenderCloudClient(cloud));
+    if (process.env.BLENDER_LIVE_INSTANCE_NAME) {
+      throw new ChatServiceError("云端桌面已配置，但命令凭据和工程分配尚未配置；不会操作本机 Blender", 503, "blender_cloud_not_ready");
+    }
+  }
   shared ??= new BlenderMcpClient({
     bin: config.blender.bin,
     args: [...config.blender.args],
@@ -675,7 +682,7 @@ export function getBlenderMcp(): BlenderMcpClient {
 }
 
 /** 仅供测试：换掉单例。 */
-export function setBlenderMcp(client: BlenderMcpClient | null): void {
+export function setBlenderMcp(client: BlenderMcpClient | BlenderCloudClient | null): void {
   shared = client;
 }
 
