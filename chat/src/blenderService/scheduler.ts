@@ -79,7 +79,7 @@ export class BlenderScheduler {
         const value = this.secrets.open(this.store.credentials(s.id, source.epoch), s.id, source.epoch);
         this.store.saveCredentials(s.id, s.epoch, this.secrets.seal(value, s.id, s.epoch));
         this.store.setEffect(s.id, s.epoch, "resume", "requested");
-        const instance = await this.deps.sandboxes.resume(source.instance);
+        const instance = await this.deps.sandboxes.resume(source.instance, Math.max(3, Math.ceil(s.budgetMs / 60_000)));
         this.store.transition(s.id, s.epoch, ["allocating"], "preparing", instance); return;
       }
       if (this.store.effect(s.id, s.epoch, "create")) {

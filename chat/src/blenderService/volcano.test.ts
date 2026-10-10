@@ -24,3 +24,12 @@ test("mutation response loss is explicitly unknown and never automatically retri
   catch (error) { expect(error).toBeInstanceOf(VolcanoError); expect((error as VolcanoError).unknown).toBe(true); }
   expect(calls).toBe(1);
 });
+test("resuming uses the remaining runtime allowance instead of granting another hour", async () => {
+  let body: any;
+  const cloud = new VolcanoSandboxes(settings, (async (_url, init) => {
+    body = JSON.parse(String(init?.body)); return Response.json({ Result: { SandboxId: "resumed" } });
+  }) as typeof fetch);
+  await cloud.resume("sandbox", 7); expect(body.Timeout).toBe(7);
+  expect(body.SandboxId).toBe("sandbox");
+  await expect(cloud.resume("sandbox", 61)).rejects.toThrow();
+});

@@ -14,6 +14,20 @@ export class BlenderJobs {
       pendingOperation TEXT, error TEXT);`);
     store.db.exec(`CREATE TABLE IF NOT EXISTS blender_retries (owner TEXT NOT NULL, requestId TEXT NOT NULL, source TEXT NOT NULL,
       sessionId TEXT NOT NULL, PRIMARY KEY(owner,requestId));`);
+    store.db.transaction(() => {
+      if (store.db.query("SELECT key FROM service_meta WHERE key='model-budget-v1'").get()) return;
+      const now = Date.now(), day = new Date(now).toISOString().slice(0, 10);
+      const existing = store.db.query<{ sessionId: string; owner: string; requests: number }, []>(
+        "SELECT j.sessionId,s.owner,j.requests FROM blender_jobs j JOIN sessions s ON s.id=j.sessionId WHERE j.requests>0").all();
+      for (const job of existing) {
+        const accounted = store.db.query<{ n: number }, [string]>("SELECT COALESCE(SUM(quantity),0) n FROM blender_budget_entries WHERE kind='model-call' AND id LIKE ?")
+          .get(`model:${job.sessionId}:%`)!.n;
+        // Older databases lack call timestamps. Conservatively charge the missing calls on upgrade day.
+        if (job.requests > accounted) store.db.query("INSERT INTO blender_budget_entries VALUES (?,?, 'model-call',?,?,?,1)")
+          .run(`legacy-model:${job.sessionId}`, job.owner, day, job.requests - accounted, now);
+      }
+      store.db.query("INSERT INTO service_meta VALUES ('model-budget-v1', 'complete')").run();
+    }).immediate();
   }
   createBatch(owner: string, project: string, id: string, items: BatchItem[], build: string, concurrency = 3): Session[] {
     if (!/^[a-f0-9-]{36}$/.test(id) || items.length < 1 || items.length > 100 || new Set(items.map(i => i.id)).size !== items.length ||

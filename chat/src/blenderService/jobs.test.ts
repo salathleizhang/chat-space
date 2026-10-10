@@ -87,3 +87,37 @@ test("cancelling an in-flight paid planner preserves cancellation and never subm
     expect(store.hasQueuedOperations(item!.id)).toBe(false); expect(store.session(item!.id).stopReason).toBe("cancelled");
   } finally { store.close(); }
 });
+test("daily model cap prevents a paid request and waits without replaying or affecting siblings", async () => {
+  const store = new BlenderStore(":memory:", { global: 4, owner: 3, queued: 100 },
+    { ownerRunMs: 10_800_000, globalRunMs: 43_200_000, ownerModelCalls: 1, globalModelCalls: 4 });
+  const jobs = new BlenderJobs(store); let paidCalls = 0;
+  const runner = new BlenderBatchRunner(jobs, async () => {
+    paidCalls++; throw new Error("paid response unknown");
+  }, new BlenderArtifacts(store, noObjects), { exportFile: async () => new Uint8Array() }, new SandboxSecrets("s".repeat(40)));
+  try {
+    const items = jobs.createBatch("alice", "project", crypto.randomUUID(), ["a", "b"].map(id => ({ id, label: id, prompt: "cube" })), "build");
+    for (const item of items) {
+      const s = store.reserveNext()!; store.transition(s.id, s.epoch, ["allocating"], "ready", "sandbox-" + s.id);
+      await runner.step(store.session(item.id));
+    }
+    expect(paidCalls).toBe(1);
+    expect(jobs.get(items[0]!.id)!.error).toBe("planning_result_unknown");
+    expect(jobs.get(items[1]!.id)!.error).toBe("daily_model_call_limit");
+    expect(jobs.get(items[1]!.id)!.requests).toBe(0);
+    expect(store.hasQueuedOperations(items[1]!.id)).toBe(false);
+    await runner.step(store.session(items[1]!.id)); expect(paidCalls).toBe(1);
+  } finally { store.close(); }
+});
+test("upgrading an older job database counts missing paid calls once", () => {
+  const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store);
+  try {
+    const [session] = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "a", label: "Cube", prompt: "cube" }], "build");
+    const job = jobs.get(session!.id)!; job.requests = 3; job.state = "waiting-user"; jobs.save(job);
+    // Before cumulative budgets existed, only the per-job request cursor was stored.
+    store.db.exec("DELETE FROM service_meta WHERE key='model-budget-v1'");
+    new BlenderJobs(store);
+    expect(store.budgets.summary("alice").modelCalls.used).toBe(3);
+    new BlenderJobs(store);
+    expect(store.budgets.summary("alice").modelCalls.used).toBe(3);
+  } finally { store.close(); }
+});

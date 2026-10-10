@@ -57,7 +57,8 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
     const summaries = Object.fromEntries(sessions.flatMap(s => { const job = jobs?.get(s.id); return job ? [[s.id, {
       label: job.label, state: job.state, step: job.step, requests: job.requests, tokens: job.tokens, error: job.error,
     }]] : []; }));
-    return c.json({ owner: c.get("owner"), sessions, jobs: summaries });
+    return c.json({ owner: c.get("owner"), sessions, jobs: summaries, budget: store.budgets.summary(c.get("owner")),
+      notices: Object.fromEntries(sessions.flatMap(s => { const value = store.effect(s.id, s.epoch, "budget-wait"); return value ? [[s.id, value]] : []; })) });
   });
   app.post("/v1/sessions", async c => {
     if (!settings.pauseEnabled) return c.json({ error: "暂停/恢复权限尚未验收，未分配计费资源" }, 503);

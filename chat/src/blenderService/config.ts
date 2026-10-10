@@ -8,7 +8,11 @@ export function readServiceSettings(env = process.env) {
   const secret = required("BLENDER_SERVICE_SECRET"); if (secret.length < 32) throw new Error("BLENDER_SERVICE_SECRET too short");
   const build = required("BLENDER_SERVICE_BUILD");
   if (!/^sha256:[a-f0-9]{64}$/.test(build)) throw new Error("BLENDER_SERVICE_BUILD must pin customized image digest");
-  return { secret, build, database: required("BLENDER_SERVICE_DATABASE"), target: origin("BLENDER_LIVE_TARGET") + "/",
+  const positive = (key: string, scale = 1) => { const raw = Number(required(key)), value = raw * scale; if (!Number.isSafeInteger(raw) || !Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid ${key}`); return value; };
+  return { secret, build, budgets: {
+    ownerRunMs: positive("BLENDER_DAILY_OWNER_MINUTES", 60_000), globalRunMs: positive("BLENDER_DAILY_GLOBAL_MINUTES", 60_000),
+    ownerModelCalls: positive("BLENDER_DAILY_OWNER_MODEL_CALLS"), globalModelCalls: positive("BLENDER_DAILY_GLOBAL_MODEL_CALLS"),
+  }, database: required("BLENDER_SERVICE_DATABASE"), target: origin("BLENDER_LIVE_TARGET") + "/",
     desktopOrigin: origin("BLENDER_DESKTOP_ORIGIN"), pauseEnabled: env.BLENDER_PAUSE_ENABLED === "1",
     volcano: { accessKeyId: required("VOLC_ACCESSKEY"), secretKey: required("VOLC_SECRETKEY"), sessionToken: env.VOLC_SESSION_TOKEN,
       functionId: required("BLENDER_FUNCTION_ID"), imageInfoId: required("BLENDER_IMAGE_INFO_ID"), region: required("VOLC_REGION") },

@@ -61,8 +61,9 @@ export class VolcanoSandboxes {
     throw new VolcanoError("ListSandboxes", "pagination_limit", false);
   }
   async pause(instance: string): Promise<void> { await this.call("PauseSandbox", { SandboxId: instanceId(instance), Type: "disk" }, true); }
-  async resume(instance: string): Promise<string> {
-    return instanceId((await this.call("ResumeSandbox", { SandboxId: instanceId(instance), Timeout: 60, Async: true }, true)).SandboxId);
+  async resume(instance: string, timeoutMinutes = 60): Promise<string> {
+    if (!Number.isInteger(timeoutMinutes) || timeoutMinutes < 3 || timeoutMinutes > 60) throw new Error("Invalid resume timeout");
+    return instanceId((await this.call("ResumeSandbox", { SandboxId: instanceId(instance), Timeout: timeoutMinutes, Async: true }, true)).SandboxId);
   }
   async extend(instance: string, minutes: number): Promise<void> {
     if (!Number.isInteger(minutes) || minutes < 3 || minutes > 60) throw new Error("Invalid timeout budget");

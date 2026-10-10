@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { BlenderBudgets, type BudgetLimits } from "./budgets";
 
 export type SessionState = "queued" | "allocating" | "preparing" | "ready" | "saving" | "cleaning" | "pausing" | "paused" | "quarantined" | "expired";
 export type OperationState = "queued" | "dispatched" | "succeeded" | "failed" | "unknown";
@@ -27,7 +28,8 @@ export class BlenderConflict extends Error {}
 /** Single service replica, persistent disk. All admission and fencing decisions are transactions. */
 export class BlenderStore {
   readonly db: Database;
-  constructor(path: string, readonly limits = { global: 4, owner: 3, queued: 100 }) {
+  readonly budgets: BlenderBudgets;
+  constructor(path: string, readonly limits = { global: 4, owner: 3, queued: 100 }, budgetLimits?: BudgetLimits) {
     if (![limits.global, limits.owner, limits.queued].every(n => Number.isInteger(n) && n > 0)) throw new Error("Invalid Blender quotas");
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new Database(path, { create: true, strict: true });
@@ -56,6 +58,17 @@ export class BlenderStore {
         epoch INTEGER NOT NULL, state TEXT NOT NULL, build TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(instanceId,sessionId,epoch));
       CREATE INDEX IF NOT EXISTS session_owner ON sessions(owner,state);
       CREATE INDEX IF NOT EXISTS operation_queue ON operations(sessionId,state,createdAt);`);
+    this.budgets = new BlenderBudgets(this.db, budgetLimits);
+    // Upgrading an existing controller cannot make already-running cloud resources free.
+    // Unknown/quarantined resources retain their full hold, even if this exceeds the new cap.
+    this.db.transaction(() => {
+      const now = Date.now(), day = new Date(now).toISOString().slice(0, 10);
+      for (const s of this.db.query<Session, []>(`SELECT * FROM sessions WHERE state IN (${ACTIVE})`).all()) {
+        const quantity = Math.max(180_000, Math.ceil(s.budgetMs / 60_000) * 60_000);
+        this.db.query("INSERT OR IGNORE INTO blender_budget_entries VALUES (?,?, 'runtime',?,?,?,0)")
+          .run(`runtime:${s.id}:${s.epoch}`, s.owner, day, quantity, Math.min(now, s.deadline - s.budgetMs));
+      }
+    }).immediate();
   }
   close() { this.db.close(); }
   saveCredentials(id: string, epoch: number, sealed: string): void {
@@ -122,9 +135,16 @@ export class BlenderStore {
       const owners = [...new Set(candidates.map(s => s.owner))];
       if (!owners.length) return null;
       const owner = owners[(owners.indexOf(last) + 1) % owners.length]!;
-      const chosen = candidates.find(s => s.owner === owner)!;
+      const ordered = [...candidates.filter(s => s.owner === owner), ...candidates.filter(s => s.owner !== owner)];
+      const chosen = ordered.find(s => {
+        const quantity = Math.max(180_000, Math.ceil(s.budgetMs / 60_000) * 60_000);
+        const accepted = this.budgets.reserve(`runtime:${s.id}:${s.epoch + 1}`, s.owner, "runtime", quantity, now);
+        if (!accepted) this.setEffect(s.id, s.epoch, "budget-wait", "daily_runtime_limit");
+        return accepted;
+      });
+      if (!chosen) return null;
       this.db.query("UPDATE sessions SET state='allocating',epoch=epoch+1,updatedAt=?,deadline=?+budgetMs WHERE id=? AND state='queued'").run(now, now, chosen.id);
-      this.db.query("INSERT INTO service_meta VALUES ('last-owner',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(owner);
+      this.db.query("INSERT INTO service_meta VALUES ('last-owner',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(chosen.owner);
       return this.session(chosen.id);
     }).immediate();
   }
@@ -135,6 +155,7 @@ export class BlenderStore {
       const now = Date.now();
       this.db.query("UPDATE sessions SET state=?,instance=?,updatedAt=?,lastActivity=? WHERE id=?")
         .run(state, instance ?? row.instance, now, state === "ready" && row.state === "preparing" ? now : row.lastActivity, id);
+      if (state === "paused" || state === "expired") this.budgets.settleRuntime(`runtime:${id}:${epoch}`, now);
       const resource = instance ?? row.instance;
       if (resource) {
         const other = this.db.query("SELECT instanceId FROM resource_leases WHERE instanceId=? AND sessionId<>? AND state<>'expired'").get(resource, id);

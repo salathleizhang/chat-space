@@ -84,7 +84,13 @@ export class BlenderBatchRunner {
       job.state = "failed"; job.error = "model_budget_exhausted"; this.jobs.save(job); store.stop(session.id, session.owner, "budget"); return;
     }
     const messages: Message[] = boundedMessages(job.messages === "[]" ? [{ role: "system", content: INSTRUCTIONS }, { role: "user", content: job.prompt }] : JSON.parse(job.messages));
-    job.state = "planning"; job.requests++; job.messages = JSON.stringify(messages); this.jobs.save(job);
+    const admitted = store.db.transaction(() => {
+      if (!store.budgets.reserve(`model:${session.id}:${session.epoch}:${job.requests + 1}`, session.owner, "model-call", 1)) return false;
+      job.state = "planning"; job.requests++; job.messages = JSON.stringify(messages); this.jobs.save(job); return true;
+    }).immediate();
+    if (!admitted) {
+      job.state = "waiting-user"; job.error = "daily_model_call_limit"; this.jobs.save(job); store.stop(session.id, session.owner, "waiting-user"); return;
+    }
     let answer: ModelDecision;
     try { answer = await this.planner(messages); }
     catch {

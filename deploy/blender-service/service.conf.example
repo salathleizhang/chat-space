@@ -13,10 +13,16 @@ BLENDER_DESKTOP_ORIGIN=https://blender.example.com
 BLENDER_WEB_ORIGINS=https://www.junwei.cool,https://chat-space-app.vercel.app
 # Enable ONLY after the actual account passes pause/resume + TOS acceptance.
 BLENDER_PAUSE_ENABLED=0
+# Controlled trial admission caps, UTC day. Runtime includes held reservations.
+# Set explicitly before starting the service; these are NOT a currency billing cap.
+BLENDER_DAILY_OWNER_MINUTES=180
+BLENDER_DAILY_GLOBAL_MINUTES=720
+BLENDER_DAILY_OWNER_MODEL_CALLS=36
+BLENDER_DAILY_GLOBAL_MODEL_CALLS=144
 VOLC_REGION=cn-beijing
 VOLC_ACCESSKEY=REPLACE_WITH_SCOPED_IAM_ACCESS_KEY
 VOLC_SECRETKEY=REPLACE_WITH_SCOPED_IAM_SECRET_KEY
-BLENDER_TOS_BUCKET=REPLACE_WITH_PRIVATE_BUCKET
+BLENDER_TOS_BUCKET=chatspace-blender-cn-beijing-20261011
 BLENDER_TOS_ENDPOINT=tos-cn-beijing.volces.com
 TOS_ACCESS_KEY=REPLACE_WITH_BUCKET_SCOPED_ACCESS_KEY
 TOS_SECRET_KEY=REPLACE_WITH_BUCKET_SCOPED_SECRET_KEY

@@ -12,7 +12,7 @@ import { BlenderJobs } from "./jobs";
 import { BlenderArtifacts } from "./artifacts";
 import { BlenderBatchRunner, volcanoPlanner } from "./batchRunner";
 
-const settings = readServiceSettings(), store = new BlenderStore(settings.database);
+const settings = readServiceSettings(), store = new BlenderStore(settings.database, undefined, settings.budgets);
 const secrets = new SandboxSecrets(settings.secret), executor = new ManagedExecutor(settings.target);
 const objects = new TosObjects(new TosClient(settings.tos), settings.tos.bucket), jobs = new BlenderJobs(store), artifacts = new BlenderArtifacts(store, objects);
 const modelKey = process.env.VOLC_KEY, model = process.env.BLENDER_AGENT_MODEL;
