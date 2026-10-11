@@ -1,6 +1,6 @@
 # Blender 云服务实施计划
 
-更新：2026-10-11。状态：用户已选择 Cloudflare 调度方案，ECS 购买搁置。单工程开发预览已验收；持久调度、多实例队列、工程检查点、任务恢复和生产入口已有本机实现及验证，新 managed 镜像已上传，TOS 私有桶已创建。**Cloudflare 尚未部署，TOS 文件闭环未验收，暂停权限未确认；跨用户可信复用及人工/Agent 控制权切换仍待完成，整项计划尚未交付。** 下文目标不能直接当作线上能力；以末尾实施记录及 `deploy/blender-cloudflare/README.md` 为准。
+更新：2026-10-11。状态：用户已选择 Cloudflare 调度方案，ECS 购买搁置。单工程开发预览已验收；持久调度、多实例队列、工程检查点、任务恢复和生产入口已有实现及真实云端验证，新 managed 镜像已上传，TOS 私有桶已创建。**Cloudflare 与网站已部署；真实 TOS、同实例暂停/恢复、后台隔离并行批次、GLB 导出下载、桌面 WebSocket 握手/撤销、Chrome 输入及保存后重连、网站模型领取均已通过。跨用户可信复用及人工/Agent 控制权切换仍待完成，整项计划尚未全部交付。** 下文目标不能直接当作线上能力；以末尾实施记录及 `deploy/blender-cloudflare/README.md` 为准。
 
 ## 1. 目标与已确定的方向
 
@@ -455,3 +455,22 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - 已在火山官方 IAM 可视化编辑器核对五个沙箱动作；指定资源未给出可选条目。草稿以 `Resource=*` 配合北京地域条件，TOS 仅授权指定桶的 `blender/*` GetObject/PutObject；未提交、未绑定用户、未创建密钥，需用户确认实际较宽的沙箱资源范围，并由用户亲自创建/安全录入凭据。完整部署与验收顺序见 `deploy/blender-cloudflare/README.md`。暂停邀测、跨用户清理、控制权切换和真实账户/对账仍待完成。
 - 暂停/恢复邀测已正式提交[火山工单 T-2026101110220001](https://console.volcengine.com/workorder/list/detail?id=T-2026101110220001)，状态“处理中”，截图 `output/blender-service/cloudflare-pause-workorder.png`。申请要求人工确认实际权限、新实例适用范围、生命周期计时、快照保留及进程恢复规则；没有代为调用创建/暂停/恢复接口，暂停开关继续关闭。工单提交不代表平台权限已开通。
 - 用户随后明确批准创建和绑定策略，已创建 `ChatSpaceBlenderCloudflare` 和专用 IAM 用户 `chatspace-blender-cloudflare`（96763875），真实详情页确认只绑定该策略、未启用控制台登录。用户亲自完成创建用户的短信验证；密钥列表仍为空，已将“创建 Access Key”入口交给用户亲自操作。证据：`output/blender-service/cloudflare-iam-user-bound.png`、`cloudflare-access-key-handoff.png`。尚未录入或上传服务凭据，Worker 仍未部署，实际 API 权限仍待验收。
+
+
+### Cloudflare 真实部署与联调（2026-10-11）
+
+- 用户亲自创建并隐藏录入专用 AK/SK；已发布 `chatspace-blender`、两个 SQLite Durable Objects、每分钟 Cron 和 `blender.junwei.cool`。凭据只进入仓库外 0600 文件与平台 Secrets，未扩大 IAM 范围，未购买 ECS 或 Cloudflare 套餐。
+- 实际 TOS 不覆盖上传先成功，再次上传返回 409，回读原文件不变。修正 SDK 预签名 URL 没有签入不覆盖头的问题；不可变 PUT 改用 SDK 签名请求头和原生传输。
+- 两个独立 managed 实例并行、场景隔离、错误控制凭据拒绝均通过。专用凭据实际 PauseSandbox、Paused 查询、ResumeSandbox 成功；`BLENDER_PAUSE_ENABLED=1` 据实际结果启用。官方工单仍待人工确认保留期限和计费语义。
+- Cloudflare Alarm 完成真实分配、Blender 命令、538444 字节工程写入 TOS、结束保存/暂停、同实例 epoch 1 → 2 恢复，并核实原对象仍在。1768 字节/12 三角形 GLB 经服务校验、签名下载与 SHA-256 核对通过。
+- 再次恢复到 epoch 3 后，真实桌面 HTML 200、双向 RFB 握手、结束后 WebSocket 1000 关闭及旧 Cookie 401 通过，工程已保存并暂停。修正立即发送的协议消息在异步授权期间丢失，以及握手完成后预算清理中止长连接的问题。
+- Wrangler ESM 打包与本机测试对 SDK CommonJS 导出处理不同；原生 Workers fetch 需要全局接收者及 `manual` 重定向模式。均补充回归，不以模拟网络通过代替实际公网验证。
+- 本轮后台完整检查退出 0：app 953 / chat 656 / Cloudflare 12 项通过，类型检查和构建成功。随后网站路由和保存后观看恢复修复已上线，最终结果见下一节。真实双项批次隔离并行已完成：球体 17652 字节/224 三角形，失败立方体单独重试后 1740 字节/12 三角形，下载哈希与对象名均核对通过；原球体没有重新执行，测试会话均保存暂停。用户普通 Chrome 健康检查正常。
+
+### 网站正式入口验收（2026-10-11）
+
+- Vercel 生产服务端已配置 `BLENDER_SERVICE_URL` 与相同内部 Secret；正式网站切换至 `dpl_HAQR52HTXVvgcrtG6WHREm4zr1aX`，会话 API 实际成功，凭据没有进入浏览器构建或 Git。兼容 Vercel 自动附加的 rewrite 路径查询，仅接受与已验证 URL 路径完全相符的单个参数；伪造、重复和额外参数均拒绝。
+- 真实 Chrome 测试项目 `p-mv3ctr2n` 从网页创建会话 `25ac53bf-8002-4a18-9fa6-cd27310e643a`，显示完整定制 Blender 窗口；Shift+F4 与控制台输入通过。保存暂停后跨页面恢复，修改后的 `ChromeInputCube` 对象名保留。
+- 自动保存期间隐藏被撤销的 iframe 并显示提示；按检查点身份重新取票恢复观看，覆盖轮询漏看短暂保存状态与迟到请求不能恢复旧租约的回归。真实网站保存 → 自动重连已通过。
+- 导出写入私有 TOS，再由浏览器校验领取到项目并显示真实 WebGPU 模型；重复领取不重复生成资产。GLB 下载为 1948 字节/12 三角形，包含 `ChromeInputCube`，SHA-256 `e78b37ca61780fd166e9f1e7d30a2fe0679c38a81f783f8f821a7aa29f470340`。截图 `output/blender-service/website-desktop-import-verified.png`；仅此独立测试工程产生新模型。
+- 最终完整检查退出 0：app 956 / chat 657 / Cloudflare 12 项，类型检查与生产构建通过。核心多会话、后台批次、检查点恢复和网站入口已部署；跨用户可信重置、人工/Agent 控制权切换、真实账号及货币对账仍未实施，整项计划不得标为全部完成。

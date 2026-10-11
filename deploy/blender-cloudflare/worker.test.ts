@@ -7,6 +7,7 @@ import { SandboxSecrets } from "../../chat/src/blenderService/secrets";
 import { DurableSql } from "./sql";
 import { FileInspector, StreamingFiles } from "./transfers";
 import { TosClient } from "@volcengine/tos-sdk";
+import { VolcanoSandboxes } from "../../chat/src/blenderService/volcano";
 import type { BlenderPool, BlenderDesktop } from "./worker";
 
 declare module "cloudflare:test" { interface ProvidedEnv extends Env {} }
@@ -16,6 +17,38 @@ const pool = () => env.BLENDER_POOLS.getByName(testPool);
 const token = (owner = "alice") => issueIdentity({ owner, scope: "api", expires: Date.now() + 60_000 }, env.BLENDER_SERVICE_SECRET);
 
 describe("Cloudflare controller", () => {
+  test("Volcano creation signer executes inside workerd before sending a mutation", async () => {
+    await runInDurableObject<BlenderPool>(pool(), async () => {
+      let sent = false;
+      const cloud = new VolcanoSandboxes({ accessKeyId: "fixture-ak", secretKey: "fixture-sk", region: "cn-beijing", functionId: "fixture", imageInfoId: "fixture" }, async (_input, init) => {
+        sent = true; expect(new Headers(init?.headers).get("authorization")).toContain("Credential=fixture-ak/");
+        return Response.json({ Result: { SandboxId: "fixture-instance" } });
+      });
+      expect(await cloud.create("fixture-session", 1, { control: "fixture-control", desktop: "fixture-desktop" }, 3)).toBe("fixture-instance");
+      expect(sent).toBe(true);
+    });
+  });
+  test("platform alarms allocate a queued session and make the managed executor ready without browser polling", async () => {
+    const id = await runInDurableObject<BlenderPool>(pool(), async (_instance, state) => {
+      const store = new BlenderStore(new DurableSql(state.storage));
+      return store.create("alarm-owner", "project", env.BLENDER_SERVICE_BUILD, 300_000).id;
+    });
+    let creates = 0;
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.hostname === "open.volcengineapi.com") { creates++; return Response.json({ Result: { SandboxId: "alarm-fixture" } }); }
+      return Response.json({ sessionId: id, epoch: 1, unknown: false, ready: true, protocolVersion: 1 });
+    });
+    try {
+      await runInDurableObject<BlenderPool>(pool(), async (_instance, state) => { await state.storage.setAlarm(Date.now()); });
+      await runDurableObjectAlarm(pool());
+      await runInDurableObject<BlenderPool>(pool(), async (_instance, state) => {
+        const session = new BlenderStore(new DurableSql(state.storage)).session(id);
+        expect(session.state).toBe("preparing"); expect(session.instance).toBe("alarm-fixture");
+      });
+      expect(creates).toBe(1);
+    } finally { network.mockRestore(); }
+  });
   test("health, public/internal authentication, and allocation safety gate", async () => {
     expect((await SELF.fetch("https://worker.example/health")).status).toBe(200);
     expect((await SELF.fetch("https://worker.example/internal/desktop", { method: "POST" })).status).toBe(404);
@@ -88,16 +121,21 @@ test("streamed checkpoint commits only after signed TOS upload, readback and man
     let corrupt = false;
     const mock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input));
+      const path = decodeURIComponent(url.pathname);
       if (url.hostname === "sandbox.example") return new Response(source);
       expect(url.hostname).toBe("fixture-bucket.tos-cn-beijing.volces.com");
-      expect(url.searchParams.has("X-Tos-Signature")).toBe(true);
       if (init?.method === "PUT") {
-        expect(new Headers(init.headers).get("x-tos-forbid-overwrite")).toBe("true");
-        if (objects.has(url.pathname)) return new Response(null, { status: 409 });
-        objects.set(url.pathname, new Uint8Array(await new Response(init.body).arrayBuffer()));
+        const headers = new Headers(init.headers);
+        expect(headers.get("x-tos-forbid-overwrite")).toBe("true");
+        expect(headers.get("authorization")).toMatch(/SignedHeaders=[^,]*x-tos-forbid-overwrite/);
+        expect(headers.get("x-tos-content-sha256")).toBe("UNSIGNED-PAYLOAD");
+        expect(headers.get("content-md5")).toBeTruthy();
+        if (objects.has(path)) return new Response(null, { status: 409 });
+        objects.set(path, new Uint8Array(await new Response(init.body).arrayBuffer()));
         return new Response(null);
       }
-      const bytes = objects.get(url.pathname)!;
+      expect(url.searchParams.has("X-Tos-Signature")).toBe(true);
+      const bytes = objects.get(path)!;
       return new Response(corrupt && url.pathname.endsWith("scene.blend") ? new TextEncoder().encode("BLENDER-corrupt") : bytes);
     });
     try {
@@ -111,11 +149,11 @@ test("streamed checkpoint commits only after signed TOS upload, readback and man
   });
 });
 
-test("desktop external RPC cancels stalled HTTP when JS timeout callbacks never fire", async () => {
+test.each(["HTTP", "WebSocket"])("desktop external RPC cancels stalled %s when JS timeout callbacks never fire", async transport => {
   const id = await runInDurableObject<BlenderPool>(env.BLENDER_POOLS.getByName(env.BLENDER_POOL), async (_instance, state) => {
     const store = new BlenderStore(new DurableSql(state.storage));
     const s = store.create("timer-owner", "project", env.BLENDER_SERVICE_BUILD, 3_600_000, crypto.randomUUID(), "interactive"), lease = store.reserveNext()!;
-    store.transition(s.id, lease.epoch, ["allocating"], "ready", "instance");
+    store.transition(s.id, lease.epoch, ["allocating"], "ready", `timer-instance-${s.id}`);
     const secret = new SandboxSecrets(env.BLENDER_SERVICE_SECRET);
     store.saveCredentials(s.id, lease.epoch, secret.seal(secret.generate(), s.id, lease.epoch)); return s.id;
   });
@@ -131,7 +169,9 @@ test("desktop external RPC cancels stalled HTTP when JS timeout callbacks never 
       return new Promise<Response>((_resolve, reject) => signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
     });
     try {
-      const request = instance.httpDesktop(new Request(`https://blender.example/desktop/${id}/index.html`, { headers: { Cookie: `__Host-cs-blender-${id}=${ticket}` } }));
+      const headers = new Headers({ Cookie: `__Host-cs-blender-${id}=${ticket}` });
+      if (transport === "WebSocket") { headers.set("Upgrade", "websocket"); headers.set("Origin", "https://blender.example"); }
+      const request = instance.fetch(new Request(`https://blender.example/desktop/${id}/${transport === "WebSocket" ? "websockify" : "index.html"}`, { headers }));
       await entered; now += 31_000; await instance.revalidate();
       expect((await request).status).toBe(502); expect(signal?.aborted).toBe(true);
       expect(await state.storage.getAlarm()).not.toBeNull();
@@ -150,17 +190,23 @@ test("Worker/DO HTTP transport carries a real binary socket and revokes it befor
   const ticket = issueIdentity({ owner: "socket-owner", session: id, epoch: 1, scope: "desktop", expires: Date.now() + 300_000 }, env.BLENDER_SERVICE_SECRET);
   await runInDurableObject<BlenderDesktop>(env.BLENDER_DESKTOPS.getByName(id), async instance => {
     const upstreams: WebSocket[] = [];
+    const handshakeSignals: AbortSignal[] = [];
     const network = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
       expect(new Headers(init!.headers).get("x-faas-instance-name")).toBe("socket-instance");
+      handshakeSignals.push(init!.signal!);
       const pair = new WebSocketPair(), upstream = pair[1]; upstream.binaryType = "arraybuffer"; upstream.accept();
       upstream.addEventListener("message", event => upstream.send(event.data)); upstreams.push(upstream);
+      upstream.send(new TextEncoder().encode("RFB 003.008\n").buffer);
       return new Response(null, { status: 101, webSocket: pair[0] });
     });
     const request = () => new Request(`https://blender.example/desktop/${id}/websockify`, { headers: { Upgrade: "websocket", Origin: "https://blender.example", Cookie: `__Host-cs-blender-${id}=${ticket}` } });
     let socket: WebSocket | null = null;
     try {
       const response = await SELF.fetch(request()); expect(response.status).toBe(101);
-      socket = response.webSocket; expect(socket).not.toBeNull(); socket!.binaryType = "arraybuffer"; socket!.accept();
+      expect(handshakeSignals[0]!.aborted).toBe(false);
+      socket = response.webSocket; expect(socket).not.toBeNull(); socket!.binaryType = "arraybuffer";
+      const banner = new Promise<ArrayBuffer>(resolve => socket!.addEventListener("message", event => resolve(event.data as ArrayBuffer), { once: true }));
+      socket!.accept(); expect(new TextDecoder().decode(await banner)).toBe("RFB 003.008\n");
       const received = new Promise<ArrayBuffer>(resolve => socket!.addEventListener("message", event => resolve(event.data as ArrayBuffer), { once: true }));
       socket!.send(new Uint8Array([0, 255, 128, 13]).buffer);
       expect(new Uint8Array(await received)).toEqual(new Uint8Array([0, 255, 128, 13]));

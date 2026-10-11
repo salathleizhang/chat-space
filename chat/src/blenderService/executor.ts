@@ -10,7 +10,7 @@ export class ManagedExecutor {
   private async request(session: Session, token: string, path: string, init: RequestInit): Promise<Uint8Array> {
     if (!session.instance) throw new Error("Session has no sandbox");
     return cloudBudget(async signal => {
-      const response = await this.fetchFn(new URL(path, this.target), { ...init, signal, redirect: "error",
+      const response = await this.fetchFn.call(globalThis, new URL(path, this.target), { ...init, signal, redirect: "manual",
         headers: { "Content-Type": "application/json", ...init.headers, Authorization: `Bearer ${token}`,
           "x-faas-instance-name": session.instance!, "x-chatspace-session": session.id, "x-chatspace-epoch": String(session.epoch) } });
       return boundedBody(response, this.responseLimit);

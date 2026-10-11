@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { onTaskPumpTick, tickTaskPumps } from "../common/taskPump";
 import { BlenderStore, type Session, type Operation } from "./storeCore";
 import { SandboxSecrets } from "./secrets";
-import type { VolcanoSandboxes } from "./volcano";
+import { VolcanoError, type VolcanoSandboxes } from "./volcano";
 import type { ManagedExecutor, ExecutorReceipt } from "./executor";
 import type { Checkpoints } from "./checkpoints";
 
@@ -33,13 +33,19 @@ export class BlenderScheduler {
     for (;;) { const s = this.store.reserveNext(now); if (!s) break; }
     for (const session of this.store.list()) {
       if (["queued", "paused", "expired"].includes(session.state) || this.flights.has(session.id) || (this.nextAt.get(session.id) ?? 0) > now) continue;
-      const work = this.step(session, now).then(() => this.store.clearEffect(session.id, session.epoch, "failures")).catch(() => {
+      const work = this.step(session, now).then(() => this.store.clearEffect(session.id, session.epoch, "failures")).catch(error => {
         // Do not log raw provider bodies, credentials, user code or signed URLs.
+        this.store.setEffect(session.id, session.epoch, "provider-error", error instanceof VolcanoError ? `${error.action}:${error.code}` : "controller_error");
+        console.warn(JSON.stringify({ event: "blender_step_failed", session: session.id, state: session.state,
+          ...(error instanceof VolcanoError ? { action: error.action, code: error.code, resultUnknown: error.unknown } : {
+            name: error instanceof Error && ["Error", "TypeError", "SyntaxError", "RangeError", "AbortError", "TimeoutError"].includes(error.name) ? error.name : "unknown",
+            categories: ["crypto", "buffer", "signature", "unsupported", "invalid", "constraint", "undefined", "transaction", "not implemented", "headers", "statement"].filter(term => error instanceof Error && error.message.toLowerCase().includes(term)),
+          }) }));
         this.nextAt.set(session.id, Date.now() + 10_000);
         const failures = Number(this.store.effect(session.id, session.epoch, "failures") ?? "0") + 1;
         this.store.setEffect(session.id, session.epoch, "failures", String(failures));
         const current = this.store.session(session.id);
-        if (failures >= 6 && current.epoch === session.epoch && ["preparing", "ready", "saving"].includes(current.state)) {
+        if (failures >= 6 && current.epoch === session.epoch && ["allocating", "preparing", "ready", "saving"].includes(current.state)) {
           this.quarantine(current, "sandbox_unreachable");
         }
       }).finally(() => { if (this.flights.get(session.id) === work) this.flights.delete(session.id); });

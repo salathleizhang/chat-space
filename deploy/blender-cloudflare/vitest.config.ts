@@ -7,6 +7,7 @@ export default defineConfig({
       BLENDER_SERVICE_SECRET: "fixture-controller-secret-never-production-12345",
       VOLC_ACCESSKEY: "fixture-ak", VOLC_SECRETKEY: "fixture-sk",
       TOS_ACCESS_KEY: "fixture-ak", TOS_SECRET_KEY: "fixture-sk", VOLC_KEY: "fixture-model-key",
+      BLENDER_PAUSE_ENABLED: "0",
     } },
   })],
   test: { include: ["*.test.ts"], server: { deps: { inline: ["@volcengine/openapi", "@volcengine/tos-sdk"] } } },

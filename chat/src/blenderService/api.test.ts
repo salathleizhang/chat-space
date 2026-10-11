@@ -62,6 +62,11 @@ test("API preserves ownership, idempotency and disables allocation before pause 
     const { session } = await response.json() as { session: { id: string } }; expect(response.status).toBe(202);
     const duplicate = await (await app.request("/v1/sessions", { method: "POST", headers: auth("alice"), body })).json() as { session: { id: string } };
     expect(duplicate.session.id).toBe(session.id);
+    store.setEffect(session.id, 0, "provider-error", "ListSandboxes:AccessDenied");
+    store.setEffect(session.id, 0, "failures", "6");
+    store.setEffect(session.id, 0, "create", "requested");
+    const diagnosis = await (await app.request(`/v1/sessions/${session.id}`, { headers: auth("alice") })).json() as { controller: unknown };
+    expect(diagnosis.controller).toEqual({ failureCount: 6, lastFailure: "ListSandboxes:AccessDenied", createRequested: true });
     expect((await app.request(`/v1/sessions/${session.id}`, { headers: auth("bob") })).status).toBe(409);
     expect((await (await app.request("/v1/sessions", { headers: auth("bob") })).json() as { sessions: unknown[] }).sessions).toHaveLength(0);
     const disabled = createBlenderApi(store, { tick() {} }, { secret, build: "build", desktopOrigin: "https://blender.example.com", pauseEnabled: false });

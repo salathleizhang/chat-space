@@ -66,7 +66,14 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
     const session = store.create(c.get("owner"), input.project, settings.build, input.budgetMinutes * 60_000, input.requestId, "interactive");
     scheduler.tick(); return c.json({ session }, 202);
   });
-  app.get("/v1/sessions/:id", c => c.json({ session: store.session(c.req.param("id"), c.get("owner")) }));
+  app.get("/v1/sessions/:id", c => {
+    const session = store.session(c.req.param("id"), c.get("owner"));
+    return c.json({ session, controller: {
+      failureCount: Number(store.effect(session.id, session.epoch, "failures") ?? "0"),
+      lastFailure: store.effect(session.id, session.epoch, "provider-error"),
+      createRequested: Boolean(store.effect(session.id, session.epoch, "create")),
+    } });
+  });
   app.post("/v1/sessions/:id/operations", async c => {
     const input = CommandInput.parse(await c.req.json());
     const session = store.session(c.req.param("id"), c.get("owner"));

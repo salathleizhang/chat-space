@@ -3,6 +3,7 @@ import { z } from "zod";
 import { TosClient } from "@volcengine/tos-sdk";
 import { cloudBudget } from "../../chat/src/models/cloudBudget";
 import { objectKey, boundedBody, MAX_OBJECT_BYTES } from "../../chat/src/blenderService/objects";
+import { immutableTosPut } from "../../chat/src/blenderService/tosRequest";
 import type { BlenderStore, Checkpoint, Session, Operation } from "../../chat/src/blenderService/storeCore";
 import type { Artifact } from "../../chat/src/blenderService/artifacts";
 
@@ -114,7 +115,7 @@ export class StreamingFiles {
     if (!s.instance) throw new Error("Sandbox missing");
     return { Authorization: `Bearer ${token}`, "x-faas-instance-name": s.instance, "x-chatspace-session": s.id, "x-chatspace-epoch": String(s.epoch) };
   }
-  private source(s: Session, token: string, path: string, signal: AbortSignal) { return fetch(new URL(path, this.target), { headers: this.headers(s, token), signal, redirect: "error" }); }
+  private source(s: Session, token: string, path: string, signal: AbortSignal) { return fetch(new URL(path, this.target), { headers: this.headers(s, token), signal, redirect: "manual" }); }
   private async relay(source: Response, url: string | URL, expected: FileDigest, headers: Record<string, string>, signal: AbortSignal, allowExisting = false) {
     if (!source.ok || !source.body) { await source.body?.cancel(); throw new Error("Source unavailable"); }
     const inspector = new FileInspector("opaque"), fixed = new FixedLengthStream(expected.bytes);
@@ -128,7 +129,7 @@ export class StreamingFiles {
     try {
       results = await Promise.allSettled([
         checked.pipeTo(fixed.writable, { signal: wire.signal }),
-        fetch(url, { method: "PUT", headers, body: fixed.readable, signal: wire.signal, redirect: "error" }).then(async response => {
+        fetch(url, { method: "PUT", headers, body: fixed.readable, signal: wire.signal, redirect: "manual" }).then(async response => {
           await response.body?.cancel(); if (!response.ok) wire.abort(); return response;
         }).catch(error => { wire.abort(); throw error; }),
       ]);
@@ -142,9 +143,9 @@ export class StreamingFiles {
   private async persist(s: Session, token: string, path: string, key: string, kind: "blend" | "glb"): Promise<FileDigest> {
     return cloudBudget(async signal => {
       const digest = await inspect(await this.source(s, token, path, signal), kind);
-      await this.relay(await this.source(s, token, path, signal), this.url(key, "PUT"), digest,
-        { "Content-Type": kind === "glb" ? "model/gltf-binary" : "application/octet-stream", "Content-MD5": digest.md5, "x-tos-forbid-overwrite": "true" }, signal, true);
-      const persisted = await inspect(await fetch(this.url(key, "GET"), { signal, redirect: "error" }), kind);
+      const put = await immutableTosPut(this.tos, this.bucket, key, digest.bytes, digest.md5, kind === "glb" ? "model/gltf-binary" : "application/octet-stream");
+      await this.relay(await this.source(s, token, path, signal), put.url, digest, put.headers, signal, true);
+      const persisted = await inspect(await fetch(this.url(key, "GET"), { signal, redirect: "manual" }), kind);
       if (persisted.bytes !== digest.bytes || persisted.sha256 !== digest.sha256) throw new Error("Persisted file checksum mismatch");
       return digest;
     }, 300_000);
@@ -152,9 +153,10 @@ export class StreamingFiles {
   private async manifest(key: string, value: object): Promise<void> {
     const body = JSON.stringify(value), hash = createHash("sha256").update(body).digest("hex");
     await cloudBudget(async signal => {
-      const put = await fetch(this.url(key, "PUT"), { method: "PUT", body, signal, redirect: "error", headers: { "Content-Type": "application/json", "x-tos-forbid-overwrite": "true", "Content-MD5": createHash("md5").update(body).digest("base64") } });
+      const signed = await immutableTosPut(this.tos, this.bucket, key, Buffer.byteLength(body), createHash("md5").update(body).digest("base64"), "application/json");
+      const put = await fetch(signed.url, { method: "PUT", body, signal, redirect: "manual", headers: signed.headers });
       await put.body?.cancel(); if (!put.ok && put.status !== 409) throw new Error("Manifest write failed");
-      const bytes = await boundedBody(await fetch(this.url(key, "GET"), { signal, redirect: "error" }), 64 * 1024);
+      const bytes = await boundedBody(await fetch(this.url(key, "GET"), { signal, redirect: "manual" }), 64 * 1024);
       if (createHash("sha256").update(bytes).digest("hex") !== hash) throw new Error("Manifest checksum mismatch");
     }, 45_000);
   }
@@ -171,12 +173,12 @@ export class StreamingFiles {
     const checkpoint = this.store.checkpoint(s.checkpoint!);
     if (checkpoint.sessionId !== s.id || checkpoint.build !== s.build) throw new Error("Checkpoint lease mismatch");
     await cloudBudget(async signal => {
-      const manifest = JSON.parse(new TextDecoder().decode(await boundedBody(await fetch(this.url(checkpoint.manifestKey, "GET"), { signal, redirect: "error" }), 64 * 1024)));
+      const manifest = JSON.parse(new TextDecoder().decode(await boundedBody(await fetch(this.url(checkpoint.manifestKey, "GET"), { signal, redirect: "manual" }), 64 * 1024)));
       for (const [key, value] of Object.entries({ version: 1, ...checkpoint, owner: s.owner, project: s.project, dependencies: "packed", compression: "none" })) if (manifest[key] !== value) throw new Error("Checkpoint manifest mismatch");
-      const digest = await inspect(await fetch(this.url(checkpoint.sceneKey, "GET"), { signal, redirect: "error" }), "blend");
+      const digest = await inspect(await fetch(this.url(checkpoint.sceneKey, "GET"), { signal, redirect: "manual" }), "blend");
       if (digest.bytes !== checkpoint.bytes || digest.sha256 !== checkpoint.sha256) throw new Error("Checkpoint checksum mismatch");
       try {
-        await this.relay(await fetch(this.url(checkpoint.sceneKey, "GET"), { signal, redirect: "error" }), new URL(`/control/managed/files/${fileId}`, this.target), digest,
+        await this.relay(await fetch(this.url(checkpoint.sceneKey, "GET"), { signal, redirect: "manual" }), new URL(`/control/managed/files/${fileId}`, this.target), digest,
           { ...this.headers(s, token), "Content-Type": "application/octet-stream" }, signal);
       } catch {
         const persisted = await inspect(await this.source(s, token, `/control/managed/files/${fileId}`, signal), "blend");

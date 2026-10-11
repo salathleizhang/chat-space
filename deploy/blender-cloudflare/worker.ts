@@ -187,10 +187,18 @@ export class BlenderDesktop extends DurableObject<Env> {
       return await cloudBudget(async signal => {
       const headers = desktopHeaders(grant); headers.set("Upgrade", "websocket"); headers.set("Origin", new URL(grant.target).origin);
       const protocol = request.headers.get("Sec-WebSocket-Protocol"); if (protocol) headers.set("Sec-WebSocket-Protocol", protocol);
-      const response = await fetch(targetURL(scope, grant), { headers, redirect: "error", signal });
+      // The request budget aborts on completion to clean up HTTP bodies. An
+      // upgraded socket outlives its handshake, so detach that budget after fetch.
+      const handshake = new AbortController(), abort = () => handshake.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      let response: Response;
+      try { response = await fetch(targetURL(scope, grant), { headers, redirect: "manual", signal: handshake.signal }); }
+      finally { signal.removeEventListener("abort", abort); }
       remote = response.webSocket;
       if (response.status !== 101 || !remote) { await response.body?.cancel(); throw new Error("Desktop upgrade failed"); }
-      remote.binaryType = "arraybuffer"; remote.accept();
+      if (signal.aborted) { remote.close(1000, "Desktop lease ended"); throw new Error("Desktop upgrade timed out"); }
+      remote.binaryType = "arraybuffer";
       if (!await pool(this.env).desktop(grant)) throw new Error("Desktop lease revoked");
       if (signal.aborted || generation !== this.generation) throw new Error("Desktop revoked during upgrade");
       const pair = new WebSocketPair(), client = pair[0], server = pair[1];
@@ -201,6 +209,9 @@ export class BlenderDesktop extends DurableObject<Env> {
       server.addEventListener("message", event => { try { upstream.send(event.data); } catch { close(); } });
       upstream.addEventListener("message", event => { try { server.send(event.data); } catch { close(); } });
       for (const socket of [server, upstream]) { socket.addEventListener("close", close); socket.addEventListener("error", close); }
+      // RFB sends its version immediately. Install forwarding before accepting,
+      // otherwise the asynchronous lease check can discard that first frame.
+      upstream.accept();
       await this.ctx.storage.setAlarm(Date.now() + 5_000);
       const resultHeaders = new Headers(); const selected = response.headers.get("Sec-WebSocket-Protocol"); if (selected) resultHeaders.set("Sec-WebSocket-Protocol", selected);
       return new Response(null, { status: 101, webSocket: client, headers: resultHeaders });

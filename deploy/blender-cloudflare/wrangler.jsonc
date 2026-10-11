@@ -18,7 +18,7 @@
   "vars": {
     "BLENDER_POOL": "cn-beijing-trial-v1",
     "BLENDER_AGENT_MODEL": "glm-5-3-flash-260828",
-    "BLENDER_PAUSE_ENABLED": "0",
+    "BLENDER_PAUSE_ENABLED": "1",
     "BLENDER_SERVICE_BUILD": "sha256:1485b04a2886e05e7b364357df56c14d2991f87f39bd6a6bc44fb8cd1db39443",
     "BLENDER_LIVE_TARGET": "https://saobidloj9b5hmpajmjko.apigateway-cn-beijing.volceapi.com/",
     "BLENDER_FUNCTION_ID": "201j2k8z",

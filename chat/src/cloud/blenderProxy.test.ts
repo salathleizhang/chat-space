@@ -20,3 +20,17 @@ test("Blender forwarding cannot call internal endpoints, pass query routing, arb
   await expect(forwardBlender(new Request("https://www.example/api/blender/sessions"), "alice", { ...settings, BLENDER_SERVICE_URL: "http://attacker/" }, fetcher)).rejects.toThrow("Invalid Blender service URL");
   expect(calls).toBe(0);
 });
+
+test("Vercel rewrite capture only describes the validated path and cannot select another route", async () => {
+  let calls = 0;
+  const fetcher = (async (url: string | URL | Request) => {
+    calls++; expect(String(url)).toBe("https://blender-service.example/v1/sessions");
+    return Response.json({ sessions: [] });
+  }) as unknown as typeof fetch;
+  const env = { ...settings, VERCEL: "1" };
+  expect((await forwardBlender(new Request("https://www.example/api/blender/sessions?path=blender%2Fsessions"), "alice", env, fetcher)).status).toBe(200);
+  for (const query of ["path=blender/internal/tick", "path=blender/sessions&path=blender/sessions", "path=blender/sessions&faasInstanceName=other", "path=blender/sessions/"])
+    expect((await forwardBlender(new Request("https://www.example/api/blender/sessions?" + query), "alice", env, fetcher)).status).toBe(403);
+  expect((await forwardBlender(new Request("https://www.example/api/blender/sessions?path=blender/sessions"), "alice", settings, fetcher)).status).toBe(403);
+  expect(calls).toBe(1);
+});

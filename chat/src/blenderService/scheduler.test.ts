@@ -3,6 +3,7 @@ import { BlenderScheduler } from "./scheduler";
 import { SandboxSecrets } from "./secrets";
 import { BlenderStore } from "./store";
 import type { ExecutorReceipt } from "./executor";
+import { VolcanoError } from "./volcano";
 
 function fixture() {
   const store = new BlenderStore(":memory:");
@@ -73,4 +74,22 @@ test("manual input prevents idle pause but checkpoint completion does not refres
     expect(f.store.session(idle.id).state).toBe("saving");
     expect(f.store.effect(idle.id, 1, "save-mode")).toBe("end");
   } finally { f.scheduler.close(); f.store.close(); }
+});
+test("repeated allocation/reconciliation errors quarantine the reserved slot without creating twice", async () => {
+  const store = new BlenderStore(":memory:", { global: 1, owner: 1, queued: 100 }); let creates = 0;
+  const scheduler = new BlenderScheduler(store, new SandboxSecrets("s".repeat(40)), {
+    sandboxes: { create: async () => { creates++; throw new VolcanoError("CreateSandbox", "connection_result_unknown", true); },
+      list: async () => { throw new VolcanoError("ListSandboxes", "AccessDenied", false); }, pause: async () => {} },
+    executor: { health: async () => { throw new Error("unused"); }, submit: async () => { throw new Error("unused"); },
+      receipt: async () => { throw new Error("unused"); }, checkpoint: async () => new Uint8Array() },
+    checkpoints: { commit: async () => { throw new Error("unused"); } },
+  }, true);
+  try {
+    const s = store.create("alice", "project", "build", 3_600_000);
+    for (let i = 0; i < 6; i++) { scheduler.tick(Date.now() + i * 20_000); await scheduler.drain(); }
+    expect(store.session(s.id).state).toBe("quarantined"); expect(creates).toBe(1);
+    expect(store.effect(s.id, 1, "failures")).toBe("6");
+    expect(store.effect(s.id, 1, "provider-error")).toBe("ListSandboxes:AccessDenied");
+    expect(store.reserveNext()).toBeNull();
+  } finally { scheduler.close(); store.close(); }
 });

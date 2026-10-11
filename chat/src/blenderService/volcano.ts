@@ -1,6 +1,11 @@
 // Import only the pinned SDK signer; importing the barrel also loads unrelated cloud services.
-import Signer from "@volcengine/openapi/lib/base/sign";
+import SignerImport from "@volcengine/openapi/lib/base/sign";
 import { cloudBudget } from "../models/cloudBudget";
+
+// The SDK exports a CommonJS { default: Signer }. Wrangler's ESM bundle
+// preserves that object, while Bun/Vitest unwrap it. Support both transports.
+const Signer = typeof SignerImport === "function" ? SignerImport :
+  (SignerImport as unknown as { default: typeof SignerImport }).default;
 
 export interface VolcanoSettings { accessKeyId: string; secretKey: string; sessionToken?: string; region: string; functionId: string; imageInfoId: string }
 export interface SandboxInfo { id: string; status: string; type: string; expiresAt: string; metadata: Record<string, string> }
@@ -16,11 +21,17 @@ export class VolcanoSandboxes {
     const headers: Record<string, string> = { Host: "open.volcengineapi.com", "Content-Type": "application/json" };
     const request = { method: "POST", region: this.settings.region, pathname: "/", params, headers, body };
     new Signer(request, "vefaas").addAuthorization(this.settings);
+    const phase = { value: "fetch" as "fetch" | "body" };
     try {
       return await cloudBudget(async signal => {
-        const response = await this.fetchFn("https://open.volcengineapi.com/?" + new URLSearchParams(params), {
-          method: "POST", headers, body, signal, redirect: "error",
+        // Workers' native fetch requires the global receiver, even when injected.
+        const response = await this.fetchFn.call(globalThis, "https://open.volcengineapi.com/?" + new URLSearchParams(params), {
+          method: "POST", headers, body, signal, redirect: "manual",
         });
+        if (response.status >= 300 && response.status < 400) {
+          await response.body?.cancel(); throw new VolcanoError(action, "redirect_refused", mutation);
+        }
+        phase.value = "body";
         // Do not expose provider messages or DescribeSandbox Envs (which contain credentials).
         const data = await response.json() as { ResponseMetadata?: { Error?: { Code?: string } }; Result?: Record<string, unknown> };
         if (!response.ok || data.ResponseMetadata?.Error || !data.Result) {
@@ -31,7 +42,10 @@ export class VolcanoSandboxes {
       }, 45_000);
     } catch (error) {
       if (error instanceof VolcanoError) throw error;
-      throw new VolcanoError(action, "connection_result_unknown", mutation);
+      // Fixed diagnostic terms only; never preserve a fetch error's URL/body.
+      const name = error instanceof Error && ["TypeError", "SyntaxError", "AbortError", "TimeoutError"].includes(error.name) ? error.name : "Error";
+      const terms = ["header", "tls", "dns", "abort", "timeout", "unsupported", "cancelled", "canceled"].filter(term => error instanceof Error && error.message.toLowerCase().includes(term));
+      throw new VolcanoError(action, `${phase.value === "body" ? "invalid_response" : "connection_result_unknown"}_${name}${terms.length ? "_" + terms.join("_") : ""}`, mutation);
     }
   }
   async create(sessionId: string, epoch: number, secrets: { desktop: string; control: string }, timeoutMinutes = 60): Promise<string> {
@@ -46,20 +60,31 @@ export class VolcanoSandboxes {
     return instanceId(result.SandboxId);
   }
   async list(filter: { sessionId?: string; epoch?: number; instance?: string } = {}): Promise<SandboxInfo[]> {
-    const all: SandboxInfo[] = [];
-    for (let page = 1; page <= 100; page++) {
-      const result = await this.call("ListSandboxes", { PageNumber: page, PageSize: 100,
-        ...(filter.instance ? { SandboxId: filter.instance } : {}),
-        ...(filter.sessionId ? { Metadata: { chatspace_session: filter.sessionId, ...(filter.epoch ? { chatspace_epoch: String(filter.epoch) } : {}) } } : {}) });
-      if (!Array.isArray(result.Sandboxes)) throw new VolcanoError("ListSandboxes", "invalid_result", false);
-      all.push(...result.Sandboxes.map(value => {
-        const s = value as Record<string, unknown>;
-        return { id: instanceId(s.Id), status: String(s.Status ?? ""), type: String(s.InstanceType ?? ""),
-          expiresAt: String(s.ExpireAt ?? ""), metadata: s.Metadata as Record<string, string> ?? {} };
-      }));
-      if (all.length >= Number(result.Total) || result.Sandboxes.length < 100) return all;
+    const all = new Map<string, SandboxInfo>();
+    // Default lists omit paused disk snapshots. Verified against a real paused
+    // customized instance: Paused=true returns Status=Paused, InstanceType="".
+    for (const paused of [false, true]) {
+      let seen = 0, complete = false;
+      for (let page = 1; page <= 100; page++) {
+        const result = await this.call("ListSandboxes", { PageNumber: page, PageSize: 100, ...(paused ? { Paused: true } : {}),
+          ...(filter.instance ? { SandboxId: filter.instance } : {}),
+          ...(filter.sessionId ? { Metadata: { chatspace_session: filter.sessionId, ...(filter.epoch ? { chatspace_epoch: String(filter.epoch) } : {}) } } : {}) });
+        if (!Array.isArray(result.Sandboxes)) throw new VolcanoError("ListSandboxes", "invalid_result", false);
+        for (const value of result.Sandboxes) {
+          const s = value as Record<string, unknown>;
+          const id = instanceId(s.Id), status = String(s.Status ?? "");
+          const info = { id, status, type: status === "Paused" ? "frozen" : String(s.InstanceType || "activated"),
+            expiresAt: String(s.ExpireAt ?? ""), metadata: s.Metadata as Record<string, string> ?? {} };
+          // An active record wins if the provider briefly lists both variants.
+          if (!all.has(id)) all.set(id, info);
+        }
+        seen += result.Sandboxes.length;
+        if (seen >= Number(result.Total) || result.Sandboxes.length < 100) { complete = true; break; }
+      }
+      if (!complete) throw new VolcanoError("ListSandboxes", "pagination_limit", false);
+      if (filter.instance && all.has(filter.instance)) break;
     }
-    throw new VolcanoError("ListSandboxes", "pagination_limit", false);
+    return [...all.values()];
   }
   async pause(instance: string): Promise<void> { await this.call("PauseSandbox", { SandboxId: instanceId(instance), Type: "disk" }, true); }
   async resume(instance: string, timeoutMinutes = 60): Promise<string> {

@@ -11,7 +11,12 @@ export async function forwardBlender(request: Request, owner: string, env = proc
   const address = new URL(request.url), path = address.pathname.replace(/^\/api\/blender/, "/v1");
   const allowed = request.method === "GET" && (/^\/v1\/sessions(?:\/[a-f0-9-]{36}(?:\/exports)?)?$/.test(path) || /^\/v1\/(operations|batches|exports)\/[a-f0-9-]{36}$/.test(path)) ||
     request.method === "POST" && (/^\/v1\/(sessions|batches)$/.test(path) || /^\/v1\/sessions\/[a-f0-9-]{36}\/(operations|end|desktop|resume|answer|retry)$/.test(path) || /^\/v1\/batches\/[a-f0-9-]{36}\/cancel$/.test(path));
-  if (!allowed || address.search) return Response.json({ error: "不允许的 Blender 请求" }, { status: 403 });
+  // Vercel adds the unused :path* rewrite capture to the request query. It may
+  // describe the already validated URL path, but must never choose a route.
+  const query = [...address.searchParams];
+  const rewriteCapture = env.VERCEL === "1" && query.length === 1 && query[0]![0] === "path" &&
+    query[0]![1] === address.pathname.slice("/api/".length);
+  if (!allowed || address.search && !rewriteCapture) return Response.json({ error: "不允许的 Blender 请求" }, { status: 403 });
   const body = request.method === "POST" ? await boundedBody(new Response(request.body), 256 * 1024) : undefined;
   return cloudBudget(async signal => {
     const upstream = await fetchFn(new URL(path, target), { method: request.method, redirect: "error", signal,

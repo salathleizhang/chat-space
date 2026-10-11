@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { Panel, Button } from "../../shared/ui";
 import { blenderService, sessionLabels, type CloudSession, type JobSummary } from "./service";
 import { durableBlenderRequest, pendingBlenderRequest, type BatchRequest } from "./outbox";
+import { BlenderDesktopView, type DesktopViewGrant } from "./DesktopView";
 type DailyBudget = { runtime: { usedAndReservedMs: number; limitMs: number }; modelCalls: { used: number; limit: number } };
 
 /** Watching is disposable. Accepted work belongs to the durable service. */
 export function BlenderCloudWindow({ projectSlug, onClose, onImported }: { projectSlug: string; onClose: () => void; onImported: () => void }) {
   const [sessions, setSessions] = useState<CloudSession[]>([]), [jobs, setJobs] = useState<Record<string, JobSummary>>({});
-  const [selected, setSelected] = useState<string>(), [view, setView] = useState<{ id: string; epoch: number; url: string }>();
+  const [selected, setSelected] = useState<string>(), [view, setView] = useState<DesktopViewGrant>();
   const [error, setError] = useState<string>(), [busy, setBusy] = useState(false), [enabled, setEnabled] = useState<boolean>();
   const [prompts, setPrompts] = useState(""), [parallel, setParallel] = useState(3), [answer, setAnswer] = useState("");
   const [discardUnknown, setDiscardUnknown] = useState(false);
@@ -37,18 +38,6 @@ export function BlenderCloudWindow({ projectSlug, onClose, onImported }: { proje
   useEffect(() => {
     if (view && (view.id !== selected || session?.epoch !== view.epoch || !["ready", "saving"].includes(session?.state ?? "") || session?.stopReason)) setView(undefined);
   }, [selected, session?.epoch, session?.state, session?.stopReason, view]);
-  useEffect(() => {
-    if (!view) return;
-    const controller = new AbortController();
-    const timer = setInterval(() => {
-      void blenderService<{ url: string }>(`sessions/${view.id}/desktop`, {}, controller.signal).then(async data => {
-        const url = new URL(data.url); url.pathname = `/desktop/${view.id}/__lease/renew`;
-        // Same-site HTTPS desktop domain: renew the HttpOnly cookie without reloading the iframe.
-        await fetch(url, { credentials: "include", mode: "no-cors", signal: controller.signal });
-      }).catch(() => { if (!controller.signal.aborted) setError("画面凭证续期失败，可重新点击观看；后台任务仍由云服务管理。"); });
-    }, 120_000);
-    return () => { controller.abort(); clearInterval(timer); };
-  }, [view?.id, view?.epoch]);
   async function act(action: () => Promise<void>) {
     setBusy(true); setError(undefined);
     try { await action(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "请求失败，请刷新状态后重试"); }
@@ -79,12 +68,12 @@ export function BlenderCloudWindow({ projectSlug, onClose, onImported }: { proje
             <p className="text-xs text-ink-muted">{job ? "画面只读，关闭观看后后台任务继续执行。" : "手动操作会保持活跃；五分钟无操作后保存并暂停，单次运行最长六十分钟。"}</p>
             {session.state === "ready" && <Button size="sm" disabled={busy} onClick={() => void act(async () => {
               const data = await blenderService<{ url: string }>(`sessions/${session.id}/desktop`, {});
-              setView({ id: session.id, epoch: session.epoch, url: data.url });
+              setView({ id: session.id, epoch: session.epoch, url: data.url, checkpoint: session.checkpoint });
             })}>观看画面</Button>}
             {session.state === "ready" && !job && <Button size="sm" disabled={busy} onClick={() => void act(async () => {
               await durableBlenderRequest(owner!, projectSlug, `export-${session.id}`, `sessions/${session.id}/operations`, () => ({ epoch: session.epoch, key: crypto.randomUUID(), tool: "export_scene", arguments: {} }));
             })}>导出当前场景</Button>}
-            {view && <iframe src={view.url} title="Cloud Blender live view" className="aspect-video w-full border-0 bg-black" />}
+            {view && <BlenderDesktopView key={view.url} session={session} initial={view} />}
             {!session.stopReason && !["paused", "expired"].includes(session.state) && <Button size="sm" disabled={busy} onClick={() => void act(async () => {
               await blenderService(`sessions/${session.id}/end`, { reason: job ? "cancelled" : "ended" }); setView(undefined);
             })}>结束此项，保存后暂停</Button>}
