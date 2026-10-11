@@ -33,6 +33,8 @@
 
 新 Worker 的必需 Secrets 要和首次部署同时提供。用仓库外的权限 0600 JSON/ dotenv 文件保存真实值，然后运行：
 
+可先在自己的交互式终端执行 `python3 deploy/blender-cloudflare/prepare-secrets.py`，隐藏输入该专用用户的 AK/SK 并重复确认 SK。脚本将同一份受限凭据用于沙箱和 TOS，复用本机已有 `VOLC_KEY`，生成内部随机密钥（重跑时保留已有内部密钥，避免破坏加密记录），原子写入 `~/.config/chatspace/blender-cloudflare-secrets.json`，目录 0700、文件 0600。它不上传、不输出任何密钥值；实际部署仍由下面的 Wrangler 命令执行。创建密钥与输入由用户亲自完成，禁止把值贴到聊天或命令参数。
+
 ```sh
 cd deploy/blender-cloudflare
 ../../node_modules/.bin/wrangler deploy --secrets-file /absolute/path/outside/repo/blender-secrets.json
