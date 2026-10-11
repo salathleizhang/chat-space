@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type HTMLAttributes } from "react";
+import { useEffect, useId, useRef, type ComponentPropsWithRef } from "react";
 import { buildDisplacementMap, supportsLiquidGlass } from "./liquidGlass";
 
 /** chrome 悬浮面板唯一出处,两档玻璃:
@@ -7,7 +7,7 @@ import { buildDisplacementMap, supportsLiquidGlass } from "./liquidGlass";
       每个实例每帧都要重过滤镜,只给 1~2 个主角级 chrome
       (顶部导航、Agent Dock)用,禁止用在大面积或成排的面板上。
     widgets 里不允许再手写 glass/bg-surface/backdrop-blur 等表面类。 */
-interface PanelProps extends HTMLAttributes<HTMLDivElement> {
+interface PanelProps extends ComponentPropsWithRef<"div"> {
   variant?: "glass" | "liquid";
 }
 

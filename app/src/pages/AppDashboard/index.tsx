@@ -88,6 +88,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
    * 预览，而是一个独立的、可以和工作台其它面板同时开着的窗。放在这里只是因为组合根在这。
    */
   const [blenderLive, setBlenderLive] = useState(false);
+  const [blenderInitialized, setBlenderInitialized] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   /**
    * 选中的资产集合，**由模型列表与 3D 视口共用**：在场景里点中的模型，列表同一行
@@ -491,7 +492,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           </h1>
           {/* 文案随状态变，与 ViewportChrome 那套工具栏按钮同一约定（探针也按 aria-label 找）。 */}
           <Tooltip
-            content={blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+            content={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "Blender 窗口管理" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
             side="bottom"
           >
             <Button
@@ -499,9 +500,9 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
               shape="square"
               size="sm"
               icon={CubeIcon}
-              aria-label={blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+              aria-label={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "Blender 窗口管理" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
               aria-pressed={blenderLive}
-              onClick={() => setBlenderLive((value) => !value)}
+              onClick={() => { setBlenderInitialized(true); setBlenderLive((value) => !value); }}
             />
           </Tooltip>
         </Panel>
@@ -581,7 +582,10 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           </Suspense>
         </div>
       )}
-      {blenderLive && (
+      {import.meta.env.VITE_BROWSER_LOCAL === "1" && blenderInitialized && <Suspense fallback={null}>
+        <BlenderCloudWindow key={projectSlug} projectSlug={projectSlug} open={blenderLive} onClose={() => setBlenderLive(false)} onImported={bumpRefresh} />
+      </Suspense>}
+      {import.meta.env.VITE_BROWSER_LOCAL !== "1" && blenderLive && (
         /*
           Blender 实时画面。**位置是挑过的**：四个角分别被 Inspector / ModelPreviewWindow（右上）、
           ModelList（左上）、Sidebar（左下）、Viewport 工具栏（右下 bottom-4 right-4）占着，
@@ -590,9 +594,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         */
         <div className="absolute right-4 bottom-20 z-20 animate-chrome-enter">
           <Suspense fallback={null}>
-            {import.meta.env.VITE_BROWSER_LOCAL === "1"
-              ? <BlenderCloudWindow projectSlug={projectSlug} onClose={() => setBlenderLive(false)} onImported={bumpRefresh} />
-              : <BlenderLiveWindow projectSlug={projectSlug} onClose={() => setBlenderLive(false)} />}
+            <BlenderLiveWindow projectSlug={projectSlug} onClose={() => setBlenderLive(false)} />
           </Suspense>
         </div>
       )}

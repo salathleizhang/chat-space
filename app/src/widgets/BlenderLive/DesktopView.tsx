@@ -30,11 +30,11 @@ export function BlenderDesktopView({ session, initial, request = requestGrant }:
   }, [session.id, session.epoch, session.state, session.stopReason, session.checkpoint, initial, grant.checkpoint, request]);
 
   if (session.id !== initial.id || session.epoch !== initial.epoch || session.stopReason) return null;
-  if (session.state === "saving") return <p role="status" className="flex aspect-video items-center justify-center bg-black/10 text-sm">正在保存工程，完成后自动恢复画面…</p>;
+  if (session.state === "saving") return <p role="status" className="flex min-h-0 flex-1 items-center justify-center bg-black/10 text-sm">正在保存工程，完成后自动恢复画面…</p>;
   if (session.state !== "ready") return null;
   return <>
-    {session.checkpoint === grant.checkpoint ? <iframe src={grant.url} title="Cloud Blender live view" className="aspect-video w-full border-0 bg-black" /> :
-      <p role="status" className="flex aspect-video items-center justify-center bg-black/10 text-sm">正在重新连接 Blender 画面…</p>}
+    {session.checkpoint === grant.checkpoint ? <iframe src={grant.url} title="Cloud Blender live view" className="min-h-0 w-full flex-1 border-0 bg-black" allow="fullscreen" /> :
+      <p role="status" className="flex min-h-0 flex-1 items-center justify-center bg-black/10 text-sm">正在重新连接 Blender 画面…</p>}
     {error && <p role="alert" className="text-sm">{error}</p>}
   </>;
 }
