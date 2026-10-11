@@ -29,7 +29,7 @@
 | `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` | 专用桶范围凭据，只需要该桶 Blender 对象前缀的 GetObject/PutObject；禁止公共 ACL |
 | `VOLC_KEY` | 方舟模型调用密钥，用于后台批次规划；使用既有模型和每日调用准入 |
 
-不要授予账号管理员或全产品权限来绕过访问失败。`iam-policy.review.json` 是待用户批准和供应商验证的草稿：五个沙箱动作已在官方编辑器确认，但选择指定资源时没有可选资源，故草稿的沙箱 `Resource=*` 覆盖北京地域所有应用，不能宣称只授权 ChatSpace。TOS 则限定本桶 `blender/*` 的 GetObject/PutObject。北京条件与对象权限需用实际服务调用验收；授权失败时不自动扩大范围。草稿未提交/绑定，密钥未创建。本机已存在模型凭据，但尚无沙箱/TOS 服务凭据，也没有上传任何凭据。
+不要授予账号管理员或全产品权限来绕过访问失败。`iam-policy.review.json` 记录已获用户批准的策略：五个沙箱动作已在官方编辑器确认，但选择指定资源时没有可选资源，故沙箱 `Resource=*` 配合北京地域条件，不能宣称只授权 ChatSpace。TOS 则限定本桶 `blender/*` 的 GetObject/PutObject。北京条件与对象权限需用实际服务调用验收；授权失败时不自动扩大范围。2026-10-11 已创建 `ChatSpaceBlenderCloudflare`，专用用户 `chatspace-blender-cloudflare`（96763875）只绑定此策略，控制台登录关闭，密钥列表为空；密钥创建已交由用户亲自完成。本机已存在模型凭据，尚无沙箱/TOS 服务凭据，也没有上传任何凭据。
 
 新 Worker 的必需 Secrets 要和首次部署同时提供。用仓库外的权限 0600 JSON/ dotenv 文件保存真实值，然后运行：
 
