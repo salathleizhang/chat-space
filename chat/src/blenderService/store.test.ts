@@ -21,6 +21,29 @@ test("one owner can run three independent sessions; fourth stays queued", () => 
   expect(s.reserveNext()).toBeNull();
   expect(s.list().filter(r => r.state === "queued")).toHaveLength(1);
 });
+test("default owner admission permits ten sessions and releases capacity only after confirmed pause", () => {
+  const s = new BlenderStore(":memory:"); stores.push(s);
+  for (let i = 0; i < 11; i++) s.create("alice", "project", "custom-build", 60_000);
+  const active = Array.from({ length: 10 }, () => s.reserveNext()!);
+  expect(active.every(Boolean)).toBe(true); expect(new Set(active.map(r => r.id)).size).toBe(10);
+  expect(s.reserveNext()).toBeNull();
+  const first = active[0]!;
+  s.transition(first.id, first.epoch, ["allocating"], "pausing");
+  expect(s.reserveNext()).toBeNull();
+  s.transition(first.id, first.epoch, ["pausing"], "paused");
+  expect(s.reserveNext()?.owner).toBe("alice");
+});
+test("default global admission stops at one hundred across owners and resumes after release", () => {
+  const s = new BlenderStore(":memory:"); stores.push(s);
+  for (let owner = 0; owner < 11; owner++) for (let i = 0; i < 10; i++) s.create(`owner-${owner}`, "project", "custom-build", 60_000);
+  const active = Array.from({ length: 100 }, () => s.reserveNext()!);
+  expect(active.every(Boolean)).toBe(true); expect(new Set(active.map(r => r.id)).size).toBe(100);
+  expect(s.reserveNext()).toBeNull(); expect(s.list().filter(r => r.state === "queued")).toHaveLength(10);
+  const counts = new Map<string, number>(); for (const r of active) counts.set(r.owner, (counts.get(r.owner) ?? 0) + 1);
+  expect([...counts.values()].every(n => n <= 10)).toBe(true);
+  const first = active[0]!; s.transition(first.id, first.epoch, ["allocating"], "paused");
+  expect(s.reserveNext()).not.toBeNull(); expect(s.reserveNext()).toBeNull();
+});
 test("fair admission rotates owners even when one submits a large batch", () => {
   const s = store();
   for (let i = 0; i < 10; i++) s.create("alice", "project", "custom-build", 3_600_000);

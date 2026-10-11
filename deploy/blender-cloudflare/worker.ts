@@ -28,7 +28,7 @@ function settings(env: Env) {
 function unavailable(status = 503) { return Response.json({ error: "Blender service unavailable" }, { status, headers: { "Cache-Control": "no-store" } }); }
 function configured(env: Env) { return Boolean(env.BLENDER_SERVICE_SECRET?.length >= 32 && env.VOLC_ACCESSKEY && env.VOLC_SECRETKEY && env.TOS_ACCESS_KEY && env.TOS_SECRET_KEY && env.VOLC_KEY); }
 
-/** One bounded regional capacity pool is the coordination atom for its four sandbox slots.
+/** One bounded regional capacity pool coordinates admission across its sandbox slots.
  * Desktop HTTP/binary traffic bypasses it; individual desktop sockets have their own DO.
  * Changing BLENDER_POOL creates a separate quota ledger, so it is deployment-only, never client input. */
 export class BlenderPool extends DurableObject<Env> {

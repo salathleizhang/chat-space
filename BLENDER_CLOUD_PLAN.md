@@ -499,3 +499,11 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - 新增控制器回归验证同时打开多个本项目会话、排除其他项目、新任务自动显示、关闭后轮询不重开、再次点击补回、已有窗口身份保持且无修改/计费请求。
 - 图标原文件来自 `https://www.blender.org/wp-content/themes/bthree/assets/icons/favicon.svg`，仅清理原文件的行尾空白，图形未改动，保存在 `app/public/brand/blender.svg`；官网出处 https://www.blender.org/about/logo/ 。
 - 本批完整 `BLENDER_ENABLED=0 bun run check` 退出 0：app 967 / chat 664 / Cloudflare 12 项通过，类型检查和生产构建成功。正式网站已切换至 `dpl_48DTyTSDzETd5X6PDsFiMn74fHWV`，部署会话 API 通过。真实 Chrome 点击 logo 直接显示两个 352×242 小窗，无管理列表，图标成功加载；单窗关闭及再次点击 logo 补回通过。普通轮询不重开、自动显示新会话及已有窗口身份保持由控制器回归验证。两个已有工程保持暂停；截图 `output/blender-service/website-blender-logo-open-all.png`。
+
+### 并发上限扩大为全局 100 / 每工作区 10（2026-10-11）
+
+- 按用户要求将默认调度名额改为全局 100、每工作区 10，队列上限仍为每工作区 100。默认额度集中到 `chat/src/blenderService/limits.ts`，本地 SQLite、Cloudflare SQLite 和 AI 工具共用，API 按资源池实际 owner 额度验证批次参数。未指定并发的批次仍默认 3，已有批次的持久并发值不改写。
+- 用户明确同意同步提高每日运行预算：Cloudflare 每工作区 600、全局 6,000 沙盒分钟。规划模型调用预算保持每工作区 36、全局 144；运行预算在 UTC 零点（北京时间 08:00）重置。保留原资源池身份及 Durable Object 绑定，已有会话、检查点和预算账本不重建。
+- 会话查询及 AI 查询工具返回当前 limits。回归覆盖每工作区第 11 个、全局第 101 个排队，暂停未确认不释放名额，确认后按剩余每日预算继续分配，AI 十并行请求通过真实本机 API、十一并行请求拒绝；workerd 的实际 DO SQLite 验证同样的 10 / 100 边界与配置运行预算。不会为额度验收在火山新建 100 个计费沙盒。
+- 完整 `BLENDER_ENABLED=0 bun run check` 退出 0：app 967 / chat 667 / Cloudflare 13 项通过，类型检查与构建成功。Cloudflare 已部署版本 `c0f72eb3-8289-4ed5-9fcd-54a2f30ab613`，Vercel 正式网站已切换至 `dpl_Cbp6KZnLk9pA7h1a8CsudXry3e1F`。正式域名、workers.dev 和网站代理的真实鉴权 GET 都返回 global 100 / owner 10 / queued 100，工作区 runtime limit 为 36,000,000 ms；全局 6,000 分钟在部署配置与 workerd 回归核对。
+- 首次发布后现有 DO 仍返回旧配置，重新发布时显式使用 `wrangler deploy --durable-objects-code-update-mode immediate`，随后上线查询验证新版生效。原 pool 名称、类绑定和 SQLite 数据保留。只读证据 `output/blender-service/concurrency-live-proof.json`；部署日志及全量检查日志保存在同目录。没有通过真实一百实例负载验收，火山账号自身资源配额仍是独立上限。

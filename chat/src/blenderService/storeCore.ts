@@ -1,6 +1,7 @@
 import type { SqlDatabase } from "./sql";
 import { createHash, randomUUID } from "node:crypto";
 import { BlenderBudgets, type BudgetLimits } from "./budgets";
+import { DEFAULT_BLENDER_LIMITS } from "./limits";
 
 export type SessionState = "queued" | "allocating" | "preparing" | "ready" | "saving" | "cleaning" | "pausing" | "paused" | "quarantined" | "expired";
 export type OperationState = "queued" | "dispatched" | "succeeded" | "failed" | "unknown";
@@ -27,7 +28,7 @@ export class BlenderConflict extends Error {}
 export class BlenderStore {
   readonly db: SqlDatabase;
   readonly budgets: BlenderBudgets;
-  constructor(database: SqlDatabase, readonly limits = { global: 4, owner: 3, queued: 100 }, budgetLimits?: BudgetLimits) {
+  constructor(database: SqlDatabase, readonly limits = DEFAULT_BLENDER_LIMITS, budgetLimits?: BudgetLimits) {
     if (![limits.global, limits.owner, limits.queued].every(n => Number.isInteger(n) && n > 0)) throw new Error("Invalid Blender quotas");
     this.db = database;
     this.db.exec(`

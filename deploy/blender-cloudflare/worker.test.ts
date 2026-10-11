@@ -61,7 +61,7 @@ describe("Cloudflare controller", () => {
   });
   test("actual DO SQLite supports nested admission transactions, quotas and rollback", async () => {
     await runInDurableObject<BlenderPool>(pool(), async (_instance, state) => {
-      const store = new BlenderStore(new DurableSql(state.storage)), jobs = new BlenderJobs(store);
+      const store = new BlenderStore(new DurableSql(state.storage), { global: 4, owner: 3, queued: 100 }), jobs = new BlenderJobs(store);
       const id = crypto.randomUUID(), items = Array.from({ length: 4 }, (_, i) => ({ id: String(i), label: "model", prompt: "cube" }));
       jobs.createBatch("alice", "project", id, items, "custom");
       expect(jobs.createBatch("alice", "project", id, items, "custom")).toHaveLength(4);
@@ -70,6 +70,28 @@ describe("Cloudflare controller", () => {
       expect(store.budgets.summary("alice").runtime.usedAndReservedMs).toBe(3 * 3_600_000);
       expect(() => store.db.transaction(() => { store.create("bob", "project", "custom", 3_600_000); throw new Error("rollback"); }).immediate()).toThrow("rollback");
       expect(store.list("bob")).toHaveLength(0);
+    });
+  });
+  test("production quotas admit ten per owner and one hundred total with configured runtime budgets", async () => {
+    await runInDurableObject<BlenderPool>(pool(), async (_instance, state) => {
+      const store = new BlenderStore(new DurableSql(state.storage), undefined, {
+        ownerRunMs: Number(env.BLENDER_DAILY_OWNER_MINUTES) * 60_000, globalRunMs: Number(env.BLENDER_DAILY_GLOBAL_MINUTES) * 60_000,
+        ownerModelCalls: Number(env.BLENDER_DAILY_OWNER_MODEL_CALLS), globalModelCalls: Number(env.BLENDER_DAILY_GLOBAL_MODEL_CALLS),
+      });
+      for (let i = 0; i < 11; i++) store.create("first-owner", "project", "custom", 3_600_000);
+      for (let i = 0; i < 10; i++) expect(store.reserveNext()).not.toBeNull();
+      expect(store.reserveNext()).toBeNull();
+      for (let owner = 0; owner < 10; owner++) for (let i = 0; i < 10; i++) store.create(`owner-${owner}`, "project", "custom", 3_600_000);
+      for (let i = 0; i < 90; i++) expect(store.reserveNext()).not.toBeNull();
+      expect(store.reserveNext()).toBeNull();
+      expect(store.list().filter(s => s.state === "allocating")).toHaveLength(100);
+      expect(store.budgets.summary("first-owner").runtime).toMatchObject({ usedAndReservedMs: 600 * 60_000, limitMs: 600 * 60_000 });
+      // Some daily runtime has already been consumed; a released slot does not replenish it.
+      const short = store.create("short-owner", "project", "custom", 180_000);
+      const first = store.list("first-owner")[0]!;
+      store.transition(first.id, first.epoch, ["allocating"], "pausing"); expect(store.reserveNext()).toBeNull();
+      store.transition(first.id, first.epoch, ["pausing"], "paused"); expect(store.reserveNext()?.id).toBe(short.id);
+      expect(store.reserveNext()).toBeNull();
     });
   });
   test("planner/command recovery preserves paid admission and unknown receipts", async () => {

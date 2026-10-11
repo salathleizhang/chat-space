@@ -26,8 +26,8 @@
     "VOLC_REGION": "cn-beijing",
     "BLENDER_TOS_BUCKET": "chatspace-blender-cn-beijing-20261011",
     "BLENDER_TOS_ENDPOINT": "tos-cn-beijing.volces.com",
-    "BLENDER_DAILY_OWNER_MINUTES": "180",
-    "BLENDER_DAILY_GLOBAL_MINUTES": "720",
+    "BLENDER_DAILY_OWNER_MINUTES": "600",
+    "BLENDER_DAILY_GLOBAL_MINUTES": "6000",
     "BLENDER_DAILY_OWNER_MODEL_CALLS": "36",
     "BLENDER_DAILY_GLOBAL_MODEL_CALLS": "144",
     "BLENDER_FRAME_ORIGINS": "https://www.junwei.cool https://chat-space-app.vercel.app"

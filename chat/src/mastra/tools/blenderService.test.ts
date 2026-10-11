@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalFileStorage, withAssetStorage } from "../../services/assetStorage";
 import { createProject } from "./projectTools";
-import { blenderSessionActionTool, blenderSessionsTool, setBlenderExportImporter, BlenderSessionActionInput } from "./blenderService";
+import { blenderSessionActionTool, blenderSessionsTool, startBlenderBatchTool, setBlenderExportImporter, BlenderSessionActionInput, BlenderBatchInput } from "./blenderService";
+import { BlenderStore } from "../../blenderService/store";
+import { BlenderJobs } from "../../blenderService/jobs";
+import { createBlenderApi } from "../../blenderService/api";
+import { issueIdentity } from "../../blenderService/auth";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-blender-actions-"));
 const storage = new LocalFileStorage(root), originalFetch = globalThis.fetch;
@@ -85,4 +89,25 @@ test("answer keeps checkpoint discard disabled unless explicitly supplied", asyn
   expect(z.toJSONSchema(BlenderSessionActionInput, { io: "input", target: "draft-7" }).type).toBe("object");
   const input = BlenderSessionActionInput.parse({ action: "answer", sessionId: id, message: "使用蓝色" });
   await call(input); expect(JSON.parse(bodies[0]!)).toEqual({ message: "使用蓝色", discardUnknown: false });
+});
+
+test("AI ten-way submission passes the real API; over-limit requests leave no batch", async () => {
+  const store = new BlenderStore(":memory:", undefined, { ownerRunMs: 600 * 60_000, globalRunMs: 6000 * 60_000, ownerModelCalls: 36, globalModelCalls: 144 });
+  const secret = "fixture-concurrency-secret".repeat(2), jobs = new BlenderJobs(store);
+  const api = createBlenderApi(store, { tick() {} }, { secret, build: "custom", desktopOrigin: "https://fixture.test", pauseEnabled: true }, jobs);
+  const auth = { Authorization: "Bearer " + issueIdentity({ owner: "fixture", scope: "api", expires: Date.now() + 60_000 }, secret), "Content-Type": "application/json" };
+  globalThis.fetch = mock(async (input, init) => api.request(new URL(String(input)).pathname.replace("/api/blender/", "/v1/"), { ...init, headers: auth })) as unknown as typeof fetch;
+  try {
+    const items = Array.from({ length: 11 }, (_, i) => ({ label: `Cube ${i}`, prompt: "Make a cube" }));
+    const input = BlenderBatchInput.parse({ items, concurrency: 10 });
+    const result = await withAssetStorage(storage, () => startBlenderBatchTool.execute!(input as never, { requestContext: { projectSlug: "fixture" }, toolCallId: "ten-way-call" } as never));
+    expect((result as { items: unknown[] }).items).toHaveLength(11);
+    for (let i = 0; i < 10; i++) expect(store.reserveNext()).not.toBeNull();
+    expect(store.reserveNext()).toBeNull();
+    expect(() => BlenderBatchInput.parse({ items, concurrency: 11 })).toThrow();
+    const rejected = await api.request("/v1/batches", { method: "POST", headers: auth, body: JSON.stringify({ id: crypto.randomUUID(), project: "fixture", concurrency: 11, items: [{ id: "one", ...items[0] }] }) });
+    expect(rejected.status).toBe(409); expect(store.list()).toHaveLength(11);
+    const listed = await (await api.request("/v1/sessions", { headers: auth })).json() as { limits: unknown };
+    expect(listed.limits).toEqual({ global: 100, owner: 10, queued: 100 });
+  } finally { store.close(); }
 });
