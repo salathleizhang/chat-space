@@ -63,8 +63,8 @@ describe("Cloudflare controller", () => {
     await runInDurableObject<BlenderPool>(pool(), async (_instance, state) => {
       const store = new BlenderStore(new DurableSql(state.storage), { global: 4, owner: 3, queued: 100 }), jobs = new BlenderJobs(store);
       const id = crypto.randomUUID(), items = Array.from({ length: 4 }, (_, i) => ({ id: String(i), label: "model", prompt: "cube" }));
-      jobs.createBatch("alice", "project", id, items, "custom");
-      expect(jobs.createBatch("alice", "project", id, items, "custom")).toHaveLength(4);
+      jobs.createBatch("alice", "project", id, items, "custom", 3);
+      expect(jobs.createBatch("alice", "project", id, items, "custom", 3)).toHaveLength(4);
       for (let i = 0; i < 3; i++) expect(store.reserveNext()).not.toBeNull();
       expect(store.reserveNext()).toBeNull();
       expect(store.budgets.summary("alice").runtime.usedAndReservedMs).toBe(3 * 3_600_000);

@@ -109,5 +109,11 @@ test("AI ten-way submission passes the real API; over-limit requests leave no ba
     expect(rejected.status).toBe(409); expect(store.list()).toHaveLength(11);
     const listed = await (await api.request("/v1/sessions", { headers: auth })).json() as { limits: unknown };
     expect(listed.limits).toEqual({ global: 100, owner: 10, queued: 100 });
+    const defaultInput = BlenderBatchInput.parse({ items: items.slice(0, 2) });
+    await withAssetStorage(storage, () => startBlenderBatchTool.execute!(defaultInput as never, { requestContext: { projectSlug: "fixture" }, toolCallId: "default-way-call" } as never));
+    expect(store.db.query<{ concurrency: number }, []>("SELECT concurrency FROM batches ORDER BY rowid DESC LIMIT 1").get()?.concurrency).toBe(1);
+    const otherAuth = { ...auth, Authorization: "Bearer " + issueIdentity({ owner: "api-default", scope: "api", expires: Date.now() + 60_000 }, secret) };
+    const defaultResponse = await api.request("/v1/batches", { method: "POST", headers: otherAuth, body: JSON.stringify({ id: crypto.randomUUID(), project: "fixture", items: ["a", "b"].map(id => ({ id, label: id, prompt: "cube" })) }) });
+    expect(defaultResponse.status).toBe(202); expect(store.reserveNext()?.owner).toBe("api-default"); expect(store.reserveNext()).toBeNull();
   } finally { store.close(); }
 });

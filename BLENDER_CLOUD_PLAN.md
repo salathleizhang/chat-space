@@ -507,3 +507,11 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - 会话查询及 AI 查询工具返回当前 limits。回归覆盖每工作区第 11 个、全局第 101 个排队，暂停未确认不释放名额，确认后按剩余每日预算继续分配，AI 十并行请求通过真实本机 API、十一并行请求拒绝；workerd 的实际 DO SQLite 验证同样的 10 / 100 边界与配置运行预算。不会为额度验收在火山新建 100 个计费沙盒。
 - 完整 `BLENDER_ENABLED=0 bun run check` 退出 0：app 967 / chat 667 / Cloudflare 13 项通过，类型检查与构建成功。Cloudflare 已部署版本 `c0f72eb3-8289-4ed5-9fcd-54a2f30ab613`，Vercel 正式网站已切换至 `dpl_Cbp6KZnLk9pA7h1a8CsudXry3e1F`。正式域名、workers.dev 和网站代理的真实鉴权 GET 都返回 global 100 / owner 10 / queued 100，工作区 runtime limit 为 36,000,000 ms；全局 6,000 分钟在部署配置与 workerd 回归核对。
 - 首次发布后现有 DO 仍返回旧配置，重新发布时显式使用 `wrangler deploy --durable-objects-code-update-mode immediate`，随后上线查询验证新版生效。原 pool 名称、类绑定和 SQLite 数据保留。只读证据 `output/blender-service/concurrency-live-proof.json`；部署日志及全量检查日志保存在同目录。没有通过真实一百实例负载验收，火山账号自身资源配额仍是独立上限。
+
+### 未指定并发时默认 1，最多 10
+
+- 按用户后续要求，将 AI 输入 schema、接口省略参数的默认值和 `BlenderJobs.createBatch` 的默认值统一为共享的 `DEFAULT_BLENDER_CONCURRENCY = 1`。AI 工具说明要求用户未指定并发时使用 1，指定时接受最多 10；全局 100 / 每工作区 10 和每日运行预算保持已确认值。已有批次的持久并发值保留。
+- 会话查询和 AI 查询返回 `defaultConcurrency`，用于核对已部署服务。回归验证缺省批次一次仅准入一项，暂停未确认时下一项仍排队；AI 缺省输入最终存为 1，API 缺省输入只准入一项，显式十并行仍通过。并行故障隔离回归改为显式指定 2，旧三名额的 workerd 回归显式指定 3，保持其原测试场景。
+- 完整检查复跑退出 0：app 967 / chat 668 / Cloudflare 13 项通过，类型检查与生产构建成功。首次全量检查有一项既有看门狗测试失败（默认并发回归通过），负载记录为 4.51 / 21.38 / 21.38，按仓库纪律复跑后全部通过，没有修改看门狗代码。
+- Cloudflare 版本 `55fe8839-9675-47d2-9a6a-4a911676fce5` 已 immediate 发布，正式域名和 workers.dev 鉴权 GET 返回 `defaultConcurrency: 1`，并发上限仍为 global 100 / owner 10，运行预算仍为 owner 600 分钟。只读证据 `output/blender-service/default-concurrency-one-live-proof.json`，检查日志 `check-default-concurrency-one-final.log`。
+- 网站版本 `dpl_4BK4Kxs1uwxMYFN932g5r1yPsEuy` 构建成功，网站代理 GET 同样确认 defaultConcurrency 1 / global 100 / owner 10。网站 AI Worker 内的 schema 与说明同步更新；已有网页需刷新加载新工具。没有新建/恢复沙盒用于此轮验收。

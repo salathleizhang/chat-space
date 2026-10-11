@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { BlenderConflict, BlenderStore, type Session } from "./storeCore";
+import { DEFAULT_BLENDER_CONCURRENCY } from "./limits";
 export interface BatchItem { id: string; label: string; prompt: string }
 export interface Job {
   sessionId: string; label: string; prompt: string; state: "queued" | "running" | "planning" | "waiting-user" | "succeeded" | "failed" | "cancelled";
@@ -29,7 +30,7 @@ export class BlenderJobs {
       store.db.query("INSERT INTO service_meta VALUES ('model-budget-v1', 'complete')").run();
     }).immediate();
   }
-  createBatch(owner: string, project: string, id: string, items: BatchItem[], build: string, concurrency = 3): Session[] {
+  createBatch(owner: string, project: string, id: string, items: BatchItem[], build: string, concurrency = DEFAULT_BLENDER_CONCURRENCY): Session[] {
     if (!/^[a-f0-9-]{36}$/.test(id) || items.length < 1 || items.length > 100 || new Set(items.map(i => i.id)).size !== items.length ||
       !Number.isInteger(concurrency) || concurrency < 1 || concurrency > this.store.limits.owner ||
       items.some(i => !/^[A-Za-z0-9_-]{1,128}$/.test(i.id) || !i.prompt.trim() || i.prompt.length > 20_000 || i.label.length > 128)) throw new BlenderConflict("Invalid batch");

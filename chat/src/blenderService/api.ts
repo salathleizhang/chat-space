@@ -9,6 +9,7 @@ import type { BlenderJobs } from "./jobs";
 import type { BlenderArtifacts } from "./artifacts";
 import type { SandboxSecrets } from "./secrets";
 import { randomUUID } from "node:crypto";
+import { DEFAULT_BLENDER_CONCURRENCY } from "./limits";
 
 const SessionInput = z.object({ project: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,127}$/),
   requestId: z.string().uuid(), budgetMinutes: z.number().int().min(3).max(60).default(60) }).strict();
@@ -57,7 +58,7 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
     const summaries = Object.fromEntries(sessions.flatMap(s => { const job = jobs?.get(s.id); return job ? [[s.id, {
       label: job.label, state: job.state, step: job.step, requests: job.requests, tokens: job.tokens, error: job.error,
     }]] : []; }));
-    return c.json({ owner: c.get("owner"), sessions, jobs: summaries, limits: store.limits, budget: store.budgets.summary(c.get("owner")),
+    return c.json({ owner: c.get("owner"), sessions, jobs: summaries, limits: store.limits, defaultConcurrency: DEFAULT_BLENDER_CONCURRENCY, budget: store.budgets.summary(c.get("owner")),
       notices: Object.fromEntries(sessions.flatMap(s => { const value = store.effect(s.id, s.epoch, "budget-wait"); return value ? [[s.id, value]] : []; })) });
   });
   app.post("/v1/sessions", async c => {
@@ -115,7 +116,7 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
   });
   app.post("/v1/batches", async c => {
     if (!settings.pauseEnabled || !jobs) return c.json({ error: "Batch service unavailable" }, 503);
-    const input = z.object({ id: z.string().uuid(), project: SessionInput.shape.project, concurrency: z.number().int().min(1).max(store.limits.owner).default(Math.min(3, store.limits.owner)),
+    const input = z.object({ id: z.string().uuid(), project: SessionInput.shape.project, concurrency: z.number().int().min(1).max(store.limits.owner).default(DEFAULT_BLENDER_CONCURRENCY),
       items: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), label: z.string().max(128), prompt: z.string().min(1).max(20_000) }).strict()).min(1).max(100) }).strict().parse(await c.req.json());
     const sessions = jobs.createBatch(c.get("owner"), input.project, input.id, input.items, settings.build, input.concurrency);
     scheduler.tick(); return c.json({ batchId: input.id, sessions }, 202);

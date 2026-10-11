@@ -5,7 +5,7 @@ import { getAssetStorage } from "../../services/assetStorage";
 import { requireCurrentProject } from "./requestContext";
 import { requireProject } from "./projectTools";
 import { cloudBudget } from "../../models/blenderCloud";
-import { DEFAULT_BLENDER_LIMITS } from "../../blenderService/limits";
+import { DEFAULT_BLENDER_LIMITS, DEFAULT_BLENDER_CONCURRENCY } from "../../blenderService/limits";
 
 async function request(path: string, body?: unknown): Promise<any> {
   // Registered only in the browser runtime after server capabilities confirm deployment.
@@ -21,10 +21,10 @@ async function request(path: string, body?: unknown): Promise<any> {
 async function project(context: unknown): Promise<string> {
   const slug = requireCurrentProject(context as never); await requireProject(getAssetStorage(), slug); return slug;
 }
-export const BlenderBatchInput = z.object({ items: z.array(z.object({ label: z.string().min(1).max(128), prompt: z.string().min(1).max(20_000) })).min(1).max(100), concurrency: z.number().int().min(1).max(DEFAULT_BLENDER_LIMITS.owner).default(3) });
+export const BlenderBatchInput = z.object({ items: z.array(z.object({ label: z.string().min(1).max(128), prompt: z.string().min(1).max(20_000) })).min(1).max(100), concurrency: z.number().int().min(1).max(DEFAULT_BLENDER_LIMITS.owner).default(DEFAULT_BLENDER_CONCURRENCY) });
 export const startBlenderBatchTool = createTool({
   id: "start-blender-batch",
-  description: `用户要求使用定制 Blender 建模时，提交独立建模项给云端执行。每工作区同时运行最多${DEFAULT_BLENDER_LIMITS.owner}个Blender，全局最多${DEFAULT_BLENDER_LIMITS.global}个，其余排队；按任务需求和剩余额度指定concurrency，未指定默认3。每项包含完整要求；任务在网页关闭后仍继续。此工具立即返回batchId和sessionId，不等建模完成、不重复提交确认进度。每个实例8核32GiB，最长60分钟，算力/模型/存储按用量收费。仅在用户已要求建模的范围内提交。不能读取浏览器当前选择的Blender替代这些会话。`,
+  description: `用户要求使用定制 Blender 建模时，提交独立建模项给云端执行。每工作区同时运行最多${DEFAULT_BLENDER_LIMITS.owner}个Blender，全局最多${DEFAULT_BLENDER_LIMITS.global}个，其余排队；用户未指定并发时使用默认${DEFAULT_BLENDER_CONCURRENCY}，用户指定并行数量时按剩余额度设置concurrency，最多${DEFAULT_BLENDER_LIMITS.owner}。每项包含完整要求；任务在网页关闭后仍继续。此工具立即返回batchId和sessionId，不等建模完成、不重复提交确认进度。每个实例8核32GiB，最长60分钟，算力/模型/存储按用量收费。仅在用户已要求建模的范围内提交。不能读取浏览器当前选择的Blender替代这些会话。`,
   inputSchema: BlenderBatchInput,
   execute: async (input, context) => {
     const slug = await project(context), storage = getAssetStorage();
@@ -74,7 +74,7 @@ export const blenderSessionsTool = createTool({
     const slug = await project(context), data = await request("sessions");
     return { sessions: data.sessions.filter((s: { project: string }) => s.project === slug).map((s: any) => ({
       sessionId: s.id, state: s.state, epoch: s.epoch, checkpoint: Boolean(s.checkpoint), job: data.jobs?.[s.id],
-    })), limits: data.limits, budget: data.budget };
+    })), limits: data.limits, defaultConcurrency: data.defaultConcurrency, budget: data.budget };
   },
 });
 export const BlenderSessionActionInput = z.object({

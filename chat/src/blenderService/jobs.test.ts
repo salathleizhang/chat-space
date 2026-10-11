@@ -30,6 +30,15 @@ test("queue limit rolls back all batch items", () => {
     expect(store.db.query<{ n: number }, []>("SELECT count(*) n FROM batches").get()!.n).toBe(0);
   } finally { store.close(); }
 });
+test("unspecified batch concurrency runs one item until its pause is confirmed", () => {
+  const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store);
+  try {
+    jobs.createBatch("alice", "project", crypto.randomUUID(), ["a", "b"].map(id => ({ id, label: id, prompt: "cube" })), "build");
+    const first = store.reserveNext()!; expect(first).not.toBeNull(); expect(store.reserveNext()).toBeNull();
+    store.transition(first.id, first.epoch, ["allocating"], "pausing"); expect(store.reserveNext()).toBeNull();
+    store.transition(first.id, first.epoch, ["pausing"], "paused"); expect(store.reserveNext()).not.toBeNull();
+  } finally { store.close(); }
+});
 test("one lost paid planning response stops that job; an independent item still progresses", async () => {
   const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store), secrets = new SandboxSecrets("s".repeat(40)); let modelCalls = 0;
   const runner = new BlenderBatchRunner(jobs, async messages => {
@@ -38,7 +47,7 @@ test("one lost paid planning response stops that job; an independent item still 
     return { decision: { action: "tool", tool: "get_scene_info", arguments: {} }, tokens: 100 };
   }, new BlenderArtifacts(store, noObjects), { exportFile: async () => new Uint8Array() }, secrets);
   try {
-    const items = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "lost", label: "Lost", prompt: "lost" }, { id: "works", label: "Works", prompt: "works" }], "build");
+    const items = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "lost", label: "Lost", prompt: "lost" }, { id: "works", label: "Works", prompt: "works" }], "build", 2);
     for (const item of items) {
       const reserved = store.reserveNext()!;
       store.transition(reserved.id, reserved.epoch, ["allocating"], "ready", "sandbox-" + reserved.id);
@@ -95,7 +104,7 @@ test("daily model cap prevents a paid request and waits without replaying or aff
     paidCalls++; throw new Error("paid response unknown");
   }, new BlenderArtifacts(store, noObjects), { exportFile: async () => new Uint8Array() }, new SandboxSecrets("s".repeat(40)));
   try {
-    const items = jobs.createBatch("alice", "project", crypto.randomUUID(), ["a", "b"].map(id => ({ id, label: id, prompt: "cube" })), "build");
+    const items = jobs.createBatch("alice", "project", crypto.randomUUID(), ["a", "b"].map(id => ({ id, label: id, prompt: "cube" })), "build", 2);
     for (const item of items) {
       const s = store.reserveNext()!; store.transition(s.id, s.epoch, ["allocating"], "ready", "sandbox-" + s.id);
       await runner.step(store.session(item.id));
