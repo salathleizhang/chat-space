@@ -491,3 +491,11 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - 窗口仅随 AI 的会话状态更新取得观看授权；打开暂停画面不会自行恢复计费实例，关闭画面不会停止任务。已有菜单回归更新为“无业务按钮且不发送修改请求”；新增工具回归覆盖项目隔离、丢响应复用身份、导入上下文、运行中恢复不重复、批量监督边界、操作身份绑定及默认不丢弃未知结果。
 - 最新完整 `BLENDER_ENABLED=0 bun run check` 退出 0：app 966 / chat 664 / Cloudflare 12 项，类型检查和生产构建通过。工具参数保持供应商兼容的顶层 object schema，并在运行时验证 action 对应字段。正式网站已更新至 `dpl_5bLKgnoyitNxCsLLtrdY3yGSYXNd`，部署会话 API 通过；两个 352×242 小窗仅显示关闭、全屏和展开控制，领取/恢复等业务入口已消失。
 - 正式 Chrome 聊天验收：真实 AI 成功执行 `blender-sessions` 与 `blender-session-action import`，已导入会话返回 `imported: 0`，模型库仍为原有模型，没有重复添加；两个测试工程均保持 paused，没有新建/恢复/建模/重做。截图 `output/blender-service/website-ai-controls-removed.png`，文本证据 `website-ai-tools-verification.txt`。
+
+### Blender logo 直接打开所有画面（2026-10-11）
+
+- 按用户要求移除窗口管理面板和会话列表。顶部按钮使用 Blender 官网的原 SVG 图标，点击直接打开当前项目所有会话的小浮窗；后续 AI 新增会话会随状态刷新自动显示。重复点击只补回关闭的画面，已有小窗与 iframe 保持原位置和连接。
+- 单独关闭小窗后，普通状态轮询不重新打开它；再次点击 logo 才重新打开当前全部画面。只请求会话列表与观看授权，不创建/恢复/结束沙盒，暂停状态保持不变。没有任务或服务异常时只显示简短状态提示。
+- 新增控制器回归验证同时打开多个本项目会话、排除其他项目、新任务自动显示、关闭后轮询不重开、再次点击补回、已有窗口身份保持且无修改/计费请求。
+- 图标原文件来自 `https://www.blender.org/wp-content/themes/bthree/assets/icons/favicon.svg`，仅清理原文件的行尾空白，图形未改动，保存在 `app/public/brand/blender.svg`；官网出处 https://www.blender.org/about/logo/ 。
+- 本批完整 `BLENDER_ENABLED=0 bun run check` 退出 0：app 967 / chat 664 / Cloudflare 12 项通过，类型检查和生产构建成功。正式网站已切换至 `dpl_48DTyTSDzETd5X6PDsFiMn74fHWV`，部署会话 API 通过。真实 Chrome 点击 logo 直接显示两个 352×242 小窗，无管理列表，图标成功加载；单窗关闭及再次点击 logo 补回通过。普通轮询不重开、自动显示新会话及已有窗口身份保持由控制器回归验证。两个已有工程保持暂停；截图 `output/blender-service/website-blender-logo-open-all.png`。

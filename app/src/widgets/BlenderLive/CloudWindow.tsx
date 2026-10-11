@@ -1,52 +1,46 @@
 import { createPortal } from "react-dom";
-import { useEffect, useState } from "react";
-import { Panel, Button } from "../../shared/ui";
-import { blenderService, sessionLabels, type CloudSession, type JobSummary } from "./service";
+import { useEffect, useRef, useState } from "react";
+import { Panel } from "../../shared/ui";
+import { blenderService, type CloudSession, type JobSummary } from "./service";
 import { BlenderSessionWindow } from "./SessionWindow";
 import { openBlenderWindow, type BlenderWindowSlot } from "./FloatingWindow";
 
-/** Watching is disposable. Accepted work belongs to the durable service. */
-export function BlenderCloudWindow({ projectSlug, open, onClose }: { projectSlug: string; open: boolean; onClose: () => void }) {
+/** The logo opens every viewer directly. Accepted work belongs to the service. */
+export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: string; openRequest: number }) {
   const [sessions, setSessions] = useState<CloudSession[]>([]), [jobs, setJobs] = useState<Record<string, JobSummary>>({});
   const [notices, setNotices] = useState<Record<string, string>>({});
   const [opened, setOpened] = useState<BlenderWindowSlot[]>([]);
+  const seen = useRef(new Set<string>());
   const [error, setError] = useState<string>(), [enabled, setEnabled] = useState<boolean>();
-  function openSession(session: CloudSession) {
-    setSessions(current => current.some(s => s.id === session.id) ? current : [...current, session]);
-    setOpened(current => openBlenderWindow(current, session.id));
-  }
-  async function refresh(signal?: AbortSignal) {
+  const [loaded, setLoaded] = useState(false);
+  async function refresh(signal: AbortSignal, showAll = false) {
     const data = await blenderService<{ sessions: CloudSession[]; jobs: Record<string, JobSummary>; notices?: Record<string, string> }>("sessions", undefined, signal);
-    if (!signal?.aborted) { setSessions(data.sessions.filter(s => s.project === projectSlug)); setJobs(data.jobs ?? {}); setNotices(data.notices ?? {}); }
+    if (signal.aborted) return;
+    const current = data.sessions.filter(s => s.project === projectSlug);
+    const toOpen = current.filter(s => showAll || !seen.current.has(s.id));
+    current.forEach(s => seen.current.add(s.id));
+    setSessions(current); setJobs(data.jobs ?? {}); setNotices(data.notices ?? {}); setLoaded(true); setError(undefined);
+    setOpened(windows => toOpen.reduce((result, session) => openBlenderWindow(result, session.id), windows));
   }
-
   useEffect(() => {
-    const controller = new AbortController(); let available = false;
-    void fetch("/api/capabilities", { signal: controller.signal }).then(r => r.json()).then(async data => {
-      if (controller.signal.aborted) return;
-      available = data.blenderCloud === true; setEnabled(available); if (available) await refresh(controller.signal);
+    const controller = new AbortController();
+    void fetch("/api/capabilities", { signal: controller.signal }).then(r => r.json()).then(data => {
+      if (!controller.signal.aborted) setEnabled(data.blenderCloud === true);
     }).catch(() => { if (!controller.signal.aborted) setError("暂时无法连接 Blender 云服务"); });
-    // Display refresh only. Server supervision continues when the browser closes.
-    const timer = setInterval(() => { if (available) void refresh(controller.signal).catch(() => {}); }, 5_000);
-    return () => { controller.abort(); clearInterval(timer); };
+    return () => controller.abort();
   }, [projectSlug]);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const failed = () => { if (!controller.signal.aborted) setError("暂时无法连接 Blender 云服务"); };
+    void refresh(controller.signal, true).catch(failed);
+    // New AI sessions appear automatically; polling never reopens a dismissed viewer.
+    const timer = setInterval(() => { void refresh(controller.signal).catch(failed); }, 5_000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [projectSlug, enabled, openRequest]);
+  const message = error ?? (enabled === false ? "暂时无法使用云端 Blender。" : loaded && sessions.length === 0 ? "还没有 Blender 任务，在聊天中告诉 AI 你想制作什么。" : undefined);
   return createPortal(<>
-    {open && <Panel className="fixed top-20 right-4 z-[10000] flex max-h-[80vh] w-[26rem] max-w-[95vw] flex-col overflow-hidden text-ink">
-    <div className="flex items-center justify-between gap-4 p-4"><strong>Blender 窗口管理</strong><Button size="sm" variant="ghost" onClick={onClose}>收起管理</Button></div>
-    {enabled === false ? <p className="px-4 pb-4 text-sm">云服务正在部署，尚未开放分配。原有项目和聊天仍可使用。</p> : <>
-      <div className="min-h-0 space-y-3 overflow-y-auto px-4 pb-4">
-        <p className="text-xs text-ink-muted">建模、导出、保存和恢复由 AI 处理。这里可以打开独立小窗观看；关闭小窗只关闭画面。</p>
-        {sessions.length === 0 && <p className="text-sm">在聊天中告诉 AI 你想用 Blender 制作什么。</p>}
-        {sessions.map(s => <div key={s.id} className="flex items-center gap-2 rounded-lg border border-line p-2 text-xs">
-          <div className="min-w-0 flex-1"><span className="block truncate">{jobs[s.id]?.label ?? `Blender ${s.id.slice(0, 6)}`}</span>
-            <span>{jobs[s.id]?.state === "waiting-user" ? "等待回答" : sessionLabels[s.state]}</span></div>
-          <Button size="sm" disabled={opened.some(window => window.id === s.id)} onClick={() => { openSession(s); onClose(); }}>{opened.some(window => window.id === s.id) ? "已打开" : "打开窗口"}</Button>
-        </div>)}
-
-      </div>
-    </>}
-    {error && <p role="alert" className="px-4 pb-4 text-sm">{error}</p>}
-  </Panel>}
+    {message && <Panel role={error ? "alert" : "status"} className="fixed right-4 bottom-20 z-[10000] w-[22rem] max-w-[95vw] p-4 text-sm text-ink">{message}</Panel>}
     {opened.map(({ id, slot }) => {
       const session = sessions.find(s => s.id === id); if (!session) return null;
       return <BlenderSessionWindow key={id} session={session} job={jobs[id]} notice={notices[id]} index={slot}
