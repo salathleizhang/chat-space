@@ -583,7 +583,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
         </div>
       )}
       {import.meta.env.VITE_BROWSER_LOCAL === "1" && blenderInitialized && <Suspense fallback={null}>
-        <BlenderCloudWindow key={projectSlug} projectSlug={projectSlug} open={blenderLive} onClose={() => setBlenderLive(false)} onImported={bumpRefresh} />
+        <BlenderCloudWindow key={projectSlug} projectSlug={projectSlug} open={blenderLive} onClose={() => setBlenderLive(false)} />
       </Suspense>}
       {import.meta.env.VITE_BROWSER_LOCAL !== "1" && blenderLive && (
         /*

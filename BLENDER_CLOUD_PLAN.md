@@ -482,3 +482,12 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - `BLENDER_ENABLED=0 bun run check`：app 966 / chat 657 / Cloudflare 12 项通过。新增 10 条组件回归验证两个画面并存、原小窗尺寸和并排位置、操作菜单不重建 iframe、关闭隔离、最大化/还原保留 iframe、拖动/缩放/失焦、控制按钮不拖动、关闭时取消对应取票请求及恢复使用新 epoch。
 - 正式网站已更新至 `dpl_5GnMBfiEyBmAvmnq1ZbRWENFeEjN`，会话 API 通过。真实 Chrome 恢复 `25ac53bf-8002-4a18-9fa6-cd27310e643a` 并创建 `6dba3711-d86f-447a-a5e3-4f2644de8d94`，两个独立 iframe 同时连接不同实例；拖动与调整大小通过。小浮窗实测均为 352×242，位置分别为 (1552,486) 与 (1184,486)，展开为 1920×808（与浏览器视口相同）后可还原。最终正式版本还验证了关闭/重开前一个窗口复用空位，另一窗口位置保持不变。
 - 浏览器全屏请求尚未完成验收：操作工具确认 Mac 锁屏，已请求用户解锁并把 Chrome 切到前台。不能把最大化视口当作浏览器全屏通过。后台 Chrome 已确认两个测试工程均保存并暂停。正式网站小浮窗画面复核通过，截图 `output/blender-service/website-small-blender-windows-final.png` 显示暂停后的两个独立小窗。
+
+### Blender 业务操作交给 AI（2026-10-11）
+
+- 按用户要求移除小窗的操作菜单及导出、领取、保存暂停、恢复、失败重做和回答表单。窗口管理改为只打开已有会话的画面，移除新建和手动批量提交；保留小窗、拖动、调整大小、展开/还原、全屏入口和关闭观看。
+- AI 工具增加 `blender-sessions` 与 `blender-session-action`。会话身份绑定当前项目，支持状态/产物查询、手动工程导出及操作查询、浏览器模型导入、手动工程暂停/恢复、批量任务补充回答和指定失败项重做。任务需要信息时通过聊天回答，不要求用户寻找业务按钮。批量运行器仍自动导出、保存和暂停；终止批量任务单独用 cancel，不能把取消伪装为可无损继续的暂停。
+- 复用已有 TOS 下载大小、SHA-256、三角形校验及 IndexedDB 原子导入；AI 通过浏览器 Worker 注入的导入接口调用它。重做和导出在发送前落盘调用身份，网络结果不明时保留原 requestId/key，不自动重放。未知场景结果不能自动退回检查点，`discardUnknown` 默认关闭。
+- 窗口仅随 AI 的会话状态更新取得观看授权；打开暂停画面不会自行恢复计费实例，关闭画面不会停止任务。已有菜单回归更新为“无业务按钮且不发送修改请求”；新增工具回归覆盖项目隔离、丢响应复用身份、导入上下文、运行中恢复不重复、批量监督边界、操作身份绑定及默认不丢弃未知结果。
+- 最新完整 `BLENDER_ENABLED=0 bun run check` 退出 0：app 966 / chat 664 / Cloudflare 12 项，类型检查和生产构建通过。工具参数保持供应商兼容的顶层 object schema，并在运行时验证 action 对应字段。正式网站已更新至 `dpl_5bLKgnoyitNxCsLLtrdY3yGSYXNd`，部署会话 API 通过；两个 352×242 小窗仅显示关闭、全屏和展开控制，领取/恢复等业务入口已消失。
+- 正式 Chrome 聊天验收：真实 AI 成功执行 `blender-sessions` 与 `blender-session-action import`，已导入会话返回 `imported: 0`，模型库仍为原有模型，没有重复添加；两个测试工程均保持 paused，没有新建/恢复/建模/重做。截图 `output/blender-service/website-ai-controls-removed.png`，文本证据 `website-ai-tools-verification.txt`。

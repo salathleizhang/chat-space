@@ -15,8 +15,7 @@ async function render(sessions: CloudSession[]) {
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container); mounted.push({ root, container }); const close = mock(() => {});
   const update = async (items: CloudSession[]) => { await act(async () => root.render(items.map((s, index) =>
-    <BlenderSessionWindow key={s.id} session={s} owner="fixture" projectSlug="fixture" index={index} onClose={close}
-      onImported={() => {}} onOpen={() => {}} refresh={async () => {}} />))); };
+    <BlenderSessionWindow key={s.id} session={s} index={index} onClose={close} />))); };
   await update(sessions); return { container, update, close };
 }
 
@@ -41,16 +40,16 @@ test("closing one window aborts only its pending grant", async () => {
   expect(container.querySelectorAll("iframe").length).toBe(1);
 });
 
-test("operations stay in a menu and opening it preserves the desktop connection", async () => {
+test("watching and a saved pause expose no business controls or mutations", async () => {
   const requests: string[] = [];
   globalThis.fetch = mock(async (input: Parameters<typeof fetch>[0]) => { requests.push(String(input)); return Response.json({ url: "about:blank#desktop" }); }) as unknown as typeof fetch;
-  const { container } = await render([session]); const stream = container.querySelector("iframe");
-  expect(container.textContent).not.toContain("保存并暂停");
-  const menu = container.querySelector('[aria-label="Blender 操作"]') as HTMLElement;
-  await act(async () => menu.click()); expect(container.textContent).toContain("保存并暂停");
-  expect(container.querySelector("iframe")).toBe(stream); expect(requests.length).toBe(1);
-  await act(async () => menu.click()); expect(container.textContent).not.toContain("保存并暂停");
-  expect(container.querySelector("iframe")).toBe(stream);
+  const { container, update } = await render([session]);
+  expect(container.querySelector('[aria-label="Blender 操作"]')).toBeNull();
+  expect(container.querySelectorAll("button").length).toBe(3);
+  await update([{ ...session, state: "paused", stopReason: "ended", checkpoint: "saved" }]);
+  expect(container.textContent).toContain("工程已保存，等待继续任务。");
+  expect(container.querySelectorAll("button").length).toBe(3);
+  expect(requests).toEqual(["/api/blender/sessions/session-a/desktop"]);
 });
 
 test("resuming the same session uses the new epoch and leaves another window connected", async () => {
