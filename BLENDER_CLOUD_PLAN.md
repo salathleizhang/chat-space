@@ -1,6 +1,6 @@
 # Blender 云服务实施计划
 
-更新：2026-10-11。状态：单工程开发预览已验收；持久调度、多实例队列、工程检查点、任务恢复和生产入口已有本机实现及验证，新 managed 镜像已上传。**常驻服务和 TOS 尚未部署验收，暂停权限未确认；跨用户可信复用及人工/Agent 控制权切换仍待完成，整项计划尚未交付。** 下文目标不能直接当作线上能力；以末尾实施记录及 `deploy/blender-service/README.md` 为准。
+更新：2026-10-11。状态：用户已选择 Cloudflare 调度方案，ECS 购买搁置。单工程开发预览已验收；持久调度、多实例队列、工程检查点、任务恢复和生产入口已有本机实现及验证，新 managed 镜像已上传，TOS 私有桶已创建。**Cloudflare 尚未部署，TOS 文件闭环未验收，暂停权限未确认；跨用户可信复用及人工/Agent 控制权切换仍待完成，整项计划尚未交付。** 下文目标不能直接当作线上能力；以末尾实施记录及 `deploy/blender-cloudflare/README.md` 为准。
 
 ## 1. 目标与已确定的方向
 
@@ -444,3 +444,12 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - 排队和启动期间不消耗“可用桌面空闲五分钟”；准备完毕时初始化活动时间。后续自动保存完成不重置它。回归验证有操作的手工会话保持 ready，无操作会话进入保存后暂停。
 - 真实 Chrome 在嵌套路径测试页面验证外部脚本地址与可信输入：打开/刷新不加次数，点击一次、刷新后连续输入两键共记录两次。截图 `output/blender-service/activity-input-ui.png`。该页面是本机输入事件夹具，不能代替真实火山/Kasm 操作验收。Node/TLS 夹具验证 HTML 注入、旧 ETag 移除、只读不注入和活动请求的 Origin 过滤。
 - 全量 `BLENDER_ENABLED=0 bun run check` 退出 0：**app 953 pass / chat 643 pass / 0 fail**。新增三条针对输入事件、活动鉴权与空闲状态机的回归。云端前置条件和跨用户清理、控制权切换、累计额度的待办仍保留。
+
+### Cloudflare 调度方案（2026-10-11，未部署）
+
+- 用户选择 Cloudflare，ECS 订单未提交并已搁置。新增 `deploy/blender-cloudflare/` Workers + SQLite Durable Objects 适配器，定制 Blender 继续运行于火山沙箱，工程与产物继续使用已有 TOS。共用事务调度、操作回执和预算逻辑，保留旧 Bun/Linux 适配器。
+- 一个受限四名额资源池负责准入/调度，每会话独立桌面对象负责 HTTP/二进制 WS。平台 Alarm 先持久化再 I/O，独立 Cron 驱动任务闸门；网页关闭或 JS 定时器停摆后仍有外部唤醒。保存前撤销桌面连接并拒绝新的写入。
+- 文件通过定长流传输，分块 SHA-256/MD5 和有限几何校验；回读 TOS 文件及 manifest 后才提交指针。256 MiB 工程不会整份进入 Workers 内存。真实 TOS 尚未验收，模拟读回失败的回归证明旧检查点指针不会被覆盖。
+- `BLENDER_ENABLED=0 bun run check` 退出 0：**app 953 / chat 651 / Cloudflare 9 项通过，0 fail**，类型检查与网站构建通过。Cloudflare 测试在实际本机 workerd/SQLite 运行，供应商请求和凭据使用夹具；Worker→DO HTTP Upgrade 的二进制回显、单连接限制和撤销通过。这不是云端并行或暂停恢复成功的证据。Wrangler 打包 dry-run 通过。
+- 现有 Cloudflare 登录有效，控制台确认 Workers Free。准备新 Worker `chatspace-blender` 与域名 `blender.junwei.cool`；该子域尚未占用。实际部署被必需 Secrets 检查拒绝，**没有发布 Worker 或域名，也没有上传任何凭据**。现有网站和 `chat-space` Worker 均未切换。
+- 已在火山官方 IAM 可视化编辑器核对五个沙箱动作；指定资源未给出可选条目。草稿以 `Resource=*` 配合北京地域条件，TOS 仅授权指定桶的 `blender/*` GetObject/PutObject；未提交、未绑定用户、未创建密钥，需用户确认实际较宽的沙箱资源范围，并由用户亲自创建/安全录入凭据。完整部署与验收顺序见 `deploy/blender-cloudflare/README.md`。暂停邀测、跨用户清理、控制权切换和真实账户/对账仍待完成。

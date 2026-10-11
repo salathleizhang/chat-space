@@ -1,9 +1,9 @@
-import { cloudBudget } from "../models/blenderCloud";
+import { cloudBudget } from "../models/cloudBudget";
 import { boundedBody, sha256 } from "./objects";
-import type { Operation, Session } from "./store";
+import type { Operation, Session } from "./storeCore";
 export type ExecutorReceipt = { id: string; state: "queued" | "running" | "succeeded" | "failed" | "unknown"; result: unknown };
 export class ManagedExecutor {
-  constructor(private readonly target: string, private readonly fetchFn: typeof fetch = fetch) {
+  constructor(private readonly target: string, private readonly fetchFn: typeof fetch = fetch, private readonly responseLimit = 256 * 1024 * 1024) {
     const url = new URL(target);
     if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Invalid executor gateway");
   }
@@ -13,7 +13,7 @@ export class ManagedExecutor {
       const response = await this.fetchFn(new URL(path, this.target), { ...init, signal, redirect: "error",
         headers: { "Content-Type": "application/json", ...init.headers, Authorization: `Bearer ${token}`,
           "x-faas-instance-name": session.instance!, "x-chatspace-session": session.id, "x-chatspace-epoch": String(session.epoch) } });
-      return boundedBody(response);
+      return boundedBody(response, this.responseLimit);
     }, 300_000);
   }
   async submit(session: Session, token: string, op: Pick<Operation, "id" | "tool" | "arguments" | "inputCheckpoint">): Promise<ExecutorReceipt> {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { TosClient } from "@volcengine/tos-sdk";
-import { cloudBudget } from "../models/blenderCloud";
+import { cloudBudget } from "../models/cloudBudget";
 export const MAX_OBJECT_BYTES = 256 * 1024 * 1024;
 export interface ObjectStore {
   put(key: string, bytes: Uint8Array, type: string): Promise<void>;

@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { SqlDatabase } from "./sql";
 
 export interface BudgetLimits { ownerRunMs: number; globalRunMs: number; ownerModelCalls: number; globalModelCalls: number }
 export const TRIAL_BUDGETS: BudgetLimits = { ownerRunMs: 3 * 3_600_000, globalRunMs: 12 * 3_600_000, ownerModelCalls: 36, globalModelCalls: 144 };
@@ -6,7 +6,7 @@ export type BudgetKind = "runtime" | "model-call";
 type Entry = { id: string; owner: string; kind: BudgetKind; day: string; quantity: number; startedAt: number; settled: number };
 /** UTC-day admission caps, persisted before a potentially billed external request. Not an invoice. */
 export class BlenderBudgets {
-  constructor(readonly db: Database, readonly limits: BudgetLimits = TRIAL_BUDGETS) {
+  constructor(readonly db: SqlDatabase, readonly limits: BudgetLimits = TRIAL_BUDGETS) {
     if (Object.values(limits).some(n => !Number.isSafeInteger(n) || n < 1)) throw new Error("Invalid cumulative Blender budgets");
     db.exec(`CREATE TABLE IF NOT EXISTS blender_budget_entries (id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL,
       day TEXT NOT NULL, quantity INTEGER NOT NULL, startedAt INTEGER NOT NULL, settled INTEGER NOT NULL);

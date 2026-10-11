@@ -1,4 +1,4 @@
-export function readServiceSettings(env = process.env) {
+export function readServiceSettings(env: Record<string, string | undefined> = process.env) {
   const required = (key: string) => { const value = env[key]; if (!value) throw new Error(`Missing ${key}`); return value; };
   const origin = (key: string) => {
     const url = new URL(required(key));

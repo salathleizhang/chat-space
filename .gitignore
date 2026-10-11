@@ -28,3 +28,8 @@ app/public/local-runtime.js
 
 # Python control regression tests
 blender/docker/__pycache__/
+
+# Worker local secrets
+.dev.vars
+.dev.vars.*
+deploy/blender-cloudflare/output/

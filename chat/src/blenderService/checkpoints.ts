@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { objectKey, sha256, type ObjectStore } from "./objects";
-import { BlenderStore, type Checkpoint, type Session } from "./store";
+import { BlenderStore, type Checkpoint, type Session } from "./storeCore";
 
 export class Checkpoints {
   constructor(private readonly store: BlenderStore, private readonly objects: ObjectStore) {}

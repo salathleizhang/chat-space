@@ -1,5 +1,5 @@
 import { issueIdentity } from "./auth";
-import { cloudBudget } from "../models/blenderCloud";
+import { cloudBudget } from "../models/cloudBudget";
 // Invoke from an independent supervisor/timer. This process exits after one external tick.
 const secret = process.env.BLENDER_SERVICE_SECRET;
 if (!secret || secret.length < 32) throw new Error("Missing watchdog service secret");

@@ -10,7 +10,7 @@ export class SandboxSecrets {
   seal(value: { control: string; desktop: string }, session: string, epoch: number): string {
     const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", this.key, iv);
     cipher.setAAD(Buffer.from(`${session}:${epoch}`));
-    const bytes = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]);
+    const bytes = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
     return Buffer.concat([iv, cipher.getAuthTag(), bytes]).toString("base64url");
   }
   open(value: string, session: string, epoch: number): { control: string; desktop: string } {

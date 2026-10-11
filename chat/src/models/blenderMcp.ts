@@ -37,16 +37,8 @@ import { BlenderCloudClient, readBlenderCloudSettings } from "./blenderCloud";
  */
 
 /** 允许 agent 触及的工具。改动这个常量前先读模块文档。 */
-export const BLENDER_ALLOWED_TOOLS = [
-  "get_addon_status",
-  "get_scene_info",
-  "get_object_info",
-  "get_viewport_screenshot",
-  "execute_blender_code",
-  "bpy_api_lookup",
-  "describe_node_type",
-  "export_scene",
-] as const;
+export { BLENDER_ALLOWED_TOOLS } from "./blenderProtocol";
+import { BLENDER_ALLOWED_TOOLS, wrapResult } from "./blenderProtocol";
 
 export type BlenderToolName = (typeof BLENDER_ALLOWED_TOOLS)[number];
 
@@ -591,33 +583,7 @@ export class BlenderMcpClient {
  * 本仓库在别处踩过同一个坑（`common/glb.ts` 的面数 `null` 表示"不知道"，不是 0）。
  * 判"模型建出来了没有"要看 `json` 里的引擎事实，解析失败时要如实报错而不是当成成功。
  */
-export function wrapResult(
-  tool: string,
-  result: unknown,
-): { text: string; json: unknown; isError: boolean } {
-  const container = result as { content?: unknown; isError?: unknown } | null;
-  const isError = container?.isError === true;
-  const content = container?.content;
-  if (!Array.isArray(content)) {
-    return { text: "", json: null, isError };
-  }
-  const text = content
-    .map((part) => {
-      const entry = part as { type?: string; text?: string };
-      return entry.type === "text" && typeof entry.text === "string" ? entry.text : "";
-    })
-    .filter(Boolean)
-    .join("\n");
-
-  if (!text) return { text: "", json: null, isError };
-  try {
-    return { text, json: JSON.parse(text), isError };
-  } catch {
-    // 社区版少数工具直接回人类可读文本，解析不了是正常的——原样交回。
-    void tool;
-    return { text, json: null, isError };
-  }
-}
+export { wrapResult } from "./blenderProtocol";
 
 /**
  * 杀掉 pid 及其所有后代。

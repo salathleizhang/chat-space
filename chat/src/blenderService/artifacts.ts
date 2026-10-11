@@ -1,7 +1,7 @@
 import { NodeIO } from "@gltf-transform/core";
 import { glbTriangleCount } from "../common/glb";
 import { objectKey, sha256, type ObjectStore } from "./objects";
-import { BlenderStore, type Operation, type Session } from "./store";
+import { BlenderStore, type Operation, type Session } from "./storeCore";
 export interface Artifact { id: string; sessionId: string; objectKey: string; manifestKey: string; bytes: number; sha256: string; triangles: number }
 export class BlenderArtifacts {
   constructor(private readonly store: BlenderStore, private readonly objects: ObjectStore) {

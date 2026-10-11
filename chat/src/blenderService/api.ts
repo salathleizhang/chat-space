@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { BLENDER_ALLOWED_TOOLS } from "../models/blenderMcp";
+import { BLENDER_ALLOWED_TOOLS } from "../models/blenderProtocol";
 import { issueIdentity, verifyIdentity } from "./auth";
-import { BlenderConflict, type BlenderStore } from "./store";
+import { BlenderConflict, type BlenderStore } from "./storeCore";
 import type { BlenderScheduler } from "./scheduler";
 import type { BlenderJobs } from "./jobs";
 import type { BlenderArtifacts } from "./artifacts";
@@ -16,7 +16,7 @@ const CommandInput = z.object({ epoch: z.number().int().positive(), key: z.strin
   tool: z.enum(BLENDER_ALLOWED_TOOLS), arguments: z.record(z.string(), z.unknown()).default({}) }).strict();
 
 export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderScheduler, "tick">,
-  settings: { secret: string; build: string; desktopOrigin: string; pauseEnabled: boolean; target?: string }, jobs?: BlenderJobs, artifacts?: BlenderArtifacts, secrets?: SandboxSecrets) {
+  settings: { secret: string; build: string; desktopOrigin: string; pauseEnabled: boolean; target?: string }, jobs?: BlenderJobs, artifacts?: Pick<BlenderArtifacts, "list" | "ticket">, secrets?: SandboxSecrets) {
   const app = new Hono<{ Variables: { owner: string } }>();
   app.use("*", bodyLimit({ maxSize: 256 * 1024 }));
   app.onError(error => {

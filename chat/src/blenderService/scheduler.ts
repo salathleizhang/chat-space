@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { onTaskPumpTick, tickTaskPumps } from "../common/taskPump";
-import { BlenderStore, type Session, type Operation } from "./store";
+import { BlenderStore, type Session, type Operation } from "./storeCore";
 import { SandboxSecrets } from "./secrets";
 import type { VolcanoSandboxes } from "./volcano";
 import type { ManagedExecutor, ExecutorReceipt } from "./executor";
@@ -12,15 +12,18 @@ interface Dependencies {
   checkpoints: Pick<Checkpoints, "commit"> & Partial<Pick<Checkpoints, "read">>;
   runner?: { step: (session: Session) => Promise<void>; interrupt?: (session: Session, reason: string) => void };
   publishExport?: (session: Session, operation: Operation) => Promise<void>;
+  saveCheckpoint?: (session: Session, token: string, fileId: string) => Promise<void>;
+  restoreCheckpoint?: (session: Session, token: string, fileId: string) => Promise<void>;
+  beforeCheckpoint?: (session: Session) => Promise<void>;
 }
 /** Tick-driven state machine. Every external effect is journaled before leaving the process. */
 export class BlenderScheduler {
   private readonly flights = new Map<string, Promise<void>>();
   private readonly nextAt = new Map<string, number>();
   private readonly unsubscribe: () => void;
-  constructor(readonly store: BlenderStore, private readonly secrets: SandboxSecrets, private readonly deps: Dependencies) {
+  constructor(readonly store: BlenderStore, private readonly secrets: SandboxSecrets, private readonly deps: Dependencies, externalClock = false) {
     store.recoverDispatched();
-    this.unsubscribe = onTaskPumpTick(() => this.advance(Date.now()));
+    this.unsubscribe = externalClock ? () => {} : onTaskPumpTick(() => this.advance(Date.now()));
   }
   close() { this.unsubscribe(); }
   tick(now = Date.now()) { tickTaskPumps(undefined, now); this.advance(now); }
@@ -159,6 +162,8 @@ export class BlenderScheduler {
       return;
     }
     if (s.state === "saving") {
+      // Workers revoke and fence manual desktop sockets before the packed save is requested.
+      await this.deps.beforeCheckpoint?.(s);
       let raw = this.store.effect(s.id, s.epoch, "save");
       if (!raw) {
         const id = randomUUID(), fileId = randomUUID();
@@ -175,8 +180,11 @@ export class BlenderScheduler {
       } else receipt = await this.deps.executor.receipt(s, this.token(s), effect.id);
       if (receipt.state === "unknown" || receipt.state === "failed") { this.quarantine(s, "checkpoint_not_confirmed", true); return; }
       if (receipt.state !== "succeeded") return;
-      const scene = await this.deps.executor.checkpoint(s, this.token(s), effect.fileId);
-      await this.deps.checkpoints.commit(s, scene, effect.fileId);
+      if (this.deps.saveCheckpoint) await this.deps.saveCheckpoint(s, this.token(s), effect.fileId);
+      else {
+        const scene = await this.deps.executor.checkpoint(s, this.token(s), effect.fileId);
+        await this.deps.checkpoints.commit(s, scene, effect.fileId);
+      }
       this.store.setEffect(s.id, s.epoch, "save", JSON.stringify({ ...effect, committed: true }));
       this.afterSave(s); return;
     }
@@ -233,7 +241,7 @@ export class BlenderScheduler {
     } else this.store.transition(s.id, s.epoch, ["saving"], "cleaning");
   }
   private async restore(s: Session): Promise<boolean> {
-    if (!this.deps.checkpoints.read || !this.deps.executor.uploadRestore) throw new Error("Checkpoint restoration adapter missing");
+    if (!this.deps.restoreCheckpoint && (!this.deps.checkpoints.read || !this.deps.executor.uploadRestore)) throw new Error("Checkpoint restoration adapter missing");
     let raw = this.store.effect(s.id, s.epoch, "restore");
     if (!raw) {
       raw = JSON.stringify({ id: randomUUID(), fileId: randomUUID(), uploaded: false, requested: false, complete: false });
@@ -242,7 +250,8 @@ export class BlenderScheduler {
     const effect = JSON.parse(raw) as { id: string; fileId: string; uploaded: boolean; requested: boolean; complete: boolean };
     if (effect.complete) return true;
     if (!effect.uploaded) {
-      await this.deps.executor.uploadRestore(s, this.token(s), effect.fileId, await this.deps.checkpoints.read(s));
+      if (this.deps.restoreCheckpoint) await this.deps.restoreCheckpoint(s, this.token(s), effect.fileId);
+      else await this.deps.executor.uploadRestore!(s, this.token(s), effect.fileId, await this.deps.checkpoints.read!(s));
       effect.uploaded = true; this.store.setEffect(s.id, s.epoch, "restore", JSON.stringify(effect));
     }
     let receipt: ExecutorReceipt;

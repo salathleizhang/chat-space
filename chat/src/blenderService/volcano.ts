@@ -1,5 +1,6 @@
-import { Signer } from "@volcengine/openapi";
-import { cloudBudget } from "../models/blenderCloud";
+// Import only the pinned SDK signer; importing the barrel also loads unrelated cloud services.
+import Signer from "@volcengine/openapi/lib/base/sign";
+import { cloudBudget } from "../models/cloudBudget";
 
 export interface VolcanoSettings { accessKeyId: string; secretKey: string; sessionToken?: string; region: string; functionId: string; imageInfoId: string }
 export interface SandboxInfo { id: string; status: string; type: string; expiresAt: string; metadata: Record<string, string> }

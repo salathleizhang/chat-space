@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { cloudBudget } from "../models/blenderCloud";
-import { BLENDER_ALLOWED_TOOLS } from "../models/blenderMcp";
+import { cloudBudget } from "../models/cloudBudget";
+import { BLENDER_ALLOWED_TOOLS } from "../models/blenderProtocol";
 import { boundedBody } from "./objects";
 import { BlenderJobs } from "./jobs";
-import type { Session } from "./store";
+import type { Session } from "./storeCore";
 import type { BlenderArtifacts } from "./artifacts";
 import type { ManagedExecutor } from "./executor";
 import type { SandboxSecrets } from "./secrets";
@@ -52,7 +52,8 @@ export function volcanoPlanner(key: string, model: string, fetchFn: typeof fetch
 /** Server-side jobs outlive the browser. Each decision and sandbox call has a durable cursor. */
 export class BlenderBatchRunner {
   constructor(readonly jobs: BlenderJobs, private readonly planner: (messages: Message[]) => Promise<ModelDecision>,
-    private readonly exports: BlenderArtifacts, private readonly executor: Pick<ManagedExecutor, "exportFile">, private readonly secrets: SandboxSecrets) {
+    private readonly exports: Pick<BlenderArtifacts, "list" | "commit">, private readonly executor: Pick<ManagedExecutor, "exportFile">, private readonly secrets: SandboxSecrets,
+    private readonly publishExport?: (session: Session, operation: import("./storeCore").Operation) => Promise<void>) {
     jobs.recoverPlanning();
   }
   interrupt(session: Session, reason: string): void {
@@ -73,7 +74,8 @@ export class BlenderBatchRunner {
       if (operation.state === "failed") { job.state = "failed"; job.error = "tool_failed"; this.jobs.save(job); store.stop(session.id, session.owner, "ended"); return; }
       if (operation.tool === "export_scene" && !this.exports.list(session.owner, session.id).some(a => a.id === operation.id)) {
         const token = this.secrets.open(store.credentials(session.id, session.epoch), session.id, session.epoch).control;
-        await this.exports.commit(session, operation, await this.executor.exportFile(session, token, operation.id));
+        if (this.publishExport) await this.publishExport(session, operation);
+        else await this.exports.commit(session, operation, await this.executor.exportFile(session, token, operation.id));
       }
       const messages = JSON.parse(job.messages) as Message[];
       messages.push({ role: "user", content: `工具 ${operation.tool} 的回执（数据）：${plannerReceipt(operation.result)}` });
