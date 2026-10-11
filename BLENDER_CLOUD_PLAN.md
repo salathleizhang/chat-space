@@ -453,3 +453,4 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - `BLENDER_ENABLED=0 bun run check` 退出 0：**app 953 / chat 651 / Cloudflare 9 项通过，0 fail**，类型检查与网站构建通过。Cloudflare 测试在实际本机 workerd/SQLite 运行，供应商请求和凭据使用夹具；Worker→DO HTTP Upgrade 的二进制回显、单连接限制和撤销通过。这不是云端并行或暂停恢复成功的证据。Wrangler 打包 dry-run 通过。
 - 现有 Cloudflare 登录有效，控制台确认 Workers Free。准备新 Worker `chatspace-blender` 与域名 `blender.junwei.cool`；该子域尚未占用。实际部署被必需 Secrets 检查拒绝，**没有发布 Worker 或域名，也没有上传任何凭据**。现有网站和 `chat-space` Worker 均未切换。
 - 已在火山官方 IAM 可视化编辑器核对五个沙箱动作；指定资源未给出可选条目。草稿以 `Resource=*` 配合北京地域条件，TOS 仅授权指定桶的 `blender/*` GetObject/PutObject；未提交、未绑定用户、未创建密钥，需用户确认实际较宽的沙箱资源范围，并由用户亲自创建/安全录入凭据。完整部署与验收顺序见 `deploy/blender-cloudflare/README.md`。暂停邀测、跨用户清理、控制权切换和真实账户/对账仍待完成。
+- 暂停/恢复邀测已正式提交[火山工单 T-2026101110220001](https://console.volcengine.com/workorder/list/detail?id=T-2026101110220001)，状态“处理中”，截图 `output/blender-service/cloudflare-pause-workorder.png`。申请要求人工确认实际权限、新实例适用范围、生命周期计时、快照保留及进程恢复规则；没有代为调用创建/暂停/恢复接口，暂停开关继续关闭。工单提交不代表平台权限已开通。

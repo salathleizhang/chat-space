@@ -56,4 +56,6 @@ cd deploy/blender-cloudflare
 
 上线顺序：专用凭据与权限 → 暂停邀测 → 部署受保护 Worker → 一个短期 managed 实例的 TOS 保存/回读/恢复 → 两实例隔离并行 → 关闭网页与 Worker 重启恢复 → 真实 Chrome 桌面输入/撤销 → 网站受控入口。验收前不给 Vercel 添加 `BLENDER_SERVICE_URL`，公开分配继续关闭。最后将 Vercel 服务端 URL 设为 `https://blender.junwei.cool/`，并安全保存同一个内部 Secret。
 
+暂停/恢复邀测已于 2026-10-11 正式提交[火山工单 T-2026101110220001](https://console.volcengine.com/workorder/list/detail?id=T-2026101110220001)，提交后状态为“处理中”。申请明确要求人工确认实际权限、新实例适用范围、暂停期间生命周期计时、快照保留期限及恢复后进程规则。工单提交不代表权限已经开通；答复和真实 API 验收前，保持 `BLENDER_PAUSE_ENABLED=0`。
+
 剩余产品边界仍包括：跨用户容器可信清理/复用、人工与 Agent 控制权切换、真实账号与跨设备额度、货币费用对账。当前批次画面只读，手动编辑独立会话；未知结果必须人工决定是否退回检查点或重做。
