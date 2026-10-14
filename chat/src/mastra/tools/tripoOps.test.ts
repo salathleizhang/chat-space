@@ -513,7 +513,7 @@ describe("runTripoSegmentation", () => {
         { projectSlug: "tp", assetSlug: "no-tripo" },
         { apiKey: "tsk-1", fetchFn, pollIntervalMs: 1 },
       ),
-    ).rejects.toThrow("没有模型文件");
+    ).rejects.toThrow("no model file");
   });
 });
 
@@ -523,7 +523,7 @@ describe("Tripo v3 mesh and animation capabilities", () => {
     await expect(runTripoAnimationRetarget(storage,
       { projectSlug: "tp", assetSlug: "unrigged", animation: "preset:biped:walk" },
       { apiKey: "tsk-1", fetchFn },
-    )).rejects.toThrow("请先用 rig-model 绑骨");
+    )).rejects.toThrow("run rig-model first");
     expect(calls).toEqual([]);
   });
 

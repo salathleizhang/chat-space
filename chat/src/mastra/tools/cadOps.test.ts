@@ -75,7 +75,7 @@ describe("runCadGeneration", () => {
         assetSlug: "broken",
         scadCode: "cube([10, 10, 10;",
       }),
-    ).rejects.toThrow(/编译失败/);
+    ).rejects.toThrow(/OpenSCAD compilation failed/);
 
     const files = await storage.list(assetDir("cad-demo", "broken"));
     const sidecarName = files.find((f) => f.endsWith("-request.json"));
@@ -86,7 +86,7 @@ describe("runCadGeneration", () => {
       RequestSidecarSchema,
     );
     expect(sidecar.status).toBe("failed");
-    expect(sidecar.error).toMatch(/ERROR|编译失败/);
+    expect(sidecar.error).toMatch(/ERROR|compilation failed/);
     expect(await storage.exists(assetIdentityFile("cad-demo", "broken"))).toBe(false);
   }, 30_000);
 
@@ -97,7 +97,7 @@ describe("runCadGeneration", () => {
         assetSlug: "empty",
         scadCode: "difference() { cube(5); cube(20, center = true); }",
       }),
-    ).rejects.toThrow(/几何为空/);
+    ).rejects.toThrow(/empty geometry/);
     expect(await storage.exists(assetIdentityFile("cad-demo", "empty"))).toBe(false);
   }, 30_000);
 });
@@ -105,14 +105,14 @@ describe("runCadGeneration", () => {
 describe("readLatestCadSource", () => {
   test("无 CAD 记录的资产报 404", async () => {
     await expect(readLatestCadSource(storage, "cad-demo", "no-cad")).rejects.toThrow(
-      /没有 CAD 生成记录/,
+      /has no CAD generation record/,
     );
   });
 });
 
 describe("STL/GLB 纯函数", () => {
   test("parseBinaryStl 拒绝截断文件", () => {
-    expect(() => parseBinaryStl(new Uint8Array(10))).toThrow(/不完整/);
+    expect(() => parseBinaryStl(new Uint8Array(10))).toThrow(/is incomplete/);
   });
 
   test("buildFlatShadedGlb 输出 4 字节对齐的合法 GLB 容器", () => {

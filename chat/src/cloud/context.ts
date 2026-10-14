@@ -20,5 +20,5 @@ export function withCloudContext<T>(value: CloudContext, operation: () => T): T 
   return context.run(value, operation);
 }
 export class CloudTaskPending extends Error {
-  constructor(readonly delaySeconds: number) { super("等待浏览器下一次任务心跳"); }
+  constructor(readonly delaySeconds: number) { super("Waiting for the next browser task heartbeat"); }
 }

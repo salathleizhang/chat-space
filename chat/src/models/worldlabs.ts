@@ -104,7 +104,7 @@ function operationId(operation: MarbleOperation): string {
   const id = operation.operation_id ?? operation.id ?? operation.name;
   if (!id) {
     throw new ChatServiceError(
-      "World Labs 响应缺少 operation_id",
+      "World Labs response is missing operation_id",
       502,
       "worldlabs_bad_response",
     );
@@ -120,7 +120,7 @@ export async function submitMarbleWorld(
   const fetchFn = options.fetchFn ?? fetch;
   if (!params.imagePrompt && !params.textPrompt) {
     throw new ChatServiceError(
-      "世界生成需要源图或文字 prompt",
+      "World generation needs a source image or a text prompt",
       400,
       "worldlabs_missing_prompt",
     );
@@ -152,12 +152,12 @@ export async function submitMarbleWorld(
       }),
     },
     API_REQUEST_TIMEOUT_MS,
-    "World Labs 提交",
+    "World Labs submit",
   );
   const submitBody = (await submitResponse.json().catch(() => ({}))) as MarbleOperation;
   if (!submitResponse.ok) {
     throw new ChatServiceError(
-      `World Labs 提交失败（${submitResponse.status}）`,
+      `World Labs submit failed (${submitResponse.status})`,
       502,
       "worldlabs_submit_failed",
     );
@@ -182,10 +182,10 @@ export async function pollMarbleOperation(
   options: WorldLabsOptions,
 ): Promise<MarbleWorldResponse> {
   const fetchFn = options.fetchFn ?? fetch;
-  const label = "World Labs 轮询";
+  const label = "World Labs poll";
   const timeoutError = () =>
     new ChatServiceError(
-      `World Labs 生成超时（operation_id=${operationId}，可凭侧写续查）`,
+      `World Labs generation timed out (operation_id=${operationId}; resume the poll from the sidecar)`,
       504,
       "worldlabs_timeout",
     );
@@ -212,7 +212,7 @@ export async function pollMarbleOperation(
       );
       if (!response.ok) {
         throw new ChatServiceError(
-          `World Labs 轮询失败（${response.status}）`,
+          `World Labs poll failed (${response.status})`,
           502,
           "worldlabs_poll_failed",
         );
@@ -225,7 +225,7 @@ export async function pollMarbleOperation(
     failureOf: (body) =>
       body.done && body.error
         ? new ChatServiceError(
-            `World Labs 生成失败：${JSON.stringify(body.error).slice(0, 300)}`,
+            `World Labs generation failed: ${JSON.stringify(body.error).slice(0, 300)}`,
             502,
             "worldlabs_failed",
           )
@@ -234,7 +234,7 @@ export async function pollMarbleOperation(
 
   if (!operation.response) {
     throw new ChatServiceError(
-      "World Labs operation 完成但没有 response",
+      "World Labs operation finished without a response",
       502,
       "worldlabs_bad_response",
     );

@@ -149,7 +149,7 @@ async function defaultSkyboxDataUri(): Promise<string> {
     }
   }
   throw new ChatServiceError(
-    "内置默认天空盒的可编辑全景图不存在",
+    "The editable panorama for the built-in default skybox does not exist",
     500,
     "default_skybox_missing",
   );
@@ -272,7 +272,7 @@ export async function runCurrentSkyboxEdit(
     );
     const ref = refs[0];
     if (!ref) {
-      throw new ChatServiceError("天空盒编辑结果中没有图片", 502, "skybox_edit_no_image");
+      throw new ChatServiceError("The skybox edit produced no image", 502, "skybox_edit_no_image");
     }
 
     const outputPath = `${dir}/${formatIndexedName(
@@ -287,7 +287,7 @@ export async function runCurrentSkyboxEdit(
       await storage.writeBytes(outputPath, new Uint8Array(Buffer.from(ref.dataBase64, "base64")));
       sidecar.outputs = [{ path: outputPath }];
     } else {
-      throw new ChatServiceError("天空盒编辑结果中没有图片", 502, "skybox_edit_no_image");
+      throw new ChatServiceError("The skybox edit produced no image", 502, "skybox_edit_no_image");
     }
 
     sidecar.status = "succeeded";
@@ -338,7 +338,7 @@ function imageProviderKeysFromContext(
 export const generateSkyboxTool = createTool({
   id: "generate-skybox",
   description:
-    "天空盒生成（付费操作——调用前须经用户同意）：根据提示词修改项目唯一的天空盒。固定用火山方舟 Seedream 4.5 以 **4096×2048（4K，2:1 全景）** 生成，**故意不看对话框当前选择的图片生成模型**——5.0 系的像素上限只有约 419 万（2:1 全景约 2912×1456），做全景比 4.5 的 4K 更糊；只有没配方舟 key 时才回退到当前所选模型及其默认分辨率。产物按供应商原格式直接落盘，**不做任何后处理**。有已生成天空盒就继续编辑它；没有则以内置默认天空盒为输入创建。保留旧代次，成功后立即用于当前场景，不要求用户选择天空盒。",
+    "Skybox generation (paid operation — get the user's consent before calling): modify the project's single skybox according to the prompt. It always uses Volcano Engine Ark Seedream 4.5 to generate at **4096×2048 (4K, 2:1 panorama)**, and **deliberately ignores the image generation model currently selected in the dialog** — the 5.0 family caps at about 4.19 million pixels (roughly 2912×1456 for a 2:1 panorama), which is blurrier for a panorama than 4.5's 4K; only when no Ark key is configured does it fall back to the currently selected model and its default resolution. Output is persisted directly in the provider's original format with **no post-processing whatsoever**. If a skybox has already been generated it keeps editing that one; otherwise it creates one using the built-in default skybox as input. Old generations are kept, the result is used for the current scene immediately on success, and the user is not asked to choose a skybox.",
   inputSchema: z.object({ prompt: z.string().min(1) }),
   execute: async (input, context) =>
     runCurrentSkyboxEdit(

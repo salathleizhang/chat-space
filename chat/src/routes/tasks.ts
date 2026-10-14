@@ -75,7 +75,7 @@ taskRoutes.post("/:taskId/retry", async (c) => {
   const previous = await getTask(req.projectSlug, c.req.param("taskId"));
   if (!previous?.retry || previous.status !== "failed") {
     return c.json(
-      { error: { code: "task_not_retryable", message: "该任务不存在、未失败或不可重试" } },
+      { error: { code: "task_not_retryable", message: "This task does not exist, has not failed, or is not retryable" } },
       409,
     );
   }
@@ -93,7 +93,7 @@ taskRoutes.post("/:taskId/retry", async (c) => {
   const provider = retry.provider;
   if (provider !== "tripo-direct" && provider !== "seed3d-direct" &&
       provider !== "hyper3d-volc" && provider !== "hi3d-volc") {
-    return c.json({ error: { code: "provider_unsupported", message: "该历史任务的供应商已停用" } }, 409);
+    return c.json({ error: { code: "provider_unsupported", message: "The provider of this historical task is disabled" } }, 409);
   }
   const retried =
     provider === "tripo-direct"

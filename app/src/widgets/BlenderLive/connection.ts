@@ -2,10 +2,10 @@ export interface DesktopConnection { transport: "local" | "cloud"; instanceName:
 export interface ToolConnection extends DesktopConnection { enabled: boolean; projectSlug: string | null }
 
 export function connectionProblem(desktop: DesktopConnection, tools: ToolConnection, projectSlug: string): string | null {
-  if (!tools.enabled) return "Blender 建模工具尚未启用。";
+  if (!tools.enabled) return "The Blender modeling tool is not enabled yet.";
   if (desktop.transport !== tools.transport || desktop.instanceName !== tools.instanceName) {
-    return "桌面和建模工具没有连接同一个 Blender。请先完成会话配置。";
+    return "The desktop and the modeling tool are not connected to the same Blender. Finish the session configuration first.";
   }
-  if (tools.transport === "cloud" && tools.projectSlug !== projectSlug) return "这个 Blender 会话已分配给另一个工程。";
+  if (tools.transport === "cloud" && tools.projectSlug !== projectSlug) return "This Blender session is assigned to another project.";
   return null;
 }

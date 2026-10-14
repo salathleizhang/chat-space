@@ -33,7 +33,7 @@ const taskSummary = (task: { id: string; subject: string; status: string }) => (
 export const startSceneJobTool = createTool({
   id: "start-scene-job",
   description:
-    "用户已确认 analyze-reference 的对象并授权整体付费生成后调用。它会确认本次 run，创建可修订 SceneSpec 和持久化 SceneJob，再并行调度「参考图→模型」与「干净底板→世界」两条分支，最后按参考图把每件家具摆回 3D 原位（摆放免费且不额外请求同意）。正常启动只调用一次；同一 run 在中断后重调会复用原任务，不会另建一套。",
+    "Call this after the user has confirmed the analyze-reference objects and authorized the overall paid generation. It confirms this run, creates a revisable SceneSpec and a persistent SceneJob, then schedules the two branches \"reference image → model\" and \"clean plate → world\" in parallel, and finally places every piece of furniture back into its 3D position from the reference image (placement is free and does not ask for consent again). Call it only once for a normal start; calling it again for the same run after an interruption reuses the original task and does not create a second one.",
   inputSchema: z.object({
     runId: z.uuid(),
     selectedSlugs: z.array(SlugSchema).min(1).optional(),
@@ -52,7 +52,7 @@ export const startSceneJobTool = createTool({
 export const reviseSceneJobTool = createTool({
   id: "revise-scene-job",
   description:
-    "修订已存在的完整场景：新增遗漏家具、删除误识别对象或修改对象描述。系统只会失效受影响节点：新家具生成新参考图/模型，底板、世界与摆放重建，已正确的其他模型保留。修订可能产生额外费用，必须先得到用户同意。",
+    "Revise an existing complete scene: add missed furniture, remove misidentified objects, or change object descriptions. The system invalidates only the affected nodes: new furniture gets a new reference image/model, the plate, world, and placement are rebuilt, and the other already-correct models are kept. Revisions can incur extra costs and must be approved by the user first.",
   inputSchema: z.object({
     jobId: z.uuid(),
     addObjects: z.array(ObjectCandidateSchema).default([]),
@@ -75,7 +75,7 @@ export const reviseSceneJobTool = createTool({
 export const retrySceneJobNodesTool = createTool({
   id: "retry-scene-job-nodes",
   description:
-    "对完整场景的指定失败/质量不合格节点做局部重建，并自动标记它的下游过期。例如底板不干净时传 nodes=[\"plate\"]，只会重做底板、world 和摆放（摆放免费）；重新付费生成前必须先得到用户同意。",
+    "Locally rebuild the specified failed/low-quality nodes of a complete scene and automatically mark their downstream nodes stale. For example, when the plate is not clean, pass nodes=[\"plate\"] and only the plate, world, and placement are redone (placement is free); get the user's consent before re-running any paid generation.",
   inputSchema: z.object({
     jobId: z.uuid(),
     nodes: z.array(z.string().min(1)).min(1),
@@ -94,7 +94,7 @@ export const retrySceneJobNodesTool = createTool({
 
 export const getSceneJobTool = createTool({
   id: "get-scene-job",
-  description: "读取当前项目某个完整场景任务的节点、过期状态、尝试次数和输出；省略 jobId 时返回最新任务。",
+  description: "Read the nodes, staleness state, attempt counts, and outputs of a complete-scene task in the current project; omitting jobId returns the latest task.",
   inputSchema: z.object({ jobId: z.uuid().optional() }),
   execute: async ({ jobId }, context) => {
     const projectSlug = requireCurrentProject(context);

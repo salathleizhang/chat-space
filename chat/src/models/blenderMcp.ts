@@ -37,16 +37,8 @@ import { BlenderCloudClient, readBlenderCloudSettings } from "./blenderCloud";
  */
 
 /** 允许 agent 触及的工具。改动这个常量前先读模块文档。 */
-export const BLENDER_ALLOWED_TOOLS = [
-  "get_addon_status",
-  "get_scene_info",
-  "get_object_info",
-  "get_viewport_screenshot",
-  "execute_blender_code",
-  "bpy_api_lookup",
-  "describe_node_type",
-  "export_scene",
-] as const;
+export { BLENDER_ALLOWED_TOOLS } from "./blenderProtocol";
+import { BLENDER_ALLOWED_TOOLS, wrapResult } from "./blenderProtocol";
 
 export type BlenderToolName = (typeof BLENDER_ALLOWED_TOOLS)[number];
 
@@ -273,7 +265,7 @@ export class BlenderMcpClient {
         });
       } catch (error) {
         throw new ChatServiceError(
-          `无法启动 Blender MCP server（${this.bin}）：${toErrorMessage(error)}`,
+          `Could not start the Blender MCP server (${this.bin}): ${toErrorMessage(error)}`,
           503,
           "blender_mcp_spawn_failed",
         );
@@ -295,7 +287,7 @@ export class BlenderMcpClient {
         STARTUP_TIMEOUT_MS,
         () =>
           new ChatServiceError(
-            `Blender MCP server 启动握手超时（${STARTUP_TIMEOUT_MS / 1000} 秒）`,
+            `Blender MCP server startup handshake timed out (${STARTUP_TIMEOUT_MS / 1000}s)`,
             504,
             "blender_mcp_handshake_timeout",
           ),
@@ -321,8 +313,8 @@ export class BlenderMcpClient {
   ): Promise<BlenderCallResult> {
     if (!ALLOWED.has(tool)) {
       throw new ChatServiceError(
-        `Blender 工具 \`${tool}\` 不在白名单内（刻意排除：生成器会与本仓库既有的付费管线` +
-          `重复计费；资产市场是提示注入面且绕过资产库）。允许的是：` +
+        `Blender tool \`${tool}\` is not on the allowlist (deliberately excluded: generators would double-charge ` +
+          `against the existing paid pipelines in this repository; asset marketplaces are a prompt-injection surface and bypass the asset library). Allowed: ` +
           `${BLENDER_ALLOWED_TOOLS.join(", ")}`,
         403,
         "blender_tool_not_allowed",
@@ -348,8 +340,8 @@ export class BlenderMcpClient {
       timeoutMs,
       () =>
         new ChatServiceError(
-          `Blender 工具 \`${tool}\` 超过 ${Math.round(timeoutMs / 1000)} 秒没有返回，已中止等待。` +
-            `Blender 可能仍在执行（视口会保持冻结直到它跑完）——请把工作拆成更小的步。`,
+          `Blender tool \`${tool}\` did not return within ${Math.round(timeoutMs / 1000)}s, so the wait was aborted. ` +
+            `Blender may still be executing (the viewport stays frozen until it finishes) — split the work into smaller steps.`,
           504,
           "blender_call_timeout",
         ),
@@ -405,10 +397,10 @@ export class BlenderMcpClient {
   private notConnectedError(): ChatServiceError {
     const stderr = this.stderrTail.slice(-3).join(" | ");
     return new ChatServiceError(
-      `Blender 没有响应（${this.host}:${this.port}）。Blender 多半没在跑，或者插件没启动。\n` +
-        `请打开 Blender，在 3D 视口侧栏（N 键）里启动 ChatSpace Bridge 对应的插件；` +
-        `容器里则确认 Blender 进程与端口暴露都就绪。\n` +
-        `最近日志：${stderr || "（无）"}`,
+      `Blender is not responding (${this.host}:${this.port}). Blender is most likely not running, or the addon has not been started.\n` +
+        `Open Blender and start the addon for ChatSpace Bridge from the 3D viewport sidebar (N key); ` +
+        `in a container, confirm that the Blender process and the exposed port are both ready.\n` +
+        `Recent log: ${stderr || "(none)"}`,
       503,
       "blender_not_connected",
     );
@@ -422,7 +414,7 @@ export class BlenderMcpClient {
     this.liveness = null;
     for (const [id, entry] of this.pending) {
       entry.reject(
-        new ChatServiceError("Blender MCP server 已停止", 503, "blender_mcp_stopped"),
+        new ChatServiceError("The Blender MCP server has been stopped", 503, "blender_mcp_stopped"),
       );
       this.pending.delete(id);
     }
@@ -470,7 +462,7 @@ export class BlenderMcpClient {
         this.pending.delete(id);
         reject(
           new ChatServiceError(
-            `向 Blender MCP server 写请求失败：${toErrorMessage(error)}`,
+            `Failed to write the request to the Blender MCP server: ${toErrorMessage(error)}`,
             503,
             "blender_mcp_write_failed",
           ),
@@ -491,7 +483,7 @@ export class BlenderMcpClient {
     const stdin = this.stdin;
     if (!stdin || !this.proc) {
       throw new ChatServiceError(
-        "Blender MCP server 没有在运行",
+        "The Blender MCP server is not running",
         503,
         "blender_mcp_not_running",
       );
@@ -555,7 +547,7 @@ export class BlenderMcpClient {
     if (message.error) {
       entry.reject(
         new ChatServiceError(
-          `Blender 工具 \`${entry.tool}\` 返回错误：${message.error.message ?? "未知错误"}`,
+          `Blender tool \`${entry.tool}\` returned an error: ${message.error.message ?? "unknown error"}`,
           502,
           "blender_tool_error",
         ),
@@ -573,8 +565,8 @@ export class BlenderMcpClient {
     for (const [id, entry] of this.pending) {
       entry.reject(
         new ChatServiceError(
-          `Blender MCP server 在 \`${entry.tool}\` 执行期间退出。` +
-            `最近输出：${this.stderrTail.slice(-3).join(" | ") || "（无）"}`,
+          `The Blender MCP server exited while \`${entry.tool}\` was executing.` +
+            `Recent output: ${this.stderrTail.slice(-3).join(" | ") || "(none)"}`,
           503,
           "blender_mcp_exited",
         ),
@@ -591,33 +583,7 @@ export class BlenderMcpClient {
  * 本仓库在别处踩过同一个坑（`common/glb.ts` 的面数 `null` 表示"不知道"，不是 0）。
  * 判"模型建出来了没有"要看 `json` 里的引擎事实，解析失败时要如实报错而不是当成成功。
  */
-export function wrapResult(
-  tool: string,
-  result: unknown,
-): { text: string; json: unknown; isError: boolean } {
-  const container = result as { content?: unknown; isError?: unknown } | null;
-  const isError = container?.isError === true;
-  const content = container?.content;
-  if (!Array.isArray(content)) {
-    return { text: "", json: null, isError };
-  }
-  const text = content
-    .map((part) => {
-      const entry = part as { type?: string; text?: string };
-      return entry.type === "text" && typeof entry.text === "string" ? entry.text : "";
-    })
-    .filter(Boolean)
-    .join("\n");
-
-  if (!text) return { text: "", json: null, isError };
-  try {
-    return { text, json: JSON.parse(text), isError };
-  } catch {
-    // 社区版少数工具直接回人类可读文本，解析不了是正常的——原样交回。
-    void tool;
-    return { text, json: null, isError };
-  }
-}
+export { wrapResult } from "./blenderProtocol";
 
 /**
  * 杀掉 pid 及其所有后代。
@@ -669,7 +635,7 @@ export function getBlenderMcp(): BlenderMcpClient | BlenderCloudClient {
     const cloud = readBlenderCloudSettings();
     if (cloud) return (shared = new BlenderCloudClient(cloud));
     if (process.env.BLENDER_LIVE_INSTANCE_NAME) {
-      throw new ChatServiceError("云端桌面已配置，但命令凭据和工程分配尚未配置；不会操作本机 Blender", 503, "blender_cloud_not_ready");
+      throw new ChatServiceError("A cloud desktop is configured, but the command credentials and project assignment are not; the local Blender will not be touched", 503, "blender_cloud_not_ready");
     }
   }
   shared ??= new BlenderMcpClient({

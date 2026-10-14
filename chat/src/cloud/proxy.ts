@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config, configuredEnvLlmProviders, configuredProviders } from "../config";
 import { workspaceIdentity } from "./identity";
+import { forwardBlender, serviceConfigured } from "./blenderProxy";
 
 /** Stateless credential proxy. No project, conversation, task or asset is stored here. */
 export function allowedProviderUrl(value: string): URL | undefined {
@@ -46,16 +47,18 @@ function limited(visitor: string) {
 export async function proxyFetch(request: Request): Promise<Response> {
   const address = new URL(request.url);
   if (address.pathname === "/api/health") return Response.json({ ok: true, service: "chatspace-chat", storage: "browser-local" });
-  if (address.pathname === "/api/capabilities") return Response.json({ llmProviders: configuredEnvLlmProviders, providers: configuredProviders });
+  if (address.pathname === "/api/capabilities") return Response.json({ llmProviders: configuredEnvLlmProviders, providers: configuredProviders, blenderCloud: serviceConfigured() });
   const origin = request.headers.get("origin");
-  if (origin && origin !== address.origin) return Response.json({ error: { message: "只允许当前网站使用 AI 转发" } }, { status: 403 });
+  if (origin && origin !== address.origin) return Response.json({ error: { message: "AI forwarding is only allowed for this site" } }, { status: 403 });
   const secret = process.env.CHATSPACE_SESSION_SECRET ?? "";
   try {
     const identity = workspaceIdentity(request.headers.get("cookie"), secret);
     let response: Response;
-    if (address.pathname === "/api/download" && ["GET", "HEAD"].includes(request.method)) {
+    if (address.pathname.startsWith("/api/blender/")) {
+      response = await forwardBlender(request, identity.id);
+    } else if (address.pathname === "/api/download" && ["GET", "HEAD"].includes(request.method)) {
       let target = verifiedDownload(address.searchParams.get("ticket") ?? "", secret);
-      if (!target) return Response.json({ error: { message: "下载凭证无效" } }, { status: 403 });
+      if (!target) return Response.json({ error: { message: "Invalid download ticket" } }, { status: 403 });
       const headers = new Headers(); const range = request.headers.get("range"); if (range) headers.set("Range", range);
       let upstream: Response | undefined;
       for (let redirects = 0; redirects < 4; redirects++) {
@@ -63,7 +66,7 @@ export async function proxyFetch(request: Request): Promise<Response> {
         if (![301, 302, 303, 307, 308].includes(upstream.status)) break;
         const next = upstream.headers.get("location"); target = next ? publicDownloadUrl(new URL(next, target).href) : undefined;
         await upstream.body?.cancel();
-        if (!target) return Response.json({ error: { message: "不允许的供应商下载跳转" } }, { status: 403 });
+        if (!target) return Response.json({ error: { message: "Provider download redirect not allowed" } }, { status: 403 });
       }
       if (!upstream || upstream.status >= 300 && upstream.status < 400) throw new Error("Too many download redirects");
       const outputHeaders = new Headers({ "Cache-Control": "no-store" });
@@ -73,10 +76,10 @@ export async function proxyFetch(request: Request): Promise<Response> {
       response = new Response(upstream.body, { status: upstream.status, headers: outputHeaders });
     } else if (address.pathname === "/api/provider") {
       const target = allowedProviderUrl(address.searchParams.get("url") ?? "");
-      if (!target || !["GET", "POST"].includes(request.method)) return Response.json({ error: { message: "不允许的供应商请求" } }, { status: 403 });
-      if (limited(identity.id)) return Response.json({ error: { message: "请求过于频繁，请稍后重试" } }, { status: 429 });
+      if (!target || !["GET", "POST"].includes(request.method)) return Response.json({ error: { message: "Provider request not allowed" } }, { status: 403 });
+      if (limited(identity.id)) return Response.json({ error: { message: "Too many requests, please try again later" } }, { status: 429 });
       const key = target.hostname === "openapi.tripo3d.ai" ? process.env.TRIPO_KEY : target.hostname === "api.worldlabs.ai" ? process.env.WORLDLABS_KEY : process.env.VOLC_KEY;
-      if (!key) return Response.json({ error: { message: "该供应商尚未配置" } }, { status: 503 });
+      if (!key) return Response.json({ error: { message: "This provider is not configured" } }, { status: 503 });
       const headers = new Headers(); const contentType = request.headers.get("content-type"); if (contentType) headers.set("content-type", contentType);
       headers.set(target.hostname === "api.worldlabs.ai" ? "WLT-Api-Key" : "Authorization", target.hostname === "api.worldlabs.ai" ? key : `Bearer ${key}`);
       let body: string | ArrayBuffer | undefined;
@@ -97,12 +100,12 @@ export async function proxyFetch(request: Request): Promise<Response> {
         const tickets = downloadsIn(payload, secret);
         response = new Response(new Blob([JSON.stringify({ ...payload, _chatspaceDownloads: tickets })], { type: "application/json" }).stream(), { status: upstream.status, headers: { "Content-Type": "application/json" } });
       } else response = new Response(upstream.body, { status: upstream.status, headers: { "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream" } });
-    } else return Response.json({ error: { message: "项目与文件已改为浏览器本地保存" } }, { status: 404 });
+    } else return Response.json({ error: { message: "Projects and files are now stored locally in the browser" } }, { status: 404 });
     response.headers.set("Cache-Control", "private, no-store");
     if (identity.setCookie) response.headers.append("Set-Cookie", identity.setCookie);
     return response;
   } catch (error) {
     console.error("Stateless provider proxy failed", error instanceof Error ? error.name : "Error");
-    return Response.json({ error: { message: "AI 转发服务暂不可用，请稍后重试" } }, { status: 502 });
+    return Response.json({ error: { message: "The AI forwarding service is temporarily unavailable, please try again later" } }, { status: 502 });
   }
 }

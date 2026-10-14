@@ -63,12 +63,12 @@ describe("resolveIdentifyCandidates", () => {
   test("候选全部没有参考图 → 报 no_reference_image", async () => {
     await expect(
       resolveIdentifyCandidates(storage, "identify-demo", ["bracket-01"]),
-    ).rejects.toThrow("没有参考图");
+    ).rejects.toThrow("no reference image");
   });
 
   test("候选 slug 不存在 → 报 asset_not_found", async () => {
     await expect(
       resolveIdentifyCandidates(storage, "identify-demo", ["ghost-99"]),
-    ).rejects.toThrow("不存在");
+    ).rejects.toThrow("not found");
   });
 });

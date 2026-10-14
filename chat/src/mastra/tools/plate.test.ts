@@ -112,7 +112,7 @@ describe("runPlateGeneration", () => {
         { volcengineApiKey: "sk-test" },
         { fetchFn: fakeFetch },
       ),
-    ).rejects.toThrow("sourceImage 和 objectsToRemove");
+    ).rejects.toThrow("sourceImage and objectsToRemove");
   });
 
   test("独立模式：显式源图和移除对象不依赖场景分析", async () => {
@@ -149,6 +149,6 @@ describe("runLibraryImageEdit 输入校验", () => {
         { volcengineApiKey: "sk-test" },
         { fetchFn: fakeFetch },
       ),
-    ).rejects.toThrow("输入图不存在");
+    ).rejects.toThrow("Input image does not exist");
   });
 });

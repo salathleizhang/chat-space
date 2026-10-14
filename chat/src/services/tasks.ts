@@ -99,8 +99,8 @@ function asStalledFailure(task: GenerationTask): GenerationTask | undefined {
     status: "failed",
     phase: "failed",
     error:
-      `任务超过 ${Math.round(STALLED_TASK_TIMEOUT_MS / 60_000)} 分钟没有任何进展，已判定卡死。` +
-      "供应商侧可能已经完成，先用 resume-generation 凭侧写续跑（不重复付费），再考虑重试。",
+      `Task made no progress for more than ${Math.round(STALLED_TASK_TIMEOUT_MS / 60_000)} minutes and was declared stalled. ` +
+      "The provider may already have finished; first resume from the sidecar with resume-generation (no duplicate charge), then consider retrying.",
     updatedAt: new Date().toISOString(),
   };
 }
@@ -160,7 +160,7 @@ export function startCustomTask(
   }
   const { cloudOperation, ...publicMetadata } = metadata;
   const operation = cloudOperation ?? (metadata.retry ? { operation: "3d", input: { retry: metadata.retry } } : undefined);
-  if (cloud && !operation) throw new ChatServiceError(`此操作尚未支持浏览器任务：${kind}`, 409, "browser_operation_unsupported");
+  if (cloud && !operation) throw new ChatServiceError(`This operation does not support browser tasks yet: ${kind}`, 409, "browser_operation_unsupported");
   const id = cloud ? `task-${randomUUID()}` : `task-${++taskSeq}-${Date.now().toString(36)}`;
   const now = new Date().toISOString();
   const task: GenerationTask = {
@@ -248,7 +248,7 @@ export async function resolve3dObjects(
     : [...bySlug.values()];
   if (objects.length === 0) {
     throw new ChatServiceError(
-      "项目里没有可生成的对象。文生单物体参考图时请给 generate-reference-images 传 assetSlug，然后直接用同一 slug 启动 3D；完整场景请先用 analyze-reference 获取候选，再把确认选择交给 start-scene-job",
+      "The project has no generatable object. For a text-to-single-object reference image, pass assetSlug to generate-reference-images and then start 3D with the same slug directly; for a full scene, first use analyze-reference to get candidates, then hand the confirmed selection to start-scene-job",
       409,
       "no_objects",
     );
@@ -266,7 +266,7 @@ export function startWorldTask(
   const input = options.mode === "direct"
     ? { projectSlug, mode: options.mode, sourceImage: options.sourceImage, prompt: options.prompt }
     : { projectSlug, mode: "empty-environment" as const, sourceImage: options.sourceImage, extraPrompt: options.extraPrompt };
-  const subject = options.mode === "direct" ? "世界生成（World Labs）" : "空环境生成（World Labs）";
+  const subject = options.mode === "direct" ? "World generation (World Labs)" : "Empty environment generation (World Labs)";
   return startCustomTask("world", projectSlug, subject, async (context) => {
     // 一开工就离开 queued：世界生成是长轮询，phase 必须能一路看见。
     await context.setPhase("generating");
@@ -297,7 +297,7 @@ export function startSkyboxTask(
     skyboxSlug?: string;
   },
 ): GenerationTask {
-  return startCustomTask("skybox", projectSlug, "天空盒生成（Blockade Labs）", async (context) => {
+  return startCustomTask("skybox", projectSlug, "Skybox generation (Blockade Labs)", async (context) => {
     await context.setPhase("generating");
     return runSkyboxGeneration(
       getAssetStorage(),
@@ -327,7 +327,7 @@ export function startResumeTask(projectSlug: string, sidecarPath: string): Gener
   return startCustomTask(
     "resume",
     projectSlug,
-    `续跑：${sidecarPath.split("/").pop()}`,
+    `Resume: ${sidecarPath.split("/").pop()}`,
     async (context) => {
       // 续跑同样是长流程（轮询 + 下载几十 MB）：报阶段，别让看板只看到 queued。
       await context.setPhase("generating");
@@ -423,8 +423,8 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
                   status: "failed",
                   phase: "failed",
                   error:
-                    "本地服务曾在场景任务运行时中断。节点状态已保留，" +
-                    "请恢复同一 SceneJob，不要重建已完成节点",
+                    "The local service was interrupted while the scene job was running. Node state has been preserved; " +
+                    "resume the same SceneJob, do not rebuild the nodes that already finished",
                   updatedAt: new Date().toISOString(),
                 };
               }
@@ -465,8 +465,8 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
                 status: "failed",
                 phase: "failed",
                 error:
-                  "本地服务曾在任务运行时中断。供应商侧可能已经完成，" +
-                  "先用 resume-generation 凭侧写续跑（不重复付费），再考虑重试",
+                  "The local service was interrupted while the task was running. The provider may already have finished; " +
+                  "first resume from the sidecar with resume-generation (no duplicate charge), then consider retrying",
                 updatedAt: new Date().toISOString(),
               };
           // **重启自愈**：进程重启不该让用户去点"续跑"。侧写里有 providerTaskId
@@ -485,14 +485,14 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
                 task = {
                   ...task,
                   error:
-                    "本地服务曾在任务运行时中断；已自动按侧写续跑（不重复付费），" +
-                    `续跑任务 ${resumeTask.id}`,
+                    "The local service was interrupted while the task was running; it has been resumed automatically from the sidecar (no duplicate charge), " +
+                    `resume task ${resumeTask.id}`,
                 };
               }
             } catch (error) {
               // 自动续跑失败不该让任务列表读不出来：任务照旧是 failed，人工可再续跑。
               autoResumedTasks.delete(task.id);
-              task = { ...task, error: `${task.error ?? ""}（自动续跑未启动：${toErrorMessage(error)}）` };
+              task = { ...task, error: `${task.error ?? ""} (automatic resume did not start: ${toErrorMessage(error)})` };
             }
           }
           await persistTask(task);

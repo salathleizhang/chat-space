@@ -86,7 +86,7 @@ function projectSlugOf(sidecarPath: string): string {
   const slug = parts[0] === "projects" ? parts[1] : undefined;
   if (!slug) {
     throw new ChatServiceError(
-      `无法从侧写路径解析出项目：${sidecarPath}`,
+      `Cannot parse the project from the sidecar path: ${sidecarPath}`,
       400,
       "invalid_sidecar_path",
     );
@@ -215,7 +215,7 @@ async function publishResumedModel(
     {
       slug: sidecar.slug,
       name: candidate?.name ?? sidecar.slug,
-      intent: candidate?.description ?? "由请求侧写续跑恢复的 3D 模型",
+      intent: candidate?.description ?? "3D model recovered by resuming from the request sidecar",
       sourceImages: candidate?.sourceImages ?? (image ? [image] : []),
     },
     { files },
@@ -316,7 +316,7 @@ export async function resumeGeneration(
   const sidecar = await readJson(storage, sidecarPath, RequestSidecarSchema);
   if (!["volcengine", "seed3d", "ark-hyper3d", "ark-hitem3d", "tripo", "hunyuan", "world-labs"].includes(sidecar.provider)) {
     throw new ChatServiceError(
-      `供应商「${sidecar.provider}」已停用，无法续跑该历史任务`,
+      `Provider "${sidecar.provider}" is no longer supported; this historical task cannot be resumed`,
       409,
       "provider_unsupported",
     );
@@ -391,7 +391,7 @@ export async function resumeGeneration(
 
   if (!sidecar.providerTaskId) {
     throw new ChatServiceError(
-      `侧写「${sidecarPath}」没有供应商任务 id，无法续跑，请重新生成`,
+      `Sidecar "${sidecarPath}" has no provider task id and cannot be resumed; generate again`,
       409,
       "not_resumable",
     );
@@ -430,13 +430,13 @@ export async function resumeGeneration(
         );
       }
       if (files.length === 0) {
-        throw new ChatServiceError("续跑结果中没有可下载文件", 502, "resume_no_files");
+        throw new ChatServiceError("The resume produced no downloadable files", 502, "resume_no_files");
       }
     };
 
     if (sidecar.provider === "world-labs") {
       if (!keys.worldLabsApiKey) {
-        throw new ChatServiceError("续跑世界生成需要 World Labs API key", 401, "missing_worldlabs_key");
+        throw new ChatServiceError("Resuming world generation requires a World Labs API key", 401, "missing_worldlabs_key");
       }
       const response = await pollMarbleOperation(sidecar.providerTaskId, {
         apiKey: keys.worldLabsApiKey,
@@ -477,7 +477,7 @@ export async function resumeGeneration(
       }
     } else if (sidecar.provider === "tripo") {
       if (!keys.tripo3dApiKey) {
-        throw new ChatServiceError("续跑 Tripo 任务需要 Tripo3D API key", 401, "missing_tripo_key");
+        throw new ChatServiceError("Resuming a Tripo task requires a Tripo3D API key", 401, "missing_tripo_key");
       }
       const data = await waitForTripoTask(sidecar.providerTaskId, {
         apiKey: keys.tripo3dApiKey,
@@ -488,14 +488,14 @@ export async function resumeGeneration(
     } else if (sidecar.provider === "hunyuan") {
       if (sidecar.model !== "SubmitHunyuanTo3DUVJob") {
         throw new ChatServiceError(
-          `混元能力「${sidecar.model}」已停用；当前只保留 UV 展开续跑`,
+          `Hunyuan capability "${sidecar.model}" is no longer supported; only UV unwrap resume is kept for now`,
           409,
           "provider_unsupported",
         );
       }
       if (!keys.hunyuanApiKey) {
         throw new ChatServiceError(
-          "续跑 UV 展开需要本机 HUNYUAN_KEY（SecretId:SecretKey）",
+          "Resuming UV unwrap requires the local HUNYUAN_KEY (SecretId:SecretKey)",
           401,
           "missing_hunyuan_key",
         );
@@ -509,7 +509,7 @@ export async function resumeGeneration(
     } else if (["seed3d", "ark-hyper3d", "ark-hitem3d"].includes(sidecar.provider)) {
       if (!keys.seed3dApiKey) {
         throw new ChatServiceError(
-          "续跑火山 3D 任务需要本机 VOLC_KEY",
+          "Resuming a Volcano Engine 3D task requires the local VOLC_KEY",
           401,
           "missing_seed3d_key",
         );
@@ -535,12 +535,12 @@ export async function resumeGeneration(
         outputs.push({ path, providerUrl: url });
       }
       if (files.length === 0) {
-        throw new ChatServiceError("续跑结果中没有可下载文件", 502, "resume_no_files");
+        throw new ChatServiceError("The resume produced no downloadable files", 502, "resume_no_files");
       }
     } else if (sidecar.provider === "blockade-labs") {
       if (!keys.blockadeLabsApiKey) {
         throw new ChatServiceError(
-          "续跑天空盒任务需要 Blockade Labs API key",
+          "Resuming a skybox task requires a Blockade Labs API key",
           401,
           "missing_blockadelabs_key",
         );
@@ -556,7 +556,7 @@ export async function resumeGeneration(
         const requestId = sidecar.params.requestId;
         if (typeof requestId !== "string") {
           throw new ChatServiceError(
-            "侧写缺少生成阶段的 requestId，无法续跑，请重新生成",
+            "The sidecar is missing the requestId from the generation stage and cannot be resumed; generate again",
             409,
             "not_resumable",
           );
@@ -568,14 +568,14 @@ export async function resumeGeneration(
         await download(result.fileUrl, formatIndexedName(sidecar.index, sidecar.slug, "hdr"));
       } else {
         throw new ChatServiceError(
-          `不认识的天空盒阶段「${sidecar.model}」，无法续跑`,
+          `Unrecognized skybox stage "${sidecar.model}"; cannot resume`,
           409,
           "not_resumable",
         );
       }
     } else {
       throw new ChatServiceError(
-        `不认识的供应商「${sidecar.provider}」，无法续跑`,
+        `Unrecognized provider "${sidecar.provider}"; cannot resume`,
         409,
         "not_resumable",
       );
@@ -617,14 +617,14 @@ export async function resumeGeneration(
 export const resumeGenerationTool = createTool({
   id: "resume-generation",
   description:
-    "凭当前项目的请求侧写续跑中断的生成任务（不重新提交、不重复花钱）：接续轮询供应商任务并把产物落盘",
+    "Resume an interrupted generation task from the current project's request sidecar (no resubmit, no paying twice): continue polling the provider task and persist its outputs",
   inputSchema: z.object({
     sidecarPath: LogicalPathSchema,
   }),
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
     if (!input.sidecarPath.startsWith(`projects/${projectSlug}/`)) {
-      throw new ChatServiceError("只能续跑当前项目中的生成任务", 403, "project_scope_violation");
+      throw new ChatServiceError("You can only resume generation tasks in the current project", 403, "project_scope_violation");
     }
     if (currentCloudContext()) {
       const { startResumeTask } = await import("../../services/tasks");

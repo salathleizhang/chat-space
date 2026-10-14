@@ -192,7 +192,7 @@ describe("runSeed3dImageTo3d", () => {
       landSeed3dOutputBytes(storage, archive, {
         basePath: `${assetDir("sd", "safe")}/0-safe`,
       }),
-    ).rejects.toThrow("没有可用模型文件");
+    ).rejects.toThrow("No usable model file");
     expect(await storage.exists("notes.txt")).toBe(false);
   });
 
@@ -202,7 +202,7 @@ describe("runSeed3dImageTo3d", () => {
         basePath: `${assetDir("sd", "invalid")}/0-invalid`,
         fallbackExtension: "glb",
       }),
-    ).rejects.toThrow("glTF 文件头");
+    ).rejects.toThrow("glTF header");
     expect(await storage.exists(`${assetDir("sd", "invalid")}/0-invalid.glb`)).toBe(false);
   });
 

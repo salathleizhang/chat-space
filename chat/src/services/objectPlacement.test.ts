@@ -182,7 +182,7 @@ describe("placeObjects：显式位置", () => {
       placeObjects(storage, SLUG, [
         { slug: "doll", position: [0, 0, 0], rotation: [0, 1, 0], yawDegrees: 45 },
       ]),
-    ).rejects.toThrow("rotation 与 yawDegrees 只能给一个");
+    ).rejects.toThrow("rotation and yawDegrees are mutually exclusive");
   });
 });
 
@@ -279,12 +279,12 @@ describe("placeObjects：跳过与拒绝", () => {
     const cases: [Parameters<typeof placeObjects>[2][number], string][] = [
       [
         { slug: "doll", position: [0, 0, 0], onSurfaceOf: { slug: "table" } },
-        "position 与 onSurfaceOf 只能给一个",
+        "position and onSurfaceOf are mutually exclusive",
       ],
-      [{ slug: "doll" }, "必须给 position 或 onSurfaceOf"],
+      [{ slug: "doll" }, "either position or onSurfaceOf is required"],
       [
         { slug: "doll", position: [0, 0, 0], heightMeters: 1, scale: 2 },
-        "heightMeters 与 scale 只能给一个",
+        "heightMeters and scale are mutually exclusive",
       ],
     ];
     for (const [item, message] of cases) {
@@ -320,7 +320,7 @@ describe("place-object 工具入口", () => {
   test("没有项目上下文时明确拒绝", () => {
     expect(
       placeObjectTool.execute!({ items: [{ slug: "doll", position: [0, 0, 0] }] }, {} as never),
-    ).rejects.toThrow("当前请求没有有效的项目上下文");
+    ).rejects.toThrow("The current request has no valid project context");
   });
 });
 

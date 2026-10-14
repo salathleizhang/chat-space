@@ -121,14 +121,14 @@ describe("blender-run 的小步闸门", () => {  test(`超过 ${MAX_STEP_CHARS} 
     expect((thrown as ChatServiceError).code).toBe("blender_step_too_large");
     // 关键的一半：这条错误必须来自"还没碰 Blender"的路径。
     // 如果它来自 spawn 之后的超时/连接失败，措辞会完全不同。
-    expect((thrown as ChatServiceError).message).toContain("拆成多步");
+    expect((thrown as ChatServiceError).message).toContain("split it into multiple steps");
   });
 
   test("错误信息告诉模型怎么拆，而不是只说「太大了」", async () => {
     const error = (await blenderRunTool
       .execute!({ code: "y".repeat(MAX_STEP_CHARS + 1) } as never, context)
       .catch((thrown: unknown) => thrown)) as ChatServiceError;
-    expect(error.message).toContain("每一步建一个部件");
+    expect(error.message).toContain("build one part or add one modifier per step");
   });
 });
 
@@ -223,7 +223,7 @@ describe("拦住会打死桥接的调用", () => {
       )
       .catch((thrown: unknown) => thrown)) as ChatServiceError;
     expect(error.message).toContain("bpy.data.objects.remove");
-    expect(error.message).toContain("再也连不上");
+    expect(error.message).toContain("can never reconnect afterward");
   });
 
   test("安全替代本身不会被拦", async () => {

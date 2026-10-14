@@ -64,13 +64,13 @@ describe("resolveModelPublicUrl 策略链", () => {
     const dir = assetDir("relay", "imported");
     await storage.writeBytes(`${dir}/0-imported.fbx`, GLB_BYTES);
     expect(resolveModelPublicUrl(storage, "relay", "imported")).rejects.toThrow(
-      "公网 URL",
+      "public URL",
     );
   });
 
   test("没有任何模型文件 → 报错要求先生成", () => {
     expect(resolveModelPublicUrl(storage, "relay", "nothing")).rejects.toThrow(
-      "没有模型文件",
+      "no model file",
     );
   });
 });

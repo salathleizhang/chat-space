@@ -61,7 +61,7 @@ export async function createProject(
   const slug = input.slug ?? slugify(input.name);
   SlugSchema.parse(slug);
   if (await storage.exists(projectFile(slug))) {
-    throw new ChatServiceError(`项目「${slug}」已存在`, 409, "project_exists");
+    throw new ChatServiceError(`Project "${slug}" already exists`, 409, "project_exists");
   }
   const now = new Date().toISOString();
   const project: Project = {
@@ -80,7 +80,7 @@ export async function requireProject(
   slug: string,
 ): Promise<Project> {
   if (!(await storage.exists(projectFile(slug)))) {
-    throw new ChatServiceError(`项目「${slug}」不存在`, 404, "project_not_found");
+    throw new ChatServiceError(`Project "${slug}" does not exist`, 404, "project_not_found");
   }
   return readJson(storage, projectFile(slug), ProjectSchema);
 }
@@ -168,12 +168,12 @@ export function activateEnvironmentAsset(
     if (assetSlug) {
       const identityPath = assetIdentityFile(projectSlug, assetSlug);
       if (!(await storage.exists(identityPath))) {
-        throw new ChatServiceError(`资产「${assetSlug}」不存在`, 404, "asset_not_found");
+        throw new ChatServiceError(`Asset "${assetSlug}" does not exist`, 404, "asset_not_found");
       }
       const identity = await readJson(storage, identityPath, AssetIdentitySchema);
       if (identity.kind !== kind) {
         throw new ChatServiceError(
-          `资产「${assetSlug}」不是${kind === "skybox" ? "天空盒" : "世界"}资产`,
+          `Asset "${assetSlug}" is not a ${kind === "skybox" ? "skybox" : "world"} asset`,
           409,
           "asset_kind_mismatch",
         );
@@ -434,7 +434,7 @@ async function readSceneLayout(
     return migrateSceneLayout(raw, assetIds);
   } catch (err) {
     throw new ChatServiceError(
-      `「${path}」无法迁移到当前场景版本：${err instanceof Error ? err.message : String(err)}`,
+      `Cannot migrate "${path}" to the current scene version: ${err instanceof Error ? err.message : String(err)}`,
       500,
       "scene_migration_failed",
     );
@@ -551,7 +551,7 @@ export async function latestAssetModel(
   }
   if (!best) {
     throw new ChatServiceError(
-      `资产「${assetSlug}」目录下没有模型文件，请先生成 3D 模型`,
+      `Asset "${assetSlug}" has no model file in its directory; generate a 3D model first`,
       409,
       "model_missing",
     );
@@ -607,12 +607,12 @@ export async function importLocalModel(
 ): Promise<ImportModelResult> {
   const extMatch = IMPORT_MODEL_EXT_RE.exec(params.fileName);
   if (!extMatch) {
-    throw new ChatServiceError("只支持 glb/gltf/obj/fbx 模型", 400, "unsupported_model");
+    throw new ChatServiceError("Only glb/gltf/obj/fbx models are supported", 400, "unsupported_model");
   }
   for (const aux of params.auxFiles ?? []) {
     if (!isSafeFileName(aux.fileName)) {
       throw new ChatServiceError(
-        `附属文件名不合法：${aux.fileName}`,
+        `Invalid auxiliary file name: ${aux.fileName}`,
         400,
         "unsafe_filename",
       );
@@ -636,7 +636,7 @@ export async function importLocalModel(
     {
       slug: assetSlug,
       name: baseName || assetSlug,
-      intent: "本地导入的 3D 模型",
+      intent: "Locally imported 3D model",
       sourceImages: [],
     },
     { files: [path] },
@@ -691,19 +691,19 @@ export async function saveAssetThumbnail(
   }
   if (!validSource) {
     throw new ChatServiceError(
-      `缩略图源产物名不合法：${params.sourceFile}`,
+      `Invalid thumbnail source output name: ${params.sourceFile}`,
       400,
       "invalid_thumbnail_source",
     );
   }
   if (params.bytes.length === 0) {
-    throw new ChatServiceError("缩略图内容为空", 400, "empty_thumbnail");
+    throw new ChatServiceError("The thumbnail content is empty", 400, "empty_thumbnail");
   }
   const dir = assetDir(params.projectSlug, params.assetSlug);
   // 源产物必须真在磁盘上：挡住给不存在的模型写图（缩略图永远对应一个真实产物）
   if (!(await storage.exists(`${dir}/${params.sourceFile}`))) {
     throw new ChatServiceError(
-      `缩略图源产物不存在：${params.sourceFile}`,
+      `Thumbnail source output does not exist: ${params.sourceFile}`,
       404,
       "thumbnail_source_missing",
     );
@@ -728,7 +728,7 @@ export async function deleteAsset(
   await requireProject(storage, projectSlug);
   const dir = assetDir(projectSlug, assetSlug);
   if (!(await storage.exists(dir))) {
-    throw new ChatServiceError(`资产「${assetSlug}」不存在`, 404, "asset_not_found");
+    throw new ChatServiceError(`Asset "${assetSlug}" does not exist`, 404, "asset_not_found");
   }
   // 先认身份再删目录：asset.json 一删，稳定 id 就无从得知，场景记录会变成清不掉的垃圾
   const identityPath = assetIdentityFile(projectSlug, assetSlug);
@@ -769,7 +769,7 @@ export async function deleteEntry(
 ): Promise<void> {
   const parsed = LogicalPathSchema.parse(logicalPath);
   if (parsed === LIBRARY_DIRS.projects || parsed === LIBRARY_DIRS.sessions) {
-    throw new ChatServiceError("不允许删除资产库顶层目录", 400, "delete_refused");
+    throw new ChatServiceError("Deleting a top-level asset library directory is not allowed", 400, "delete_refused");
   }
   await storage.remove(parsed);
 }

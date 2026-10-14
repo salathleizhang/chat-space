@@ -79,7 +79,7 @@ export async function runArk3dImageTo3d(
     : await readAsDataUri(storage, imagePath);
   if (!image) {
     throw new ChatServiceError(
-      "火山数美 Hi3D 需要公网图片 URL；请先用 Seedream 生成或编辑参考图",
+      "Volcano Engine Hi3D requires a public image URL; generate or edit a reference image with Seedream first",
       409,
       "hi3d_public_image_required",
     );
@@ -164,7 +164,7 @@ export function startArk3dBatch(
 ) {
   const label = arkProviderLabel(provider);
   return objects.map((object) =>
-    startCustomTask("3d", projectSlug, `3D 生成（火山 ${label}）：${object.name}`, (task) =>
+    startCustomTask("3d", projectSlug, `3D generation (Volcano Engine ${label}): ${object.name}`, (task) =>
       runAndPublishGeneratedModel(
         getAssetStorage(), projectSlug, task.id, object, task.setPhase,
         // 结果带上真实面数与"是不是高模"：生成完那一轮 Agent 才有依据问用户要不要减面

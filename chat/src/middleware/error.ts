@@ -21,7 +21,7 @@ export function errorHandler(err: Error, c: Context) {
   // 而非 500（否则坏 JSON 会落到兜底打印完整堆栈）。
   if (err instanceof SyntaxError) {
     return c.json(
-      { error: { code: "validation_error", message: "请求体不是合法 JSON" } },
+      { error: { code: "validation_error", message: "Request body is not valid JSON" } },
       400,
     );
   }

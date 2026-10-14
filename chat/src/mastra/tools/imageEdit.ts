@@ -76,7 +76,7 @@ export async function runLibraryImageEdit(
   await requireProject(storage, params.projectSlug);
   for (const image of params.images) {
     if (!(await storage.exists(image))) {
-      throw new ChatServiceError(`输入图不存在：${image}`, 404, "input_image_missing");
+      throw new ChatServiceError(`Input image does not exist: ${image}`, 404, "input_image_missing");
     }
   }
 
@@ -127,7 +127,7 @@ export async function runLibraryImageEdit(
     );
     const ref = refs[0];
     if (!ref) {
-      throw new ChatServiceError("图片编辑结果中没有图片", 502, "imageedit_no_images");
+      throw new ChatServiceError("The image edit result contains no image", 502, "imageedit_no_images");
     }
 
     if (ref.url) {
@@ -140,7 +140,7 @@ export async function runLibraryImageEdit(
       );
       sidecar.outputs = [{ path: outputPath }];
     } else {
-      throw new ChatServiceError("图片编辑结果中没有图片", 502, "imageedit_no_images");
+      throw new ChatServiceError("The image edit result contains no image", 502, "imageedit_no_images");
     }
 
     sidecar.status = "succeeded";
@@ -173,7 +173,7 @@ export const PlateInputObjectSchema = z.object({
   channel: z.enum(IMAGE_CHANNELS).optional(),
 });
 export const PlateInputSchema = PlateInputObjectSchema.refine((input) => !(input.objectsToRemove && input.objectSlugs), {
-  message: "objectsToRemove 与 objectSlugs 不能同时使用",
+  message: "objectsToRemove and objectSlugs cannot be used together",
 });
 export type PlateInput = z.input<typeof PlateInputSchema>;
 
@@ -210,7 +210,7 @@ export async function runPlateGeneration(
     : undefined;
   if (!input.objectsToRemove && !analysis) {
     throw new ChatServiceError(
-      `项目「${input.projectSlug}」没有场景分析；独立生成底板时请显式传入 sourceImage 和 objectsToRemove`,
+      `Project "${input.projectSlug}" has no scene analysis; when generating a plate standalone, pass sourceImage and objectsToRemove explicitly`,
       409,
       "plate_objects_missing",
     );
@@ -221,7 +221,7 @@ export async function runPlateGeneration(
     : analysis!.objects);
   if (objects.length === 0) {
     throw new ChatServiceError(
-      "没有可移除的对象（分析对象清单为空或过滤后为空）",
+      "No objects to remove (the analysis object list is empty, or empty after filtering)",
       409,
       "no_objects_to_remove",
     );
@@ -238,7 +238,7 @@ export async function runPlateGeneration(
     }
     if (!resolvedSource) {
       throw new ChatServiceError(
-        `项目「${input.projectSlug}」的 source/ 中没有可用源图`,
+        `There is no usable source image in source/ for project "${input.projectSlug}"`,
         409,
         "source_image_missing",
       );

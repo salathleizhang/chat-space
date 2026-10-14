@@ -9,7 +9,7 @@ import { runTripoTexture } from "./tripoOps";
 export const generateTextureTool = createTool({
   id: "generate-texture",
   description:
-    "为当前项目已有的 3D 模型通过 Tripo v3 /models/texture 重新生成材质贴图，默认使用最新贴图模型 v3.5-20260815。只使用 Tripo，与对话框选中的图片模型无关。textureQuality=fast 更快但细节更少（贴图尺寸与积分同 standard）。调用前须说明 Tripo 付费操作并取得用户同意。任务化返回，用 list-generation-tasks 跟进。",
+    "Regenerate the material texture of an existing 3D model in the current project via Tripo v3 /models/texture, using the latest texture model v3.5-20260815 by default. It only uses Tripo and is unrelated to the image model selected in the chat. textureQuality=fast is faster but has fewer details (same texture size and credit cost as standard). Before calling, explain the Tripo paid operation and obtain the user's consent. Returns a task; follow up with list-generation-tasks.",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     stylePrompt: z.string().min(1).max(600),
@@ -24,12 +24,12 @@ export const generateTextureTool = createTool({
     const tripoKey = requireContextString(
       context,
       "tripo3dApiKey",
-      "本机 chat/.env 未配置 TRIPO_KEY",
+      "TRIPO_KEY is not configured in the local chat/.env",
     );
     const task = startCustomTask(
       "texture",
       projectSlug,
-      `贴图生成（Tripo）：${input.assetSlug}`,
+      `Texture generation (Tripo): ${input.assetSlug}`,
       (task) => runTripoTexture(
         getAssetStorage(),
         {

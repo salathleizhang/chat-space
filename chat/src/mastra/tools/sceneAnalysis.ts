@@ -55,7 +55,7 @@ async function buildCurrentSceneSnapshot(
 
   if (models.length === 0) {
     throw new ChatServiceError(
-      "当前 3D 场景里没有可分析的模型资产",
+      "The current 3D scene has no model assets to analyze",
       409,
       "scene_empty",
     );
@@ -123,7 +123,7 @@ export async function runAnalyzeCurrentScene(
 export const analyzeSceneTool = createTool({
   id: "analyze-scene",
   description:
-    "分析当前 3D 工作台场景（免费）：读取已有模型资产的缩略图、实际有效坐标、旋转、缩放、可测量包围盒以及当前天空盒/World，回答场景里有什么、空间关系、布局问题和改进建议。它不读取用户上传的照片；图片内容由你直接看，只有当前 3D 场景问题才调用本工具。",
+    "Analyze the current 3D workbench scene (free): reads the thumbnails, actual effective coordinates, rotation, scale, measurable bounding boxes of the existing model assets plus the current skybox/world, and answers what is in the scene, the spatial relationships, layout problems, and improvement suggestions. It does not read photos uploaded by the user; you look at image content directly — call this tool only for questions about the current 3D scene.",
   inputSchema: z.object({
     instructions: z.string().optional(),
   }),
@@ -131,7 +131,7 @@ export const analyzeSceneTool = createTool({
     const llm = optionalContextLlm(context);
     if (!llm) {
       throw new ChatServiceError(
-        "缺少 LLM API key（当前场景分析需要多模态 LLM）",
+        "Missing LLM API key (current-scene analysis requires a multimodal LLM)",
         401,
         "missing_llm_key",
       );

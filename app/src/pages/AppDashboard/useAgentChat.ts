@@ -1051,7 +1051,7 @@ export function useAgentChat({
             ? ["Look at them and check them against what the user asked for."]
             : ["The batch is too large to attach here — the user sees all of them in the conversation; ask about the batch as a whole."]),
           "This turn exists to get the user's decision: if the next step needs their go-ahead (paid 3D generation, choosing between designs, confirming an object), call ask-user and stop.",
-          'Never ask the user to reply with text to continue — no "回复继续", no prose question they have to answer by typing.',
+          'Never ask the user to reply with text to continue — no "reply to continue", no prose question they have to answer by typing.',
           "If nothing needs their decision, say briefly what landed and finish; do not call any paid tool in this turn.",
         ].join(" "),
         ...(images.length > 0 ? { images } : {}),
@@ -1167,7 +1167,7 @@ export function useAgentChat({
           `Next up: ${next.id} — ${next.content}.`,
           "Keep executing the plan automatically, step by step, without asking the user to confirm routine progress; record each finished step with update-plan before you end this turn.",
           "If a decision only the user can make is needed (a paid action, choosing between options, confirming an object), call ask-user and stop.",
-          'Never end this turn by asking the user in prose to reply to continue — no "回复继续", no "告诉我…". A question they must answer goes on an ask-user card.',
+          'Never end this turn by asking the user in prose to reply to continue — no "reply to continue", no "tell me…". A question they must answer goes on an ask-user card.',
         ].join(" "),
       },
       autoTurn: {

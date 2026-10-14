@@ -41,10 +41,10 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
         } else if (retry.provider === "seed3d-direct") {
           const { startSeed3d3dBatch } = await import("../mastra/tools/seed3dOps");
           startSeed3d3dBatch(projectSlug, [object], { ...options, seed3dApiKey: keys.seed3dApiKey ?? "" });
-        } else throw new Error("云端任务的 3D 供应商不受支持");
+        } else throw new Error("Unsupported 3D provider for the cloud task");
       }
     } finally { cloud.capture = undefined; }
-    if (!capture.executor) throw new Error("无法恢复云端执行函数");
+    if (!capture.executor) throw new Error("Cannot restore the cloud executor");
     return capture.executor(execution);
   }
   const assetSlug = String(input.assetSlug);
@@ -64,5 +64,5 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
     const { runHunyuanUvUnwrap } = await import("../mastra/tools/hunyuanOps");
     return runHunyuanUvUnwrap(storage, { projectSlug, assetSlug }, { apiKey: keys.hunyuanApiKey ?? "" });
   }
-  throw new Error(`不支持的云端任务：${job.operation}`);
+  throw new Error(`Unsupported cloud task: ${job.operation}`);
 }

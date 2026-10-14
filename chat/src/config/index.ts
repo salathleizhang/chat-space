@@ -142,6 +142,7 @@ export const config = {
    */
   blender: {
     enabled: process.env.VERCEL !== "1" && env.BLENDER_ENABLED === true,
+    cloudService: false,
     host: env.BLENDER_HOST ?? "127.0.0.1",
     port: env.BLENDER_PORT ?? 9876,
     bin: env.BLENDER_MCP_BIN ?? "uvx",

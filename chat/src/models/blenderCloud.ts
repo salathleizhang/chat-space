@@ -1,7 +1,6 @@
 import { ChatServiceError } from "../common/errors";
-import { withHardTimeout } from "../common/http";
-import { onTaskPumpTick } from "../common/taskPump";
-import { BLENDER_ALLOWED_TOOLS, wrapResult, type BlenderCallResult } from "./blenderMcp";
+import { BLENDER_ALLOWED_TOOLS, wrapResult } from "./blenderProtocol";
+import type { BlenderCallResult } from "./blenderMcp";
 
 export interface BlenderCloudSettings {
   target: string;
@@ -18,11 +17,11 @@ export function readBlenderCloudSettings(env = process.env): BlenderCloudSetting
     token: env.BLENDER_CONTROL_TOKEN ?? "", projectSlug: env.BLENDER_CLOUD_PROJECT ?? "" };
   let url: URL;
   try { url = new URL(settings.target); }
-  catch { throw new ChatServiceError("云端 Blender 配置不完整或无效；不会回退到本机", 503, "blender_cloud_config_invalid"); }
+  catch { throw new ChatServiceError("The cloud Blender configuration is incomplete or invalid; this will not fall back to the local machine", 503, "blender_cloud_config_invalid"); }
   if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash ||
       !/^[A-Za-z0-9_-]{32,128}$/.test(settings.token) ||
       !/^[A-Za-z0-9_-]{1,200}$/.test(settings.instanceName) || !/^[a-z0-9][a-z0-9_-]*$/.test(settings.projectSlug)) {
-    throw new ChatServiceError("云端 Blender 配置不完整或无效；不会回退到本机", 503, "blender_cloud_config_invalid");
+    throw new ChatServiceError("The cloud Blender configuration is incomplete or invalid; this will not fall back to the local machine", 503, "blender_cloud_config_invalid");
   }
   return settings;
 }
@@ -30,30 +29,16 @@ export function readBlenderCloudSettings(env = process.env): BlenderCloudSetting
 export function assertBlenderProject(projectSlug: string): void {
   const cloud = readBlenderCloudSettings();
   if (cloud && cloud.projectSlug !== projectSlug) {
-    throw new ChatServiceError("这个云端 Blender 已分配给另一个工程，请先结束该工程的会话", 409, "blender_project_mismatch");
+    throw new ChatServiceError("This cloud Blender is already assigned to another project; end that project's session first", 409, "blender_project_mismatch");
   }
 }
 
-/** A budget covers headers AND body; an external task tick still cancels it when timers stop. */
-export async function cloudBudget<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
-  const controller = new AbortController();
-  const deadline = Date.now() + timeoutMs;
-  const error = () => new ChatServiceError("云端 Blender 请求超时，执行结果未知；先检查场景再决定是否重试", 504, "blender_cloud_timeout");
-  let rejectTick!: (error: Error) => void;
-  const expired = new Promise<never>((_, reject) => { rejectTick = reject; });
-  const expire = () => { controller.abort(); const e = error(); rejectTick(e); return e; };
-  const unsubscribe = onTaskPumpTick(() => { if (Date.now() >= deadline) expire(); });
-  try {
-    return await withHardTimeout(Promise.race([work(controller.signal), expired]), timeoutMs, expire);
-  } finally {
-    unsubscribe();
-    controller.abort();
-  }
-}
+export { cloudBudget } from "./cloudBudget";
+import { cloudBudget } from "./cloudBudget";
 
 async function boundedBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
   const advertised = Number(response.headers.get("content-length"));
-  if (advertised > maxBytes) throw new ChatServiceError("云端文件超过传输上限", 413, "blender_cloud_file_too_large");
+  if (advertised > maxBytes) throw new ChatServiceError("The cloud file exceeds the transfer limit", 413, "blender_cloud_file_too_large");
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -63,7 +48,7 @@ async function boundedBytes(response: Response, maxBytes: number): Promise<Uint8
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > maxBytes) throw new ChatServiceError("云端文件超过传输上限", 413, "blender_cloud_file_too_large");
+      if (size > maxBytes) throw new ChatServiceError("The cloud file exceeds the transfer limit", 413, "blender_cloud_file_too_large");
       chunks.push(value);
     }
   } finally {
@@ -90,7 +75,7 @@ export class BlenderCloudClient {
       if (!response.ok) {
         await response.body?.cancel();
         // No upstream body, token, code or headers in errors/diagnostics.
-        throw new ChatServiceError(`云端 Blender 返回 HTTP ${response.status}；不会改连本机或自动重放命令`,
+        throw new ChatServiceError(`The cloud Blender returned HTTP ${response.status}; it will not reconnect locally or replay the command automatically`,
           response.status === 401 ? 503 : response.status, "blender_cloud_request_failed");
       }
       return boundedBytes(response, maxBytes);
@@ -98,14 +83,14 @@ export class BlenderCloudClient {
   }
   async call(tool: string, args: Record<string, unknown> = {}, options: { timeoutMs?: number } = {}): Promise<BlenderCallResult> {
     if (!(BLENDER_ALLOWED_TOOLS as readonly string[]).includes(tool)) {
-      throw new ChatServiceError("Blender 工具不在白名单内", 403, "blender_tool_not_allowed");
+      throw new ChatServiceError("The Blender tool is not on the allowlist", 403, "blender_tool_not_allowed");
     }
     const run = async () => {
       const started = Date.now();
       const bytes = await this.request("/control/call", { method: "POST", body: JSON.stringify({ tool, arguments: args }) },
         options.timeoutMs ?? 185_000, 16 * 1024 * 1024);
       const wrapped = wrapResult(tool, JSON.parse(new TextDecoder().decode(bytes)));
-      if (wrapped.isError) throw new ChatServiceError("云端 Blender 工具执行失败，请检查场景", 502, "blender_tool_error");
+      if (wrapped.isError) throw new ChatServiceError("The cloud Blender tool failed to execute; check the scene", 502, "blender_tool_error");
       return { tool, ...wrapped, ms: Date.now() - started };
     };
     const pending = this.tail.then(run, run);

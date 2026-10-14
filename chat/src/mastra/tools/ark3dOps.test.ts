@@ -170,7 +170,7 @@ test("轮询失败报自己渠道的名字，不再串台成 Seed3D", async () =
       storage, "hyper3d-volc", "ark-models", "robot-label", source,
       { apiKey: "test-volc", fetchFn, pollIntervalMs: 1 },
     ),
-  ).rejects.toThrow("Hyper3D 任务查询 请求失败（500）");
+  ).rejects.toThrow("Hyper3D task poll request failed (500)");
 });
 
 test("提交失败同样用渠道自己的名字", async () => {
@@ -181,7 +181,7 @@ test("提交失败同样用渠道自己的名字", async () => {
       storage, "hyper3d-volc", "ark-models", "robot-submit", source,
       { apiKey: "test-volc", fetchFn, pollIntervalMs: 1 },
     ),
-  ).rejects.toThrow("Hyper3D 任务提交失败（500）");
+  ).rejects.toThrow("Hyper3D task submit failed (500)");
 });
 
 test("批量生成：轮询期间任务记录持续刷新，长任务不会被 60 分钟看门狗误杀", async () => {

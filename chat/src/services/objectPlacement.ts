@@ -101,7 +101,7 @@ export async function placeObjects(
   items: readonly ObjectPlacementItem[],
 ): Promise<ObjectPlacementReport> {
   if (items.length === 0) {
-    throw new ChatServiceError("至少要指定一个要摆放的对象", 400, "no_placement_items");
+    throw new ChatServiceError("At least one object to place must be specified", 400, "no_placement_items");
   }
   for (const item of items) assertPlaceableItem(item);
 
@@ -299,26 +299,26 @@ function resolveScale(item: ObjectPlacementItem, bounds: ModelBounds): number {
 function assertPlaceableItem(item: ObjectPlacementItem): void {
   const fail = (message: string) => {
     throw new ChatServiceError(
-      `对象「${item.slug}」的摆放参数无效：${message}`,
+      `Invalid placement parameters for object "${item.slug}": ${message}`,
       400,
       "invalid_placement_item",
     );
   };
-  if (item.position && item.onSurfaceOf) fail("position 与 onSurfaceOf 只能给一个");
-  if (!item.position && !item.onSurfaceOf) fail("必须给 position 或 onSurfaceOf");
+  if (item.position && item.onSurfaceOf) fail("position and onSurfaceOf are mutually exclusive");
+  if (!item.position && !item.onSurfaceOf) fail("either position or onSurfaceOf is required");
   if (item.heightMeters !== undefined && item.scale !== undefined) {
-    fail("heightMeters 与 scale 只能给一个");
+    fail("heightMeters and scale are mutually exclusive");
   }
-  if (item.rotation && item.yawDegrees !== undefined) fail("rotation 与 yawDegrees 只能给一个");
-  if (item.heightMeters !== undefined && !(item.heightMeters > 0)) fail("heightMeters 必须为正");
-  if (item.scale !== undefined && !(item.scale > 0)) fail("scale 必须为正");
+  if (item.rotation && item.yawDegrees !== undefined) fail("rotation and yawDegrees are mutually exclusive");
+  if (item.heightMeters !== undefined && !(item.heightMeters > 0)) fail("heightMeters must be positive");
+  if (item.scale !== undefined && !(item.scale > 0)) fail("scale must be positive");
   for (const [label, value] of [
     ["position", item.position],
     ["rotation", item.rotation],
     ["offset", item.onSurfaceOf?.offset],
   ] as const) {
     if (value && !value.every((component) => Number.isFinite(component))) {
-      fail(`${label} 必须是三个有限数字`);
+      fail(`${label} must be three finite numbers`);
     }
   }
 }

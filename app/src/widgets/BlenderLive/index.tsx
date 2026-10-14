@@ -60,13 +60,13 @@ export function BlenderLiveWindow({ projectSlug, onClose, title = "Blender", sta
       fetch("/blender-live/connection", { signal: controller.signal }),
       chatFetch("/api/blender/connection", { signal: controller.signal }),
     ]).then(async ([desktopResponse, toolResponse]) => {
-      if (!desktopResponse.ok || !toolResponse.ok) throw new Error("会话服务暂时不可用。");
+      if (!desktopResponse.ok || !toolResponse.ok) throw new Error("The session service is temporarily unavailable.");
       const [desktop, tools] = await Promise.all([desktopResponse.json(), toolResponse.json()]) as [DesktopConnection, ToolConnection];
-      if (!["local", "cloud"].includes(desktop.transport) || !["local", "cloud"].includes(tools.transport)) throw new Error("Blender 会话配置尚未完成。");
-      if (!controller.signal.aborted) setConnection({ label: desktop.transport === "cloud" ? "云端 Blender" : "本机 Blender",
+      if (!["local", "cloud"].includes(desktop.transport) || !["local", "cloud"].includes(tools.transport)) throw new Error("Blender session configuration is not complete yet.");
+      if (!controller.signal.aborted) setConnection({ label: desktop.transport === "cloud" ? "Cloud Blender" : "Local Blender",
         problem: connectionProblem(desktop, tools, projectSlug) });
     }).catch(() => {
-      if (!controller.signal.aborted) setConnection({ label: "Blender", problem: "无法确认 Blender 会话，请检查连接配置后重新打开。" });
+      if (!controller.signal.aborted) setConnection({ label: "Blender", problem: "Cannot confirm the Blender session; check the connection configuration and reopen." });
     });
     return () => controller.abort();
   }, [projectSlug]);
@@ -183,7 +183,7 @@ export function BlenderLiveWindow({ projectSlug, onClose, title = "Blender", sta
           </div>
         ) : !loaded && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-white/70">
-            正在连接 Blender…
+            Connecting to Blender…
           </div>
         )}
         <Button

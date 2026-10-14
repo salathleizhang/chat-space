@@ -108,19 +108,19 @@ export async function uploadTripoFile(
       body: form,
     },
     UPLOAD_REQUEST_TIMEOUT_MS,
-    "Tripo 上传",
+    "Tripo upload",
   );
   const payload = await jsonOrEmpty(response);
   if (!response.ok) {
     throw new ChatServiceError(
-      `Tripo 上传失败（${response.status}）：${JSON.stringify(payload).slice(0, 300)}`,
+      `Tripo upload failed (${response.status}): ${JSON.stringify(payload).slice(0, 300)}`,
       502,
       "tripo_upload_failed",
     );
   }
   const token = dataOf(payload).file_token ?? dataOf(payload).image_token;
   if (typeof token !== "string" || !token) {
-    throw new ChatServiceError("Tripo 上传响应缺少 file_token", 502, "tripo_upload_failed");
+    throw new ChatServiceError("Tripo upload response is missing file_token", 502, "tripo_upload_failed");
   }
   return token;
 }
@@ -160,7 +160,7 @@ export function tripoMultiviewToModelRequest(
   );
   if (!inputs.front || payloadInputs.length < 2) {
     throw new ChatServiceError(
-      "Tripo 多视角生成至少需要 front 和另一个视角",
+      "Tripo multi-view generation needs at least front and one other view",
       400,
       "tripo_multiview_invalid",
     );
@@ -268,7 +268,7 @@ function tripoRateLimitError(
   }
   return new TripoRateLimitError(
     // 文案保持与旧实现一致的形状，失败原因仍然一眼可见
-    `Tripo 提交失败（${path} ${response.status}）：${JSON.stringify(payload).slice(0, 300)}`,
+    `Tripo submit failed (${path} ${response.status}): ${JSON.stringify(payload).slice(0, 300)}`,
     concurrency ? "concurrency" : "rate",
     retryAfterMsFrom(response.headers),
   );
@@ -293,21 +293,21 @@ async function createTripoV3Task(
       body: JSON.stringify(body),
     },
     API_REQUEST_TIMEOUT_MS,
-    `Tripo 提交 ${path}`,
+    `Tripo submit ${path}`,
   );
   const payload = await jsonOrEmpty(response);
   if (!response.ok) {
     const limited = tripoRateLimitError(path, response, payload);
     if (limited) throw limited;
     throw new ChatServiceError(
-      `Tripo 提交失败（${path} ${response.status}）：${JSON.stringify(payload).slice(0, 300)}`,
+      `Tripo submit failed (${path} ${response.status}): ${JSON.stringify(payload).slice(0, 300)}`,
       502,
       "tripo_submit_failed",
     );
   }
   const taskId = dataOf(payload).task_id;
   if (typeof taskId !== "string" || !taskId) {
-    throw new ChatServiceError("Tripo 提交响应缺少 task_id", 502, "tripo_submit_failed");
+    throw new ChatServiceError("Tripo submit response is missing task_id", 502, "tripo_submit_failed");
   }
   return taskId;
 }
@@ -436,11 +436,11 @@ export async function sigV4PutObject(
       body: new Uint8Array(bytes),
     },
     UPLOAD_REQUEST_TIMEOUT_MS,
-    "Tripo S3 直传",
+    "Tripo S3 direct upload",
   );
   if (!response.ok) {
     throw new ChatServiceError(
-      `Tripo S3 直传失败（${response.status}）：${(await response.text()).slice(0, 300)}`,
+      `Tripo S3 direct upload failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
       502,
       "tripo_upload_failed",
     );
@@ -463,12 +463,12 @@ export async function uploadTripoModelViaSts(
       body: JSON.stringify({ format }),
     },
     API_REQUEST_TIMEOUT_MS,
-    "Tripo STS 换发",
+    "Tripo STS issue",
   );
   const payload = await jsonOrEmpty(response);
   if (!response.ok) {
     throw new ChatServiceError(
-      `Tripo STS 换发失败（${response.status}）：${JSON.stringify(payload).slice(0, 300)}`,
+      `Tripo STS issue failed (${response.status}): ${JSON.stringify(payload).slice(0, 300)}`,
       502,
       "tripo_upload_failed",
     );
@@ -477,7 +477,7 @@ export async function uploadTripoModelViaSts(
   const required = ["s3_host", "sts_ak", "sts_sk", "session_token", "resource_bucket", "resource_uri"];
   for (const field of required) {
     if (typeof data[field] !== "string" || !data[field]) {
-      throw new ChatServiceError(`Tripo STS 响应缺少 ${field}`, 502, "tripo_upload_failed");
+      throw new ChatServiceError(`Tripo STS response is missing ${field}`, 502, "tripo_upload_failed");
     }
   }
   await sigV4PutObject(
@@ -494,7 +494,7 @@ export async function uploadTripoModelViaSts(
   );
   const fileToken = data.file_token;
   if (typeof fileToken !== "string" || !fileToken) {
-    throw new ChatServiceError("Tripo STS 响应缺少 file_token", 502, "tripo_upload_failed");
+    throw new ChatServiceError("Tripo STS response is missing file_token", 502, "tripo_upload_failed");
   }
   return fileToken;
 }
@@ -513,10 +513,10 @@ export async function waitForTripoTask(
   options: TripoCallOptions,
 ): Promise<Record<string, unknown>> {
   const fetchFn = options.fetchFn ?? fetch;
-  const label = "Tripo 任务查询";
+  const label = "Tripo task query";
   const timeoutError = () =>
     new ChatServiceError(
-      `Tripo 任务超时（task_id=${taskId}，可凭侧写续查）`,
+      `Tripo task timed out (task_id=${taskId}; you can keep polling from the sidecar)`,
       504,
       "tripo_timeout",
     );
@@ -545,7 +545,7 @@ export async function waitForTripoTask(
     isDone: (result) => result.status === "success",
     failureOf: (result) =>
       TERMINAL_FAILURES.has(result.status)
-        ? new ChatServiceError(`Tripo 任务失败：${result.status}`, 502, "tripo_task_failed")
+        ? new ChatServiceError(`Tripo task failed: ${result.status}`, 502, "tripo_task_failed")
         : undefined,
   });
 

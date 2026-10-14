@@ -21,7 +21,7 @@ export const GenerateCleanPlateInputSchema = z.object({
   model: z.enum(IMAGE_EDIT_MODEL_IDS).optional(),
   channel: z.enum(IMAGE_CHANNELS).optional(),
 }).refine((input) => !(input.objectsToRemove && input.objectSlugs), {
-  message: "objectsToRemove 与 objectSlugs 不能同时使用",
+  message: "objectsToRemove and objectSlugs cannot be used together",
 });
 
 /**
@@ -31,7 +31,7 @@ export const GenerateCleanPlateInputSchema = z.object({
 export const generateCleanPlateTool = createTool({
   id: "generate-clean-plate",
   description:
-    "从一张场景图中移除指定家具/物体并修复被遮挡的背景，生成干净底板（付费操作，需用户同意）。可显式传 sourceImage + objectsToRemove 独立调用；省略时可兼容使用已确认场景对象。只生成底板，不会自动生成 World 或 3D 模型。",
+    "Remove the specified furniture/objects from a scene image and repair the occluded background to produce a clean plate (paid operation, requires user consent). It can be called standalone with an explicit sourceImage + objectsToRemove; when omitted, it can compatibly use the confirmed scene objects. It only generates the plate and does not automatically generate a World or a 3D model.",
   inputSchema: GenerateCleanPlateInputSchema,
   execute: async (input, context) => {
     const result = await runPlateGeneration(

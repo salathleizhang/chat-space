@@ -105,12 +105,12 @@ describe("migrateSceneLayout", () => {
         },
         ids({}),
       ),
-    ).toThrow(/高于当前支持的/);
+    ).toThrow(/higher than the supported/);
   });
 
   test("不是场景文档时按契约报错", () => {
-    expect(() => migrateSceneLayout({ nope: true }, ids({}))).toThrow(/不符合契约/);
-    expect(() => migrateSceneLayout(null, ids({}))).toThrow(/不符合契约/);
+    expect(() => migrateSceneLayout({ nope: true }, ids({}))).toThrow(/does not match the contract/);
+    expect(() => migrateSceneLayout(null, ids({}))).toThrow(/does not match the contract/);
   });
 
   test("旧文件里残留的无关键被丢掉", () => {

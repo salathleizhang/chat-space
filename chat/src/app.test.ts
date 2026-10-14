@@ -8,7 +8,7 @@ test("拒绝未授权网页读取本机项目", async () => {
 
   expect(response.status).toBe(403);
   expect(await response.json()).toEqual({
-    error: { message: "不允许此网页访问本机 ChatSpace 服务" },
+    error: { message: "This web page is not allowed to access the local ChatSpace service" },
   });
   expect(response.headers.get("access-control-allow-origin")).toBeNull();
 });

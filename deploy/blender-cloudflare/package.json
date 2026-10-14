@@ -1,0 +1,16 @@
+{
+  "name": "blender-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "types": "wrangler types --include-runtime=false worker-configuration.d.ts",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@volcengine/tos-sdk": "2.9.1",
+    "zod": "^4.4.3"
+  }
+}

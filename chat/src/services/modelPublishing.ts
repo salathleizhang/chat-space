@@ -63,7 +63,7 @@ class StagedAssetStorage implements AssetStorage {
   }
   remove(path: string) { return this.base.remove(this.map(path)); }
   move(sourcePath: string, targetPath: string) {
-    if (!this.base.move) throw new Error("当前存储不支持原子发布");
+    if (!this.base.move) throw new Error("The current storage does not support atomic publishing");
     return this.base.move(this.map(sourcePath), this.map(targetPath));
   }
 }
@@ -90,14 +90,14 @@ export async function publishGeneratedModel(
   const models = renderablePathsFromResult(result);
   if (models.length === 0) {
     throw new ChatServiceError(
-      `生成结果没有可被当前视口加载的模型：${object.slug}`,
+      `The generation result has no model the current viewport can load: ${object.slug}`,
       502,
       "renderable_model_missing",
     );
   }
   for (const path of models) {
     if (!(await storage.exists(path))) {
-      throw new ChatServiceError(`生成产物尚未落盘：${path}`, 500, "model_not_landed");
+      throw new ChatServiceError(`The generated artifact has not been written to disk yet: ${path}`, 500, "model_not_landed");
     }
   }
 
@@ -143,7 +143,7 @@ export async function runAndPublishGeneratedModel(
   await publishGeneratedModel(target, projectSlug, object, result);
   if (!alreadyPublished) {
     if (!storage.move) {
-      throw new ChatServiceError("当前存储不支持原子发布资产", 500, "atomic_publish_unsupported");
+      throw new ChatServiceError("The current storage does not support atomic asset publishing", 500, "atomic_publish_unsupported");
     }
     await setPhase("publishing");
     await storage.move(workDir, finalDir);

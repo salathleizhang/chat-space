@@ -379,20 +379,20 @@ describe("planContextText", () => {
   };
 
   test("把当前标题交给模型，普通更新才不必靠撞 409 才知道标题不可改", () => {
-    expect(planContextText(plan)).toContain("「三只动物换绿色服装」");
+    expect(planContextText(plan)).toContain('"三只动物换绿色服装"');
   });
 
   test("写明只推进度，并保留步骤 id、状态与内容", () => {
     const text = planContextText(plan);
-    expect(text).toContain("只传已有步骤 id 与新 status");
-    expect(text).toContain("计划标题、步骤 id 和步骤内容都保持不变");
+    expect(text).toContain("pass only the existing step ids and the new status");
+    expect(text).toContain("the plan title, step ids and step content all stay unchanged");
     expect(text).toContain("mode=replan");
     expect(text).toContain("- [completed] s1: 取得付费同意");
     expect(text).toContain("- [in_progress] s2: 编辑参考图");
   });
 
   test("无标题的旧计划也有可读的占位", () => {
-    expect(planContextText({ ...plan, title: undefined })).toContain("（无标题）");
+    expect(planContextText({ ...plan, title: undefined })).toContain("(untitled)");
   });
 });
 
@@ -405,7 +405,7 @@ describe("answerContextText", () => {
         optionIds: ["approve"],
         labels: ["同意"],
       }),
-    ).toBe("【对提问的回答】问题：「是否继续？」（q-1）\n用户选择：同意");
+    ).toBe('[Answer to question] Question: "是否继续？" (q-1)\nUser selection: 同意');
   });
 
   test("自由输入与预设选项同时出现时都保留", () => {
@@ -416,8 +416,8 @@ describe("answerContextText", () => {
       labels: ["休闲椅"],
       text: "再加一个茶几",
     });
-    expect(text).toContain("用户选择：休闲椅");
-    expect(text).toContain("用户补充：再加一个茶几");
+    expect(text).toContain("User selection: 休闲椅");
+    expect(text).toContain("User note: 再加一个茶几");
   });
 
   test("只有自由输入时不留空的选项行", () => {
@@ -428,8 +428,8 @@ describe("answerContextText", () => {
       labels: [],
       text: "先只做底板",
     });
-    expect(text).toContain("用户选择：（未选择预设选项）");
-    expect(text).toContain("用户补充：先只做底板");
+    expect(text).toContain("User selection: (no preset option selected)");
+    expect(text).toContain("User note: 先只做底板");
   });
 
   test("回答接成本轮上下文：借 user 角色，但工作台不把它写进会话历史", () => {
@@ -442,7 +442,7 @@ describe("answerContextText", () => {
       }),
     ).toEqual({
       role: "user",
-      content: "【对提问的回答】问题：「是否继续？」（q-4）\n用户选择：同意",
+      content: '[Answer to question] Question: "是否继续？" (q-4)\nUser selection: 同意',
     });
   });
 });
@@ -630,6 +630,8 @@ describe("streamChat 的回复语言接线", () => {
       payload.includes("The user is writing in English"),
       "报文里没有服务端判定的回复语言指令",
     ).toBe(true);
-    expect(payload.includes("Do not switch to Chinese")).toBe(true);
+    expect(
+      payload.includes("Do not switch to another language just because the internal project context"),
+    ).toBe(true);
   });
 });

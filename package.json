@@ -4,14 +4,19 @@
   "private": true,
   "workspaces": [
     "app",
-    "chat"
+    "chat",
+    "deploy/blender-cloudflare"
   ],
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.0",
+    "@cloudflare/workers-types": "^5.20261011.1",
     "@types/bun": "^1.4.2",
     "@types/node": "^26.1.0",
     "bun-types": "^1.4.2",
     "typescript": "^5.9.3",
-    "undici-types": "~8.3.0"
+    "undici-types": "~8.3.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.149.0"
   },
   "overrides": {
     "three": "0.186.1",

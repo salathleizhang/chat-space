@@ -41,7 +41,7 @@ async function glbToEmbeddedGltf(glbBytes: Uint8Array): Promise<Uint8Array> {
   const { json, resources } = await io.writeJSON(document);
   return embedGltfResources(json, async (uri) => {
     const bytes = resources[uri];
-    if (!bytes) throw new ChatServiceError(`导出缺少资源：${uri}`, 422, "export_resource_missing");
+    if (!bytes) throw new ChatServiceError(`Export is missing a resource: ${uri}`, 422, "export_resource_missing");
     return bytes;
   });
 }
@@ -76,10 +76,10 @@ async function embedLocalGltf(storage: AssetStorage, sourcePath: string): Promis
     const path = posix.normalize(`${dir}${relative}`);
     // 外部依赖只能从当前模型目录经存储层读取；导出不访问网络或任意磁盘文件。
     if (/^[a-z][a-z\d+.-]*:|^\//i.test(relative) || relative.includes("\\") || !path.startsWith(dir)) {
-      throw new ChatServiceError(`模型资源必须位于资产目录内：${uri}`, 400, "invalid_model_resource");
+      throw new ChatServiceError(`Model resources must live inside the asset directory: ${uri}`, 400, "invalid_model_resource");
     }
     if (!(await storage.exists(path))) {
-      throw new ChatServiceError(`导出缺少资源：${uri}`, 422, "export_resource_missing");
+      throw new ChatServiceError(`Export is missing a resource: ${uri}`, 422, "export_resource_missing");
     }
     return storage.readBytes(path);
   });
@@ -132,7 +132,7 @@ export async function convertModel(
   }
   if (sourceExt !== "glb") {
     throw new ChatServiceError(
-      `仅支持 glb 源资产转换导出，当前资产格式为 ${sourceExt || "未知"}`,
+      `Only glb source assets can be converted for export; the current asset format is ${sourceExt || "unknown"}`,
       400,
       "unsupported_conversion_source",
     );

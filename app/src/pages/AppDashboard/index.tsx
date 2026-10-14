@@ -1,5 +1,4 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react/ArrowLeft";
-import { CubeIcon } from "@phosphor-icons/react/Cube";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -53,6 +52,7 @@ const BlenderLiveWindow = lazy(() =>
     default: module.BlenderLiveWindow,
   })),
 );
+const BlenderCloudWindow = lazy(() => import("../../widgets/BlenderLive/CloudWindow").then(module => ({ default: module.BlenderCloudWindow })));
 
 /**
  * `/app/:projectSlug` — 单项目工作台。布局是全屏 Viewport 画布 + 悬浮面板
@@ -87,6 +87,7 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
    * 预览，而是一个独立的、可以和工作台其它面板同时开着的窗。放在这里只是因为组合根在这。
    */
   const [blenderLive, setBlenderLive] = useState(false);
+  const [blenderOpenRequest, setBlenderOpenRequest] = useState(0);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   /**
    * 选中的资产集合，**由模型列表与 3D 视口共用**：在场景里点中的模型，列表同一行
@@ -490,18 +491,19 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           </h1>
           {/* 文案随状态变，与 ViewportChrome 那套工具栏按钮同一约定（探针也按 aria-label 找）。 */}
           <Tooltip
-            content={blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+            content={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "Show all Blender windows" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
             side="bottom"
           >
             <Button
-              variant={blenderLive ? "primary" : "ghost"}
+              variant={import.meta.env.VITE_BROWSER_LOCAL !== "1" && blenderLive ? "primary" : "ghost"}
               shape="square"
               size="sm"
-              icon={CubeIcon}
-              aria-label={blenderLive ? "Hide Blender live view" : "Show Blender live view"}
-              aria-pressed={blenderLive}
-              onClick={() => setBlenderLive((value) => !value)}
-            />
+              aria-label={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "Show all Blender windows" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+              aria-pressed={import.meta.env.VITE_BROWSER_LOCAL === "1" ? undefined : blenderLive}
+              onClick={() => { if (import.meta.env.VITE_BROWSER_LOCAL === "1") setBlenderOpenRequest(value => value + 1); else setBlenderLive(value => !value); }}
+            >
+              <img src="/brand/blender.svg" width={20} height={20} alt="" aria-hidden="true" data-blender-logo="" />
+            </Button>
           </Tooltip>
         </Panel>
       </div>
@@ -580,7 +582,10 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           </Suspense>
         </div>
       )}
-      {blenderLive && (
+      {import.meta.env.VITE_BROWSER_LOCAL === "1" && blenderOpenRequest > 0 && <Suspense fallback={null}>
+        <BlenderCloudWindow key={projectSlug} projectSlug={projectSlug} openRequest={blenderOpenRequest} />
+      </Suspense>}
+      {import.meta.env.VITE_BROWSER_LOCAL !== "1" && blenderLive && (
         /*
           Blender 实时画面。**位置是挑过的**：四个角分别被 Inspector / ModelPreviewWindow（右上）、
           ModelList（左上）、Sidebar（左下）、Viewport 工具栏（右下 bottom-4 right-4）占着，

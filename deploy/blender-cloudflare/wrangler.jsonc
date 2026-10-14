@@ -1,0 +1,35 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "chatspace-blender",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [{ "pattern": "blender.junwei.cool", "custom_domain": true }],
+  "secrets": { "required": ["BLENDER_SERVICE_SECRET", "VOLC_ACCESSKEY", "VOLC_SECRETKEY", "TOS_ACCESS_KEY", "TOS_SECRET_KEY", "VOLC_KEY"] },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1, "redact_query_string": true, "logs": { "invocation_logs": false } },
+  "durable_objects": { "bindings": [
+    { "name": "BLENDER_POOLS", "class_name": "BlenderPool" },
+    { "name": "BLENDER_DESKTOPS", "class_name": "BlenderDesktop" }
+  ] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BlenderPool", "BlenderDesktop"] }],
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "BLENDER_POOL": "cn-beijing-trial-v1",
+    "BLENDER_AGENT_MODEL": "glm-5-3-flash-260828",
+    "BLENDER_PAUSE_ENABLED": "1",
+    "BLENDER_SERVICE_BUILD": "sha256:1485b04a2886e05e7b364357df56c14d2991f87f39bd6a6bc44fb8cd1db39443",
+    "BLENDER_LIVE_TARGET": "https://saobidloj9b5hmpajmjko.apigateway-cn-beijing.volceapi.com/",
+    "BLENDER_FUNCTION_ID": "201j2k8z",
+    "BLENDER_IMAGE_INFO_ID": "1e1bj472zl",
+    "VOLC_REGION": "cn-beijing",
+    "BLENDER_TOS_BUCKET": "chatspace-blender-cn-beijing-20261011",
+    "BLENDER_TOS_ENDPOINT": "tos-cn-beijing.volces.com",
+    "BLENDER_DAILY_OWNER_MINUTES": "600",
+    "BLENDER_DAILY_GLOBAL_MINUTES": "6000",
+    "BLENDER_DAILY_OWNER_MODEL_CALLS": "36",
+    "BLENDER_DAILY_GLOBAL_MODEL_CALLS": "144",
+    "BLENDER_FRAME_ORIGINS": "https://www.junwei.cool https://chat-space-app.vercel.app"
+  }
+}

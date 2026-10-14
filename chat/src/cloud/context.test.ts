@@ -22,7 +22,7 @@ describe("bounded browser task boundaries", () => {
     expect(results).toEqual([left, right]);
   });
   test("standalone server cannot read a browser-local file reference", async () => {
-    await expect(uploadedBytes({ localPath: ".uploads/fixture" })).rejects.toThrow("浏览器本地文件不能由本机服务读取");
+    await expect(uploadedBytes({ localPath: ".uploads/fixture" })).rejects.toThrow("Browser-local files cannot be read by the local service");
   });
   test("pending provider yields to the browser clock after one query without timer waiting", async () => {
     let attempts = 0;

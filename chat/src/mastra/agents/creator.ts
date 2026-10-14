@@ -2,6 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { config } from "../../config";
 import type { LlmConfig } from "../../dto/chat";
 import { CREATOR_INSTRUCTIONS } from "../prompts/creator";
+import { BLENDER_SERVICE_TOOLS } from "../tools/blenderService";
 import {
   analyzeSceneTool,
   analyzeReferenceTool,
@@ -43,7 +44,7 @@ export function createCreatorAgent(
   return new Agent({
     id: "chatspace-creator",
     name: "ChatSpace 3D Creator",
-    description: "ChatSpace 的 3D 创作 agent：火山方舟 3D 模型、Tripo3D 与 World Labs 场景",
+    description: "ChatSpace's 3D creation agent: Volcano Engine 3D models, Tripo3D and World Labs scenes",
     instructions: CREATOR_INSTRUCTIONS,
     tools: {
       "ask-user": askUserTool,
@@ -87,6 +88,7 @@ export function createCreatorAgent(
         白名单与理由见 `tools/blenderOps.ts` 与 `models/blenderMcp.ts` 的模块文档。
       */
       ...(config.blender.enabled ? BLENDER_TOOLS : {}),
+      ...(config.blender.cloudService ? BLENDER_SERVICE_TOOLS : {}),
     },
     model: {
       providerId: "byok-openai-compatible",

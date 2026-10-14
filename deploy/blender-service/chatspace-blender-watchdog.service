@@ -1,0 +1,17 @@
+[Unit]
+Description=Advance Blender work independently of service timers and browsers
+After=chatspace-blender.service chatspace-blender-desktop.service
+OnFailure=chatspace-blender-recover.service
+
+[Service]
+Type=oneshot
+User=chatspace
+Group=chatspace
+WorkingDirectory=/opt/chatspace/repo/chat
+EnvironmentFile=/etc/chatspace/blender-service.conf
+ExecStart=/usr/local/bin/bun dist/blender-service/watchdog.mjs
+TimeoutStartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

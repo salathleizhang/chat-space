@@ -7,6 +7,9 @@ import { BrowserAssetStorage } from "./storage";
 import { browserContext, runBrowserJob } from "./jobs";
 import { configureCapabilities } from "./config";
 import { installProviderProxy } from "./network";
+import { setBlenderExportImporter } from "../../../chat/src/mastra/tools/blenderService";
+import { importCloudBlenderExports } from "./blenderImports";
+setBlenderExportImporter(importCloudBlenderExports);
 installProviderProxy();
 const scope = globalThis as unknown as { onmessage: (event: MessageEvent) => void; postMessage: (message: unknown, transfers?: Transferable[]) => void };
 scope.onmessage = async event => {

@@ -10,12 +10,13 @@ export const config = {
     glmModel: GLM_FLASH_SELECTION, deepseekModel: DEEPSEEK_FLASH_SELECTION, evolvingModel: DOUBAO_EVOLVING_SELECTION, proModel: DOUBAO_PRO_SELECTION },
   ark3d: { hyper3dModel: "hyper3d-gen2-260112", hi3dModel: "hitem3d-2-0-251223" },
   tripo: { imageModel: DEFAULT_TRIPO_IMAGE_MODEL },
-  blender: { enabled: false, host: "", port: 0, bin: "", args: [], workDir: null, localWorkDir: null },
+  blender: { enabled: false, cloudService: false, host: "", port: 0, bin: "", args: [], workDir: null, localWorkDir: null },
 };
 export const configuredProviders = { volcengine: false, tripo3d: false, hunyuan: false, worldlabs: false };
 export const configuredEnvLlmProviders: string[] = [];
-export function configureCapabilities(value: { providers: typeof configuredProviders; llmProviders: string[] }) {
+export function configureCapabilities(value: { providers: typeof configuredProviders; llmProviders: string[]; blenderCloud?: boolean }) {
   Object.assign(configuredProviders, value.providers); configuredEnvLlmProviders.push(...value.llmProviders);
+  config.blender.cloudService = value.blenderCloud === true;
 }
 const marker = "chatspace-server-proxy";
 export function serverResumeKeys(): { tripo3dApiKey?: string; seed3dApiKey?: string; worldLabsApiKey?: string; hunyuanApiKey?: string } {
