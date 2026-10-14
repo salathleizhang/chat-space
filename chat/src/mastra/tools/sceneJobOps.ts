@@ -14,12 +14,13 @@ import {
 } from "../../services/sceneJobRunner";
 import type { RunKeys } from "../../services/workflowRuns";
 import { runConfirmReferenceAssets } from "./referenceAnalysis";
-import { optionalContextString, requireCurrentProject } from "./requestContext";
+import { currentThreeDModelSelection, optionalContextString, requireCurrentProject } from "./requestContext";
 
 function runKeys(context: Parameters<typeof optionalContextString>[0]): RunKeys {
   return {
     volcengineApiKey: optionalContextString(context, "volcengineApiKey"),
-    seed3dApiKey: optionalContextString(context, "seed3dApiKey"),
+    tripo3dApiKey: optionalContextString(context, "tripo3dApiKey"),
+    threeDModel: currentThreeDModelSelection(context),
     worldLabsApiKey: optionalContextString(context, "worldLabsApiKey"),
   };
 }

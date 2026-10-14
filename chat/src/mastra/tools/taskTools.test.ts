@@ -12,7 +12,8 @@ import {
   CandidateRegistrySchema,
   RequestSidecarSchema,
 } from "../../dto/library";
-import { SEED3D_MODEL } from "../../models/seed3d";
+import { config } from "../../config";
+import { TRIPO_P1_MODEL } from "../../models/tripo";
 import {
   LocalFileStorage,
   readJson,
@@ -39,7 +40,7 @@ const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
 const realFetch = globalThis.fetch;
 
-const seed3dBodies: Record<string, unknown>[] = [];
+const tripoBodies: Record<string, unknown>[] = [];
 const arkBodies: Record<string, unknown>[] = [];
 const worldBodies: Record<string, unknown>[] = [];
 
@@ -54,14 +55,25 @@ function installFakeFetch() {
     if (url.startsWith("https://cdn.fake/")) {
       return new Response(GLB_BYTES.buffer.slice(0), { status: 200 });
     }
-    if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
-      const body = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
-      if (body.model === SEED3D_MODEL) seed3dBodies.push(body);
-      else arkBodies.push(body);
-      return jsonResponse({ id: `ark-${seed3dBodies.length + arkBodies.length}` });
+    if (url.endsWith("/files/upload-credentials")) return jsonResponse({ code: 0, data: {
+      s3_host: "s3.fake", sts_ak: "ak", sts_sk: "sk", session_token: "st",
+      resource_bucket: "tripo-data", resource_uri: "up/image.png", file_token: "ft-test",
+    } });
+    if (url.startsWith("https://s3.fake/")) return new Response(null, { status: 200 });
+    if (url.endsWith("/files")) return jsonResponse({ code: 0, data: { file_token: "ft-test" } });
+    if (url.endsWith("/generation/image-to-model")) {
+      tripoBodies.push(JSON.parse(String(init?.body)));
+      return jsonResponse({ code: 0, data: { task_id: `tripo-${tripoBodies.length}` } });
     }
-    if (url.includes("/contents/generations/tasks/")) {
-      return jsonResponse({ status: "succeeded", content: { file_url: "https://cdn.fake/model.glb" } });
+    if (url.endsWith("/v3/tasks/list")) {
+      const ids = JSON.parse(String(init?.body)).task_ids as string[];
+      return jsonResponse({ code: 0, data: { tasks: Object.fromEntries(ids.map(id => [id, {
+        status: "success", output: { pbr_model: "https://cdn.fake/model.glb" },
+      }])), missed: [] } });
+    }
+    if (url.includes("/contents/generations/tasks")) {
+      arkBodies.push({ url });
+      throw new Error("Hidden provider must not be called");
     }
     if (url.endsWith("/worlds:generate") && init?.method === "POST") {
       worldBodies.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
@@ -109,7 +121,6 @@ async function runBatch(threeDModel: string | undefined, provider: string) {
         projectSlug: "tt",
         ...(threeDModel ? { threeDModel: threeDModel as never } : {}),
         volcengineApiKey: "sk-volc",
-        seed3dApiKey: "sk-volc",
         tripo3dApiKey: "tsk-1",
       }),
     } as never,
@@ -119,31 +130,34 @@ async function runBatch(threeDModel: string | undefined, provider: string) {
 }
 
 describe("start-3d-batch 的 3D 模型选择", () => {
-  test("用户选定 Hyper3D Gen-2 时，agent 传的 Seed3D 被顶掉，模型 ID 原样提交", async () => {
-    seed3dBodies.length = 0;
-    arkBodies.length = 0;
-    const task = await runBatch("hyper3d-gen2", "seed3d-direct");
-
+  test("选择 Tripo P1 时将实际模型 ID 提交给 Tripo，未调用隐藏渠道", async () => {
+    tripoBodies.length = 0; arkBodies.length = 0;
+    const task = await runBatch("tripo-p1", "tripo-direct");
     expect(task.status).toBe("succeeded");
-    expect(seed3dBodies).toHaveLength(0);
-    expect(arkBodies[0]).toMatchObject({ model: "hyper3d-gen2-260112" });
-    const sidecar = await readJson(
-      storage,
-      `projects/tt/assets/lamp/.0-lamp-request.json`,
-      RequestSidecarSchema,
-    );
-    expect(sidecar.provider).toBe("ark-hyper3d");
-    expect(sidecar.model).toBe("hyper3d-gen2-260112");
+    expect(tripoBodies[0]).toMatchObject({ model: TRIPO_P1_MODEL });
+    expect(arkBodies).toHaveLength(0);
+    const sidecar = await readJson(storage, "projects/tt/assets/lamp/.0-lamp-request.json", RequestSidecarSchema);
+    expect(sidecar.provider).toBe("tripo");
+    expect(sidecar.params.image_model).toBe(TRIPO_P1_MODEL);
   });
 
-  test("Auto（未选择）时按 agent 的判断走 Seed3D 默认模型", async () => {
-    seed3dBodies.length = 0;
-    arkBodies.length = 0;
-    const task = await runBatch(undefined, "seed3d-direct");
-
+  test("Auto 使用 Tripo 默认模型", async () => {
+    tripoBodies.length = 0; arkBodies.length = 0;
+    const task = await runBatch(undefined, "tripo-direct");
     expect(task.status).toBe("succeeded");
+    expect(tripoBodies[0]).toMatchObject({ model: config.tripo.imageModel });
     expect(arkBodies).toHaveLength(0);
-    expect(seed3dBodies[0]).toMatchObject({ model: SEED3D_MODEL });
+  });
+
+  test("隐藏模型和隐藏渠道在提交付费请求前被拒绝", async () => {
+    tripoBodies.length = 0; arkBodies.length = 0;
+    for (const model of ["seed3d-2", "hyper3d-gen2", "hi3d-2"]) {
+      await expect(runBatch(model, "tripo-direct")).rejects.toThrow("Only Tripo3D");
+    }
+    for (const provider of ["seed3d-direct", "hyper3d-volc", "hi3d-volc"]) {
+      await expect(runBatch(undefined, provider)).rejects.toThrow();
+    }
+    expect(tripoBodies).toHaveLength(0); expect(arkBodies).toHaveLength(0);
   });
 });
 
@@ -233,23 +247,23 @@ describe("参考图跨会话复用的闸门", () => {
 
   test("没有显式传图、兜底会拿到旧参考图：当场报错，并让 Agent 去征求同意", async () => {
     const image = await legacyReferenceProject("gate-block");
-    seed3dBodies.length = 0;
+    tripoBodies.length = 0;
 
     const error = await start3dBatchTool.execute!(
-      { provider: "seed3d-direct", tripoGenerationMode: "auto" } as never,
+      { provider: "tripo-direct", tripoGenerationMode: "auto" } as never,
       {
         requestContext: buildRequestContext({
           projectSlug: "gate-block",
           sessionStartedAt: SESSION_START,
           volcengineApiKey: "sk-volc",
-          seed3dApiKey: "sk-volc",
+          tripo3dApiKey: "tsk-1",
         }),
       } as never,
     ).catch((err: unknown) => err);
 
     expect(error).toMatchObject({ code: "reference_reuse_needs_consent", status: 409 });
     // 一次付费请求都不许发出去
-    expect(seed3dBodies).toHaveLength(0);
+    expect(tripoBodies).toHaveLength(0);
     // 报错必须可执行：说清是哪张图、并明确要求先用 ask-user 征求同意
     expect((error as Error).message).toContain(image);
     expect((error as Error).message).toContain("ask-user");
@@ -257,37 +271,37 @@ describe("参考图跨会话复用的闸门", () => {
 
   test("图是本会话刚落盘的：照旧直接开工，不打扰用户", async () => {
     const image = await legacyReferenceProject("gate-pass");
-    seed3dBodies.length = 0;
+    tripoBodies.length = 0;
 
     const result = await start3dBatchTool.execute!(
-      { provider: "seed3d-direct", tripoGenerationMode: "auto" } as never,
+      { provider: "tripo-direct", tripoGenerationMode: "auto" } as never,
       {
         requestContext: buildRequestContext({
           projectSlug: "gate-pass",
           // 会话开始得比这张图更早 → 图是本会话的产物
           sessionStartedAt: SESSION_START - 7_200_000,
           volcengineApiKey: "sk-volc",
-          seed3dApiKey: "sk-volc",
+          tripo3dApiKey: "tsk-1",
         }),
       } as never,
     );
     const taskId = (result as { tasks: { id: string }[] }).tasks[0]!.id;
     expect((await waitForSettle(taskId, "gate-pass")).status).toBe("succeeded");
-    expect(seed3dBodies[0]?.content).toBeDefined();
+    expect(tripoBodies[0]?.input).toBeDefined();
     expect(image).toBe("projects/gate-pass/source/0-old-ref.png");
   });
 
   test("客户端没带会话时间：不做本轮判断，保持原行为", async () => {
     await legacyReferenceProject("gate-legacy");
-    seed3dBodies.length = 0;
+    tripoBodies.length = 0;
 
     const result = await start3dBatchTool.execute!(
-      { provider: "seed3d-direct", tripoGenerationMode: "auto" } as never,
+      { provider: "tripo-direct", tripoGenerationMode: "auto" } as never,
       {
         requestContext: buildRequestContext({
           projectSlug: "gate-legacy",
           volcengineApiKey: "sk-volc",
-          seed3dApiKey: "sk-volc",
+          tripo3dApiKey: "tsk-1",
         }),
       } as never,
     );
@@ -340,22 +354,22 @@ describe("参考图跨会话复用的闸门", () => {
         createdAt: new Date(SESSION_START - 3_600_000).toISOString(),
       },
     );
-    seed3dBodies.length = 0;
+    tripoBodies.length = 0;
 
     const error = await start3dBatchTool.execute!(
-      { provider: "seed3d-direct", tripoGenerationMode: "auto", assetSlugs: ["bound-chair"] } as never,
+      { provider: "tripo-direct", tripoGenerationMode: "auto", assetSlugs: ["bound-chair"] } as never,
       {
         requestContext: buildRequestContext({
           projectSlug: "gate-bound",
           sessionStartedAt: SESSION_START,
           volcengineApiKey: "sk-volc",
-          seed3dApiKey: "sk-volc",
+          tripo3dApiKey: "tsk-1",
         }),
       } as never,
     ).catch((err: unknown) => err);
 
     expect(error).toMatchObject({ code: "reference_reuse_needs_consent" });
-    expect(seed3dBodies).toHaveLength(0);
+    expect(tripoBodies).toHaveLength(0);
     expect((error as Error).message).toContain(image);
   });
 

@@ -509,9 +509,7 @@ export async function* streamChat(
             `The user explicitly selected a 3D generation model in the UI: ${threeDSelection.label} (model ID ` +
               `${threeDSelection.model}, channel ${threeDSelection.provider}). The channel and model ` +
               "ID of start-3d-batch are pinned by the server to this selection, so you do not need to make a separate choice in the provider parameter; when explaining the paid plan to the user, report it for this model." +
-              (threeDSelection.provider === "seed3d-direct"
-                ? ""
-                : "Note that the single-object model of SceneJob is currently fixed to Seed3D, independent of this selection; when a full scene is involved, explain this first."),
+              "The model nodes of start-scene-job use the same Tripo selection, persisted for background execution.",
           ]
         : []),
       ...(request.imageGenerateModel

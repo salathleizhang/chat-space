@@ -98,8 +98,9 @@ describe("creator 回复协议", () => {
     expect(CREATOR_INSTRUCTIONS).toContain(
       'never "generate one and see, swap it if it is no good"',
     );
-    // Hi3D 只吃 Seedream 产物的公网 URL，原图喂不进去
-    expect(CREATOR_INSTRUCTIONS).toContain("the original image cannot be fed in");
+    // 当前只开放 Tripo，不能用隐藏渠道的旧限制阻止用户直接使用原图。
+    expect(CREATOR_INSTRUCTIONS).toContain("only Tripo3D is enabled");
+    expect(CREATOR_INSTRUCTIONS).not.toContain("when Hi3D from ShuMei is selected");
   });
 
   /**

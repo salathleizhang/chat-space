@@ -30,8 +30,8 @@ const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
 const realFetch = globalThis.fetch;
-const requests: { world: Record<string, unknown>[]; seed3d: Record<string, unknown>[] } = {
-  world: [], seed3d: [],
+const requests: { world: Record<string, unknown>[]; tripo: Record<string, unknown>[] } = {
+  world: [], tripo: [],
 };
 const GARAGE_ANALYSIS = {
   sceneName: "车库",
@@ -45,7 +45,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** 假 World Labs 和 Seed3D 接口及 CDN */
+/** 假 World Labs 和 Tripo3D 接口及 CDN */
 function installFakeFetch() {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -55,13 +55,18 @@ function installFakeFetch() {
     if (url.startsWith("https://cdn.fake/")) {
       return new Response(PNG_BYTES.buffer.slice(0), { status: 200 });
     }
-    if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
-      requests.seed3d.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
-      return jsonResponse({ id: `seed-${requests.seed3d.length}` });
+    if (url.endsWith("/files")) return jsonResponse({ code: 0, data: { file_token: "ft-test" } });
+    if (url.endsWith("/generation/image-to-model")) {
+      requests.tripo.push(JSON.parse(String(init?.body ?? "{}")));
+      return jsonResponse({ code: 0, data: { task_id: `tripo-${requests.tripo.length}` } });
     }
-    if (url.includes("/contents/generations/tasks/")) {
-      return jsonResponse({ status: "succeeded", file_url: "https://cdn.fake/model.glb" });
+    if (url.endsWith("/v3/tasks/list")) {
+      const ids = JSON.parse(String(init?.body)).task_ids as string[];
+      return jsonResponse({ code: 0, data: { tasks: Object.fromEntries(ids.map(id => [id, {
+        status: "success", output: { pbr_model: "https://cdn.fake/model.glb" },
+      }])), missed: [] } });
     }
+    if (url.includes("/contents/generations/tasks")) throw new Error("Hidden 3D provider called");
     if (url.endsWith("/images/generations")) {
       return jsonResponse({ data: [{ url: "https://cdn.fake/out.png" }] });
     }
@@ -96,7 +101,8 @@ afterAll(async () => {
 const KEYS = {
   llm: { apiKey: "sk-llm" },
   volcengineApiKey: "sk-volc",
-  seed3dApiKey: "sk-volc",
+  tripo3dApiKey: "tripo-fixture",
+  threeDModel: "tripo-p2" as const,
   worldLabsApiKey: "wlt-key",
 };
 
@@ -294,6 +300,8 @@ describe("SceneJob（可修订 DAG 调度）", () => {
       expect(task?.status).toBe("succeeded");
       const job = await readSceneJob(storage, projectSlug, started.job.id);
       expect(job.status).toBe("succeeded");
+      expect(job.tripoImageModel).toBe("P2-20260801");
+      expect(requests.tripo.at(-1)?.model).toBe("P2-20260801");
       expect(job.nodes["reference:toolbox"]?.status).toBe("succeeded");
       expect(job.nodes["model:toolbox"]?.status).toBe("succeeded");
       expect(job.nodes.plate?.status).toBe("succeeded");

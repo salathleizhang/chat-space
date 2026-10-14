@@ -107,6 +107,8 @@ export const SceneJobSchema = z.object({
   error: z.string().optional(),
   /** 不含任何密钥；重启后要由 resume 请求重新注入本机凭证。 */
   parentTaskId: z.string().optional(),
+  /** 实际 Tripo 模型 ID；跨 Worker 和重启保留界面选择，不含密钥。 */
+  tripoImageModel: z.string().min(1).optional(),
   nodes: z.record(z.string(), SceneJobNodeSchema),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

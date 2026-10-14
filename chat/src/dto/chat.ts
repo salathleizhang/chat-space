@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { LLM_PROVIDER_IDS } from "../config";
-import { THREE_D_MODEL_SELECTIONS } from "../models/threeD";
+import { ENABLED_THREE_D_MODEL_SELECTIONS } from "../models/threeD";
 import { LogicalPathSchema, ProjectPlanSchema, SlugSchema } from "./library";
 
 /**
@@ -153,7 +153,7 @@ export const ChatStreamRequestSchema = z.object({
   seed3dApiKey: z.string().min(1).optional(),
   volcengineApiKey: z.string().min(1).optional(),
   /** AgentDock 的 3D 生成模型选择（硬约束：渠道与模型 ID 都由服务端钉住）；省略 = 由 agent 自动选择 */
-  threeDModel: z.enum(THREE_D_MODEL_SELECTIONS).optional(),
+  threeDModel: z.enum(ENABLED_THREE_D_MODEL_SELECTIONS).optional(),
   /** AgentDock 图片生成模型偏好（软约束）；省略 = 由 agent 自动选择 */
   imageGenerateModel: z.enum(["seedream", "seedream-5", "seedream-5-pro"]).optional(),
 });

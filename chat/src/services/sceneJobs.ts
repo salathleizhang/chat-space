@@ -331,6 +331,7 @@ function staleNode(previous: SceneJobNode, fingerprint: string): SceneJobNode {
   return {
     ...previous,
     status: "stale",
+    taskIds: [],
     inputFingerprint: fingerprint,
     qa: undefined,
     error: undefined,
@@ -621,6 +622,7 @@ export async function retrySceneJobNodes(
       nodes[id] = {
         ...current,
         status,
+        taskIds: [],
         qa: undefined,
         error: undefined,
         updatedAt: new Date().toISOString(),

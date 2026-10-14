@@ -36,18 +36,19 @@ import {
 import type { RunKeys } from "./workflowRuns";
 import { runPlateGeneration } from "../mastra/tools/imageEdit";
 import { runReferenceImageEdit } from "../mastra/tools/referenceImage";
-import { startSeed3d3dBatch } from "../mastra/tools/seed3dOps";
+import { startTripo3dBatch } from "../mastra/tools/tripoOps";
+import { tripoModelFor } from "../models/threeD";
 import {
   composeEmptyWorldPrompt,
   runProjectWorldGeneration,
 } from "../mastra/tools/worldGen";
 import { runScenePlacement } from "./scenePlacementRun";
 
-function requireRunKey(keys: RunKeys, name: "volcengineApiKey" | "seed3dApiKey" | "worldLabsApiKey") {
+function requireRunKey(keys: RunKeys, name: "volcengineApiKey" | "tripo3dApiKey" | "worldLabsApiKey") {
   const value = keys[name];
   if (value) return value;
   throw new ChatServiceError(
-    `Full scene generation requires ${name === "worldLabsApiKey" ? "WORLDLABS_KEY" : "VOLC_KEY"} to be configured in the local chat/.env`,
+    `Full scene generation requires ${name === "worldLabsApiKey" ? "WORLDLABS_KEY" : name === "tripo3dApiKey" ? "TRIPO_KEY" : "VOLC_KEY"} to be configured in the local chat/.env`,
     401,
     "scene_job_missing_key",
   );
@@ -273,7 +274,9 @@ async function executeModelNode(
     const identity = await readJson(storage, identityPath, AssetIdentitySchema);
     if (identity.kind === "model") {
       const existing = await succeededSidecar(storage, assetDir(job.projectSlug, object.slug), (sidecar) =>
-        sidecar.provider === "seed3d" && sidecar.params.image === reference,
+        sidecar.provider === "tripo" && sidecar.params.image === reference &&
+        sidecar.model === "v3/generation/image-to-model" &&
+        sidecar.params.image_model === (job.tripoImageModel ?? tripoModelFor(keys.threeDModel).model),
       );
       const files = renderablePathsFromResult({ files: existing?.outputs.map((output) => output.path) });
       if (files.length > 0) return files;
@@ -284,12 +287,13 @@ async function executeModelNode(
   if (currentCloudContext() && current.nodes[node.id]?.taskIds.length) {
     return waitForModelTask(job.projectSlug, current.nodes[node.id]!.taskIds.at(-1)!);
   }
-  const task = startSeed3d3dBatch(
+  const task = startTripo3dBatch(
     job.projectSlug,
     [{ slug: object.slug, name: object.name, intent: object.description, sourceImages: [reference] }],
-    { seed3dApiKey: requireRunKey(keys, "seed3dApiKey") },
+    { tripo3dApiKey: requireRunKey(keys, "tripo3dApiKey"),
+      imageModel: job.tripoImageModel ?? tripoModelFor(keys.threeDModel).model, generationMode: "single" },
   )[0];
-  if (!task) throw new ChatServiceError("Could not create the Seed3D task", 500, "scene_model_task_missing");
+  if (!task) throw new ChatServiceError("Could not create the Tripo3D task", 500, "scene_model_task_missing");
   await updateNode(storage, job, node.id, (currentNode) => ({
     ...currentNode,
     taskIds: [...new Set([...currentNode.taskIds, task.id])],
@@ -393,7 +397,7 @@ export async function runSceneJob(
   }
 
   // 完整新任务仍会在任何付费请求前验证三类凭证；局部重跑只要求它
-  // 实际会触及的节点凭证，例如重做 plate/world 不应被 Seed3D key 阻塞。
+  // 实际会触及的节点凭证，例如重做 plate/world 不应被 Tripo key 阻塞。
   const unfinishedKinds = new Set(
     Object.values(initial.nodes)
       .filter((node) => !["succeeded", "obsolete"].includes(node.status))
@@ -403,7 +407,7 @@ export async function runSceneJob(
     if (unfinishedKinds.has("reference") || unfinishedKinds.has("plate")) {
       requireRunKey(keys, "volcengineApiKey");
     }
-    if (unfinishedKinds.has("model")) requireRunKey(keys, "seed3dApiKey");
+    if (unfinishedKinds.has("model")) requireRunKey(keys, "tripo3dApiKey");
     if (unfinishedKinds.has("world")) requireRunKey(keys, "worldLabsApiKey");
   } catch (error) {
     // 父任务会失败，但 get-scene-job 读的是这份记录；不能永远留在 running。
@@ -414,6 +418,7 @@ export async function runSceneJob(
   }
 
   await mutateSceneJob(storage, projectSlug, jobId, (job) => ({ ...job, status: "running", error: undefined,
+    tripoImageModel: job.tripoImageModel ?? tripoModelFor(keys.threeDModel).model,
     ...(currentCloudContext() ? { nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [id,
       node.status === "running" ? { ...node, status: "pending", attempts: Math.max(0, node.attempts - 1) } : node])) } : {}),
   }));
@@ -491,9 +496,13 @@ export async function createAndStartSceneJob(projectSlug: string, keys: RunKeys)
   const job = existing ?? await createSceneJob(storage, spec);
   // 旧版本创建的 SceneJob 没有 placement 节点：补上它，让老场景也能摆回原位。
   const ensured = ensurePlacementNode(job, spec);
-  const current = ensured.changed
+  let current = ensured.changed
     ? await mutateSceneJob(storage, projectSlug, job.id, () => ensured.job)
     : job;
+  if (!current.tripoImageModel) {
+    const model = tripoModelFor(keys.threeDModel).model;
+    current = await mutateSceneJob(storage, projectSlug, job.id, stored => ({ ...stored, tripoImageModel: model }));
+  }
   if (!ensured.changed && current.status === "succeeded" && current.parentTaskId) {
     const completedTask = await getTask(projectSlug, current.parentTaskId);
     if (completedTask?.status === "succeeded") return { job: current, task: completedTask };
@@ -512,6 +521,7 @@ export async function resumeSceneJob(projectSlug: string, jobId: string, keys: R
       ...job,
       status: "paused",
       error: undefined,
+      tripoImageModel: keys.threeDModel ? tripoModelFor(keys.threeDModel).model : job.tripoImageModel ?? tripoModelFor(undefined).model,
       nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [
         id,
         node.status === "running" || node.status === "failed"

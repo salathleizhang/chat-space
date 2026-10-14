@@ -25,7 +25,7 @@ test("缺少 World Labs 凭证时 SceneJob 与父任务一样失败，零节点�
       const spec = await ensureSceneSpecFromAnalysis(storage, "preflight");
       const job = await createSceneJob(storage, spec);
       await expect(runSceneJob("preflight", job.id, {
-        volcengineApiKey: "fixture", seed3dApiKey: "fixture",
+        volcengineApiKey: "fixture", tripo3dApiKey: "fixture",
       })).rejects.toThrow("WORLDLABS_KEY");
       const failed = await readSceneJob(storage, "preflight", job.id);
       expect(failed.status).toBe("failed");

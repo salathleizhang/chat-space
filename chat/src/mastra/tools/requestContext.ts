@@ -5,7 +5,7 @@ import {
   IMAGE_EDIT_MODEL_IDS,
   type ImageEditModel,
 } from "../../models/images";
-import { threeDModelFor, type ThreeDModelEntry } from "../../models/threeD";
+import { threeDModelFor, type ThreeDModelEntry, ENABLED_THREE_D_MODEL_SELECTIONS, type EnabledThreeDModelSelection } from "../../models/threeD";
 
 interface ToolContextLike {
   requestContext?: unknown;
@@ -137,4 +137,11 @@ export function requireContextString(
   const value = optionalContextString(context, key);
   if (!value) throw new ChatServiceError(hint, 401, `missing_${key}`);
   return value;
+}
+
+/** 将界面选择带入持久化 SceneJob，独立后台 Worker 仍能使用同一个模型。 */
+export function currentThreeDModelSelection(context: ToolContextLike | undefined): EnabledThreeDModelSelection | undefined {
+  const value = readContextValue(context, "threeDModel");
+  return typeof value === "string" && (ENABLED_THREE_D_MODEL_SELECTIONS as readonly string[]).includes(value)
+    ? value as EnabledThreeDModelSelection : undefined;
 }

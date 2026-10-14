@@ -28,20 +28,13 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
         startWorldTask(projectSlug, { ...input, worldLabsApiKey: keys.worldLabsApiKey ?? "" } as Parameters<typeof startWorldTask>[1]);
       } else {
         const retry = Retryable3dTaskSchema.parse(input.retry);
+        if (retry.provider !== "tripo-direct") throw new Error("This model provider is disabled; only Tripo3D is enabled");
         const object = { slug: retry.assetSlug, name: retry.name, intent: retry.intent, sourceImages: retry.sourceImages, referenceViews: retry.referenceViews };
         const options = retry.options;
-        if (retry.provider === "tripo-direct") {
-          const { startTripo3dBatch } = await import("../mastra/tools/tripoOps");
-          startTripo3dBatch(projectSlug, [object], { tripo3dApiKey: tripo.apiKey,
-            imageModel: typeof options.imageModel === "string" ? options.imageModel : config.tripo.imageModel,
-            generationMode: options.generationMode as "auto" | "single" | "multiview" | undefined });
-        } else if (retry.provider === "hyper3d-volc" || retry.provider === "hi3d-volc") {
-          const { startArk3dBatch } = await import("../mastra/tools/ark3dOps");
-          startArk3dBatch(retry.provider, projectSlug, [object], { ...options, apiKey: keys.seed3dApiKey ?? "" });
-        } else if (retry.provider === "seed3d-direct") {
-          const { startSeed3d3dBatch } = await import("../mastra/tools/seed3dOps");
-          startSeed3d3dBatch(projectSlug, [object], { ...options, seed3dApiKey: keys.seed3dApiKey ?? "" });
-        } else throw new Error("Unsupported 3D provider for the cloud task");
+        const { startTripo3dBatch } = await import("../mastra/tools/tripoOps");
+        startTripo3dBatch(projectSlug, [object], { tripo3dApiKey: tripo.apiKey,
+          imageModel: typeof options.imageModel === "string" ? options.imageModel : config.tripo.imageModel,
+          generationMode: options.generationMode as "auto" | "single" | "multiview" | undefined });
       }
     } finally { cloud.capture = undefined; }
     if (!capture.executor) throw new Error("Cannot restore the cloud executor");

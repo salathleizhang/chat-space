@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ChatServiceError } from "../../common/errors";
 import { assetIdentityFile } from "../../common/libraryPaths";
 import { AssetIdentitySchema, LogicalPathSchema, SlugSchema } from "../../dto/library";
-import { THREE_D_PROVIDER_IDS } from "../../models/threeD";
+import { tripoModelFor } from "../../models/threeD";
 import { getAssetStorage, readJson } from "../../services/assetStorage";
 import type { GenerationObject } from "../../services/modelPublishing";
 import { listTasks, resolve3dObjects, startWorldTask } from "../../services/tasks";
@@ -17,9 +17,7 @@ import {
   ReferenceReuseConsentError,
   resolveSessionReferenceImage,
 } from "./referenceResolution";
-import { startSeed3d3dBatch } from "./seed3dOps";
 import { startTripo3dBatch } from "./tripoOps";
-import { startArk3dBatch } from "./ark3dOps";
 
 /** creator agent 的生成任务工具：启动即返回任务 id，不阻塞对话流 */
 
@@ -110,12 +108,7 @@ export function resolveWorldSourceImage(input: {
 /** 整批统一的生成选项（与 dto/tasks.ts 的 HTTP 契约对齐） */
 export const Batch3dOptionsSchema = z.object({
   assetSlugs: z.array(SlugSchema).optional(),
-  provider: z.enum(THREE_D_PROVIDER_IDS).default("seed3d-direct"),
-  faceCount: z.number().int().min(500).max(2000000).optional(),
-  taPose: z.boolean().optional(),
-  resolution: z.enum(["1536", "1536pro"]).optional(),
-  /** seed3d-direct：面数走档位而非精确值（high=100 万 / medium=50 万 / low=10 万） */
-  subdivisionLevel: z.enum(["high", "medium", "low"]).optional(),
+  provider: z.literal("tripo-direct").default("tripo-direct"),
   /** Tripo：auto 会在资产带有 front + 至少另一视角时自动切换多视角生成。 */
   tripoGenerationMode: z.enum(["auto", "single", "multiview"]).default("auto"),
 });
@@ -123,15 +116,16 @@ export const Batch3dOptionsSchema = z.object({
 export const start3dBatchTool = createTool({
   id: "start-3d-batch",
   description:
-    "Generate 3D models in parallel for the objects of the current project. Options are Volcano Engine Ark Seed3D (default), Hyper3D Gen-2, ShuMei Hi3D 2.0, or Tripo3D; get the user's consent before starting a paid operation. When the user has selected a specific 3D model in the dropdown, the server pins the channel and model ID to that choice and the provider parameter is ignored. Tripo's tripoGenerationMode=auto automatically uses multiview generation for reference images tagged with views; single/multiview can also be specified explicitly. Hi3D uses the URL of a reference image generated or edited by Seedream. Returns task ids; follow up with list-generation-tasks. A task's result carries modelInfo (measured triangle count and highPoly) — once a high-poly model is done, ask the user once with ask-user whether to decimate, as prompted.",
+    "Generate 3D models in parallel using Tripo3D, the only enabled model provider. Auto uses Tripo 3.1; a specific Tripo 3.1/P1/P2 selection in the dropdown pins the model ID. Get user consent before starting paid work. tripoGenerationMode=auto detects multiview references; single/multiview can be specified. Returns task IDs and measured modelInfo; ask once whether to decimate a high-poly result.",
   inputSchema: Batch3dOptionsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
-    const { assetSlugs, provider: requestedProvider, ...options } = input;
-    /** 用户选定的具体模型优先于 agent 的判断；未选择（Auto）才用请求里的 provider。 */
+    const { assetSlugs, ...options } = Batch3dOptionsSchema.parse(input);
     const pinned = currentThreeDModel(context);
-    const provider = pinned?.provider ?? requestedProvider;
-    const model = pinned?.model;
+    if (pinned && pinned.provider !== "tripo-direct") {
+      throw new ChatServiceError("Only Tripo3D is enabled for model generation", 409, "model_provider_disabled");
+    }
+    const model = pinned?.model ?? tripoModelFor(undefined).model;
     const objects = await resolve3dObjects(projectSlug, assetSlugs);
     /*
       闸门：这批对象有没有"要靠兜底拿图"的？
@@ -143,46 +137,12 @@ export const start3dBatchTool = createTool({
     */
     const sessionStartedAt = currentSessionStartedAt(context);
     await assertBatchReferencesUsable(projectSlug, objects, sessionStartedAt);
-    if (provider === "tripo-direct") {
-      const tripo3dApiKey = requireContextString(
-        context,
-        "tripo3dApiKey",
-        "TRIPO_KEY is not configured in the local chat/.env",
-      );
-      const tasks = startTripo3dBatch(projectSlug, objects, {
-        tripo3dApiKey,
-        generationMode: options.tripoGenerationMode,
-        imageModel: model,
-        sessionStartedAt,
-      });
-      return { tasks: tasks.map(({ id, subject, status }) => ({ id, subject, status })) };
-    }
-    if (provider === "hyper3d-volc" || provider === "hi3d-volc") {
-      const apiKey = requireContextString(
-        context,
-        "volcengineApiKey",
-        "VOLC_KEY is not configured in the local chat/.env",
-      );
-      const tasks = startArk3dBatch(provider, projectSlug, objects, {
-        apiKey,
-        faceCount: options.faceCount,
-        taPose: options.taPose,
-        resolution: options.resolution,
-        model,
-        sessionStartedAt,
-      });
-      return { tasks: tasks.map(({ id, subject, status }) => ({ id, subject, status })) };
-    }
-    const seed3dApiKey = requireContextString(
-      context,
-      "seed3dApiKey",
-      "VOLC_KEY is not configured in the local chat/.env",
+    const tripo3dApiKey = requireContextString(
+      context, "tripo3dApiKey", "TRIPO_KEY is not configured in the local chat/.env",
     );
-    const tasks = startSeed3d3dBatch(projectSlug, objects, {
-      seed3dApiKey,
-      subdivisionLevel: options.subdivisionLevel,
-      model,
-      sessionStartedAt,
+    const tasks = startTripo3dBatch(projectSlug, objects, {
+      tripo3dApiKey, generationMode: options.tripoGenerationMode,
+      imageModel: model, sessionStartedAt,
     });
     return { tasks: tasks.map(({ id, subject, status }) => ({ id, subject, status })) };
   },

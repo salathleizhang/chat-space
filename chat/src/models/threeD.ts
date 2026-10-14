@@ -1,3 +1,4 @@
+import { ChatServiceError } from "../common/errors";
 import { config } from "../config";
 import { SEED3D_MODEL } from "./seed3d";
 import { TRIPO_P1_MODEL, TRIPO_P2_MODEL } from "./tripo";
@@ -62,6 +63,9 @@ export const THREE_D_MODELS = {
 
 export type ThreeDModelSelection = keyof typeof THREE_D_MODELS;
 
+export const ENABLED_THREE_D_MODEL_SELECTIONS = ["tripo-3-1", "tripo-p1", "tripo-p2"] as const;
+export type EnabledThreeDModelSelection = (typeof ENABLED_THREE_D_MODEL_SELECTIONS)[number];
+
 export const THREE_D_MODEL_SELECTIONS = Object.keys(THREE_D_MODELS) as [
   ThreeDModelSelection,
   ...ThreeDModelSelection[],
@@ -73,4 +77,13 @@ export function threeDModelFor(selection: unknown): ThreeDModelEntry | undefined
     Object.hasOwn(THREE_D_MODELS, selection)
     ? THREE_D_MODELS[selection as ThreeDModelSelection]
     : undefined;
+}
+
+/** 当前产品只开放 Tripo；Auto 也不能偷偷选择隐藏的方舟模型。 */
+export function tripoModelFor(selection: unknown): ThreeDModelEntry {
+  const model = threeDModelFor(selection);
+  if (model && model.provider !== "tripo-direct") {
+    throw new ChatServiceError("Only Tripo3D is enabled for model generation", 409, "model_provider_disabled");
+  }
+  return model ?? THREE_D_MODELS["tripo-3-1"];
 }

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { THREE_D_PROVIDER_IDS } from "../models/threeD";
 import { LogicalPathSchema, ReferenceImageViewsSchema, SlugSchema } from "./library";
 
 /** 生成任务契约；历史 provider ID 只用于读取旧任务元数据。 */
@@ -90,36 +89,14 @@ export const Start3dBatchRequestSchema = z
     projectSlug: SlugSchema,
     /** 省略 = 项目下全部可生成对象（正式资产 + 已确认场景对象 + 单物体生成目标） */
     assetSlugs: z.array(SlugSchema).optional(),
-    provider: z.enum(THREE_D_PROVIDER_IDS).default("seed3d-direct"),
-    faceCount: z.number().int().min(500).max(2000000).optional(),
-    generateType: z.enum(["Normal", "LowPoly", "Geometry"]).optional(),
-    enableRigging: z.boolean().optional(),
-    enableAnimation: z.boolean().optional(),
-    taPose: z.boolean().optional(),
-    resolution: z.enum(["1536", "1536pro"]).optional(),
-    /** seed3d-direct：面数走档位（high=100 万 / medium=50 万 / low=10 万） */
-    subdivisionLevel: z.enum(["high", "medium", "low"]).optional(),
+    provider: z.literal("tripo-direct").default("tripo-direct"),
     /** Tripo：自动识别带方位的多视角图，或显式强制单图/多视角。 */
     tripoGenerationMode: z.enum(["auto", "single", "multiview"]).default("auto"),
     tripo3dApiKey: z.string().min(1).optional(),
-    seed3dApiKey: z.string().min(1).optional(),
-    volcengineApiKey: z.string().min(1).optional(),
   })
   .superRefine((req, ctx) => {
-    if (req.provider === "hi3d-volc" && req.faceCount && req.faceCount < 100000) {
-      ctx.addIssue({ code: "custom", message: "Hi3D face count must be between 100,000 and 2,000,000" });
-    }
-    if (req.provider === "hyper3d-volc" && req.faceCount && req.faceCount > 1000000) {
-      ctx.addIssue({ code: "custom", message: "Hyper3D Raw meshes are limited to 1,000,000 faces" });
-    }
-    if (req.provider === "tripo-direct") {
-      if (!req.tripo3dApiKey) {
-        ctx.addIssue({ code: "custom", message: "provider=tripo-direct requires tripo3dApiKey" });
-      }
-    } else {
-      if (!req.seed3dApiKey && !req.volcengineApiKey) {
-        ctx.addIssue({ code: "custom", message: "VOLC_KEY is not configured in the local chat/.env" });
-      }
+    if (!req.tripo3dApiKey) {
+      ctx.addIssue({ code: "custom", message: "provider=tripo-direct requires tripo3dApiKey" });
     }
   });
 export type Start3dBatchRequest = z.infer<typeof Start3dBatchRequestSchema>;

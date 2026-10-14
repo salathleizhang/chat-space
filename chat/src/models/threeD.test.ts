@@ -7,9 +7,18 @@ import {
   THREE_D_MODEL_SELECTIONS,
   THREE_D_PROVIDER_IDS,
   threeDModelFor,
+  tripoModelFor,
 } from "./threeD";
 
 describe("3D 模型注册表", () => {
+  test("产品启用的模型只走 Tripo，Auto 与 P1/P2 选择一致", () => {
+    expect(tripoModelFor(undefined)).toEqual(THREE_D_MODELS["tripo-3-1"]);
+    expect(tripoModelFor("tripo-p1")).toEqual(THREE_D_MODELS["tripo-p1"]);
+    expect(tripoModelFor("tripo-p2")).toEqual(THREE_D_MODELS["tripo-p2"]);
+    for (const selection of ["seed3d-2", "hyper3d-gen2", "hi3d-2"]) {
+      expect(() => tripoModelFor(selection)).toThrow("Only Tripo3D");
+    }
+  });
   test("界面选具体模型：每个条目自带渠道与模型 ID", () => {
     expect(THREE_D_MODEL_SELECTIONS).toEqual([
       "seed3d-2",
