@@ -48,7 +48,7 @@ sessionRoutes.get("/:id", async (c) => {
   const storage = getAssetStorage();
   const path = sessionFile(id);
   if (!(await storage.exists(path))) {
-    return c.json({ error: { code: "not_found", message: `会话「${id}」不存在` } }, 404);
+    return c.json({ error: { code: "not_found", message: `Session "${id}" not found` } }, 404);
   }
   return c.json({ session: await readJson(storage, path, SessionSchema) });
 });

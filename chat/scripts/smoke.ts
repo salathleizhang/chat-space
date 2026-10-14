@@ -22,14 +22,14 @@ const keys = {
 };
 
 if (!paid) {
-  console.log("未设置 SMOKE_PAID=1，未调用任何付费 API。");
+  console.log("SMOKE_PAID=1 is not set, so no paid API was called.");
   process.exit(0);
 }
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-smoke-"));
 const storage = new LocalFileStorage(root);
-await createProject(storage, { name: "冒烟", slug: "smoke" });
-console.log(`产物目录：${root}`);
+await createProject(storage, { name: "smoke", slug: "smoke" });
+console.log(`Artifact directory: ${root}`);
 
 const seedImage = `${projectSourceDir("smoke")}/0-seed.png`;
 await storage.writeBytes(seedImage, Buffer.from(
@@ -41,7 +41,7 @@ type Outcome = { name: string; status: "PASS" | "FAIL" | "SKIP"; detail: string 
 const outcomes: Outcome[] = [];
 async function step(name: string, enabled: boolean, run: () => Promise<string>): Promise<boolean> {
   if (!enabled) {
-    outcomes.push({ name, status: "SKIP", detail: "未配置对应平台的本机密钥" });
+    outcomes.push({ name, status: "SKIP", detail: "no local API key configured for the corresponding provider" });
     return false;
   }
   try {
@@ -59,7 +59,7 @@ async function step(name: string, enabled: boolean, run: () => Promise<string>):
 }
 
 let seedreamImage: string | undefined;
-await step("火山 Seedream", Boolean(keys.volc), async () => {
+await step("Volcano Engine Seedream", Boolean(keys.volc), async () => {
   const result = await runReferenceImageGeneration(
     storage,
     { projectSlug: "smoke", prompt: "a red apple on a plain white background", channel: "volcengine" },
@@ -69,7 +69,7 @@ await step("火山 Seedream", Boolean(keys.volc), async () => {
   return result.images.join(", ");
 });
 
-await step("火山 Seed3D", Boolean(keys.volc), async () => {
+await step("Volcano Engine Seed3D", Boolean(keys.volc), async () => {
   const result = await runSeed3dImageTo3d(
     storage,
     { projectSlug: "smoke", assetSlug: "seed3d-apple", image: seedImage, subdivisionLevel: "low" },
@@ -78,7 +78,7 @@ await step("火山 Seed3D", Boolean(keys.volc), async () => {
   return result.files.join(", ");
 });
 
-await step("火山 Hyper3D", Boolean(keys.volc), async () => {
+await step("Volcano Engine Hyper3D", Boolean(keys.volc), async () => {
   const result = await runArk3dImageTo3d(
     storage, "hyper3d-volc", "smoke", "hyper3d-apple", seedImage,
     { apiKey: keys.volc! },
@@ -86,7 +86,7 @@ await step("火山 Hyper3D", Boolean(keys.volc), async () => {
   return result.files.join(", ");
 });
 
-await step("火山 Hi3D", Boolean(keys.volc && seedreamImage), async () => {
+await step("Volcano Engine Hi3D", Boolean(keys.volc && seedreamImage), async () => {
   const result = await runArk3dImageTo3d(
     storage, "hi3d-volc", "smoke", "hi3d-apple", seedreamImage,
     { apiKey: keys.volc! },

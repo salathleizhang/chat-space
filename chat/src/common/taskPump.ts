@@ -129,8 +129,8 @@ class TaskPumpImpl implements TaskPump {
       this.controller = new AbortController();
       stale.abort(
         new Error(
-          `任务 ${this.taskId} 的单次请求超过 ${Math.round(flight.budgetMs / 1000)} 秒预算，` +
-            "已由外部推进中止（本进程定时器未触发）",
+          `Task ${this.taskId} exceeded the ${Math.round(flight.budgetMs / 1000)} second budget for a single request; ` +
+            "aborted by external polling (this process's timer never fired)",
         ),
       );
       touched = true;

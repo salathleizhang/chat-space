@@ -6,31 +6,31 @@ repo_dir="$(cd "$(dirname "$0")/../.." && pwd)"
 preview_bun="$HOME/.bun/bin/bun"
 preview_node="$(command -v node || true)"
 if [[ ! -x "$preview_bun" ]]; then
-  echo '未找到 Bun，请先安装或调整脚本中的 Bun 路径。' >&2
+  echo 'Bun not found; install it or adjust the Bun path in this script.' >&2
   exit 1
 fi
 if [[ -z "$preview_node" ]]; then
-  echo '未找到 Node.js；Vite 的原始 WebSocket 代理需要 Node 运行时。' >&2
+  echo "Node.js not found; Vite's raw WebSocket proxy needs the Node runtime." >&2
   exit 1
 fi
 if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9_-]{1,200}$ ]]; then
-  echo '用法：bash blender/scripts/start-cloud-preview.sh 实际沙箱实例名' >&2
+  echo 'Usage: bash blender/scripts/start-cloud-preview.sh <actual sandbox instance name>' >&2
   exit 1
 fi
 for preview_port in 3906 5195; do
   if lsof -nP -iTCP:"$preview_port" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "端口 $preview_port 已被占用，请先关闭之前的验收预览。" >&2
+    echo "port $preview_port is already in use; close the previous acceptance preview first." >&2
     exit 1
   fi
 done
-read -r -s -p '输入已有的云端桌面密码 VNC_PW（隐藏输入）：' preview_desktop_pass
+read -r -s -p 'Enter the existing cloud desktop password VNC_PW (hidden input): ' preview_desktop_pass
 echo
-read -r -s -p '输入刚保存的 BLENDER_CONTROL_TOKEN（隐藏输入）：' preview_control_token
+read -r -s -p 'Enter the BLENDER_CONTROL_TOKEN you just saved (hidden input): ' preview_control_token
 echo
 if [[ ! "$preview_control_token" =~ ^[A-Za-z0-9_-]{32,128}$ ||
       ! "$preview_desktop_pass" =~ ^[A-Za-z0-9_-]{16,128}$ ||
       "$preview_control_token" == "$preview_desktop_pass" ]]; then
-  echo '密钥格式无效，或命令密钥与桌面密码相同；未启动服务。' >&2
+  echo 'Invalid credential format, or the control token equals the desktop password; no service was started.' >&2
   exit 1
 fi
 export BLENDER_ENABLED=1
@@ -66,6 +66,6 @@ preview_chat_pid=$!
   exec "$preview_node" node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5195 --strictPort
 ) &
 preview_vite_pid=$!
-echo '验收预览：http://127.0.0.1:5195/app/cloud-public-check'
-echo '请保留此终端；Ctrl+C 关闭本次本地预览。云端实例仍按平台生命周期到期。'
+echo 'Acceptance preview: http://127.0.0.1:5195/app/cloud-public-check'
+echo 'Keep this terminal open; Ctrl+C closes this local preview. The cloud instance still expires on the platform lifecycle.'
 wait "$preview_chat_pid" "$preview_vite_pid"

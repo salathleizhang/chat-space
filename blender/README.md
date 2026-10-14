@@ -158,7 +158,7 @@ supabase_bucket = "telemetry-screenshots"
 | 工具层（8 个工具、小步闸门、路径映射） | ✅ 已验：21 条测试 |
 | chat/ 全量 | ✅ 573 pass / 0 fail（2026-10-05） |
 | 社区版 addon 能不能在 Blender **5.2** 上装并启用 | ✅ 已验：握手回 `protocol_version 13` / `addon_version [1,8]`、`up_to_date: true`（第 1 层） |
-| `patch/install.py` 端到端 | ✅ 已验：容器里 `[chatspace] 自检通过`、`addon socket 9876 已就绪（等了 14s）`、`中继 9877 已就绪` |
+| `patch/install.py` 端到端 | ✅ 已验：容器里 `[chatspace] self-check passed`、`addon socket 9876 is ready (waited 14s)`、`relay 9877 is ready` |
 | Dockerfile 能不能构建出来 | ✅ 已验：`chatspace-blender:5.2.2-local` 构建成功并长跑（`docker ps` 里 Up） |
 | 容器里的 KasmVNC 启动集成 | ✅ 已验：画面能进 ChatSpace 界面（见 §五之三），且 WS 握手到 101 |
 | "agent 小步建模 → 导出 → 进资产库"真实链路 | ✅ 已验：验收脚本**四层全绿**，导出 1408 字节 / 12 面 / Blender 5.2.2 LTS 的 GLB 并发布成资产（第 4 层） |

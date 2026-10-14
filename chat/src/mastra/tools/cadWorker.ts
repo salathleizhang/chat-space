@@ -34,7 +34,7 @@ self.onmessage = async (event: MessageEvent<CadWorkerRequest>) => {
       "binstl",
     ]);
     if (exitCode !== 0) {
-      reply({ ok: false, error: `OpenSCAD 退出码 ${exitCode}`, log });
+      reply({ ok: false, error: `OpenSCAD exit code ${exitCode}`, log });
       return;
     }
     const stl = instance.FS.readFile("/out.stl");

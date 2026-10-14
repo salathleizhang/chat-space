@@ -72,7 +72,7 @@ import bpy, json
 from mathutils import Vector
 objs = [o for o in bpy.context.scene.objects if o.type == 'MESH']
 if not objs:
-    print("${MARKER} " + json.dumps({"framed": 0, "reason": "场景里没有网格"}))
+    print("${MARKER} " + json.dumps({"framed": 0, "reason": "no mesh in the scene"}))
 else:
     lo = Vector((1e18, 1e18, 1e18)); hi = Vector((-1e18, -1e18, -1e18))
     for o in objs:
@@ -300,7 +300,7 @@ async function runOwnSnippet(snippet: string): Promise<unknown> {
   const marker = parseMarker(result.text);
   if (marker === null) {
     throw new ChatServiceError(
-      `Blender 没有返回预期的结果标记。原始返回：${result.text.slice(0, 400) || "（空）"}`,
+      `Blender did not return the expected result marker. Raw response: ${result.text.slice(0, 400) || "(empty)"}`,
       502,
       "blender_marker_missing",
     );
@@ -315,9 +315,9 @@ async function runOwnSnippet(snippet: string): Promise<unknown> {
 export const blenderSessionTool = createTool({
   id: "blender-session",
   description:
-    "检查 Blender 会话是否可用，返回 Blender 版本、当前场景概况、以及 Blender 的**连接状态**。在任何其它 blender-* 工具之前或用户问「Blender 连上了吗」时用它。\n\n" +
-    "注意区分两件事：**MCP server 起来了**不代表 **Blender 连上了**——社区版的 server 在没有 Blender 时也能启动（它只会往日志里写一句连接被拒）。所以这里问的是 Blender 本身（get_addon_status），不是进程存活。\n\n" +
-    "**什么时候不要用它**：不要为了「确认一下」而在每一步建模之间反复调用——blender-run 已经会带回场景事实。",
+    "Check whether the Blender session is usable, returning the Blender version, an overview of the current scene, and Blender's **connection status**. Use it before any other blender-* tool, or when the user asks \"is Blender connected\".\n\n" +
+    "Be careful to distinguish two things: **the MCP server being up** does not mean **Blender is connected** — the community server can start without Blender (it only writes a line in the log saying the connection was refused). So what is asked about here is Blender itself (get_addon_status), not process liveness.\n\n" +
+    "**When not to use it**: do not call it repeatedly between every modeling step just to \"make sure\" — blender-run already brings back the scene facts.",
   inputSchema: z.object({}),
   execute: async (_input, context) => {
     projectOf(context);
@@ -339,8 +339,8 @@ export const blenderSessionTool = createTool({
           error: status.raw.slice(0, 400),
           diagnostics: mcp.diagnostics,
           hint:
-            "Blender 进程在，但没有 addon 在监听那个端口。请在 Blender 里启用并启动" +
-            "ChatSpace 对应的 MCP 插件（3D 视口侧栏，N 键）。",
+            "The Blender process is there, but no addon is listening on that port. In Blender, enable and start " +
+            "the MCP addon for ChatSpace (3D viewport sidebar, N key).",
         };
       }
       return {
@@ -354,8 +354,8 @@ export const blenderSessionTool = createTool({
         error: toErrorMessage(error),
         diagnostics: mcp.diagnostics,
         hint:
-          "MCP server 没能和 Blender 建立连接。先确认 Blender 在跑、插件已启动、" +
-          "以及 BLENDER_HOST/BLENDER_PORT 指向的是 Blender 所在的那台机器。",
+          "The MCP server could not establish a connection to Blender. First confirm Blender is running, the addon has been started, " +
+          "and BLENDER_HOST/BLENDER_PORT point to the machine where Blender is running.",
       };
     }
   },
@@ -368,9 +368,9 @@ export const blenderSessionTool = createTool({
 export const blenderSceneTool = createTool({
   id: "blender-scene",
   description:
-    "读取当前 Blender 场景的**引擎事实**：每个对象的类型/面数/修改器/位置，以及整个场景的包围盒。可选传 objectName 只看一个对象的细节。\n\n" +
-    "**这是判据，不是描述。**「脚本没报错」不等于「模型建出来了」——bpy 最典型的失败是静默的：脚本成功退出但场景是空的、或者几何退化成 NaN。要判断上一步到底有没有产生东西，看这里的对象数与面数。\n\n" +
-    "**什么时候不要用它**：blender-run 默认已经顺带返回一次场景事实，所以「刚跑完一步想看结果」不需要单独调它；只在「隔了几步之后要重新确认状态」或「要看某个具体对象」时单独调用。",
+    "Read the **engine facts** of the current Blender scene: each object's type/face count/modifiers/location, plus the bounding box of the whole scene. Optionally pass objectName to see the details of just one object.\n\n" +
+    "**This is evidence, not a description.** \"The script did not error\" does not mean \"the model was built\" — bpy's most typical failures are silent: the script exits successfully but the scene is empty, or the geometry degenerates into NaN. To tell whether the previous step actually produced anything, look at the object count and face count here.\n\n" +
+    "**When not to use it**: blender-run already returns the scene facts by default, so \"I just ran a step and want to see the result\" does not need a separate call; call it separately only when \"re-confirming the state after several steps\" or \"wanting to look at one specific object\".",
   inputSchema: z.object({
     objectName: z.string().min(1).optional(),
   }),
@@ -393,15 +393,15 @@ export const blenderSceneTool = createTool({
 export const blenderRunTool = createTool({
   id: "blender-run",
   description:
-    "在 Blender 里执行**一步** bpy 代码（`bpy`、`bmesh`、`mathutils` 已在作用域内），返回代码的输出 + 执行后的场景事实。这是建模主力。\n\n" +
-    "**必须小步。** 单次执行期间 Blender 的主线程被占住，**用户的视口是冻住的**（画面只在两次调用之间刷新）。一次提交一整套建模会让盯着屏幕的人只看到画面卡住、然后啪一下出现成品——那正是这个功能要避免的。正确节奏是：建一个部件 → 看事实 → 加一个修改器 → 看事实 → 布尔 → 看事实。\n\n" +
-    "**每步都要看返回的 facts**（对象数/面数/包围盒）。面数是 0 或包围盒退化说明这一步静默失败了，不要继续往上堆。\n\n" +
-    "`frame` 默认 true：每步之后把视口对准场景，这样用户能看到刚才那一步干了什么。想固定机位对比前后变化时传 false。\n\n" +
-    "**什么时候不要用它**：不要用它做 Blender 之外的事。导出用 blender-export；查 API 或插件签名用 blender-api（猜 operator 参数名会浪费好几轮）；看已装插件用 blender-plugins。\n\n" +
-    "⚠️ **不要用 `bpy.ops.wm.read_factory_settings()` 来清空场景**——那个调用会卸载并重载全部插件，" +
-    "而 ChatSpace 的 socket 服务挂在插件上，**一跑桥接就断了、之后再也连不上**（实测过的单向陷阱）。" +
-    "想从空白开始就删对象：`for o in list(bpy.data.objects): bpy.data.objects.remove(o, do_unlink=True)`。" +
-    "这一条在工具层被直接拦下，所以你会收到一条报错而不是把链路打死。",
+    "Execute **one step** of bpy code in Blender (`bpy`, `bmesh`, `mathutils` are already in scope), returning the code's output + the scene facts after execution. This is the main modeling workhorse.\n\n" +
+    "**It must be small steps.** During a single execution Blender's main thread is occupied, so **the user's viewport is frozen** (the picture only refreshes between two calls). Submitting a whole modeling sequence at once makes the person watching the screen see the picture freeze and then the finished product pop into existence — exactly what this feature is meant to avoid. The right rhythm is: build one part → look at the facts → add one modifier → look at the facts → boolean → look at the facts.\n\n" +
+    "**Look at the returned facts after every step** (object count/face count/bounding box). A face count of 0 or a degenerate bounding box means this step failed silently; do not keep piling more on top.\n\n" +
+    "`frame` defaults to true: after each step the viewport is aimed at the scene, so the user can see what that step just did. Pass false when you want a fixed camera position to compare before and after.\n\n" +
+    "**When not to use it**: do not use it for anything outside Blender. Use blender-export to export; use blender-api to look up API or addon signatures (guessing operator parameter names wastes several turns); use blender-plugins to see installed addons.\n\n" +
+    "⚠️ **Do not use `bpy.ops.wm.read_factory_settings()` to clear the scene** — that call unloads and reloads all addons, " +
+    "and ChatSpace's socket service is attached to the addon, so **the bridge dies the moment it runs and can never reconnect afterward** (a one-way trap confirmed by real testing). " +
+    "To start from a blank scene, delete the objects instead: `for o in list(bpy.data.objects): bpy.data.objects.remove(o, do_unlink=True)`. " +
+    "The tool layer blocks this one outright, so you will get an error instead of killing the link.",
   inputSchema: z.object({
     /** 一段 bpy 代码。作用域里已有 bpy / bmesh / math / Matrix / Vector。 */
     code: z.string().min(1),
@@ -417,19 +417,19 @@ export const blenderRunTool = createTool({
     const killer = BRIDGE_KILLING_CALLS.find((name) => input.code.includes(name));
     if (killer) {
       throw new ChatServiceError(
-        `这段代码里有 \`${killer}\`，它会**卸载并重载全部插件**——而 ChatSpace 的 socket 服务` +
-          `就挂在插件上，所以这一跑桥接就断了，之后**再也连不上**，只能重启 Blender/容器。` +
-          `Blender 不会报错，看起来像"容器坏了"，这是实测过的单向陷阱。\n\n` +
-          `想从空白场景开始请改用删对象（效果一样、不碰插件）：\n\n${SAFE_CLEAR_SNIPPET}`,
+        `This code contains \`${killer}\`, which **unloads and reloads all addons** — and ChatSpace's socket service` +
+          ` is attached to the addon, so the bridge dies the moment it runs and can never reconnect afterward; the only fix is restarting Blender/the container.` +
+          ` Blender does not report an error, so it looks like "the container is broken" — a one-way trap confirmed by real testing.\n\n` +
+          `To start from a blank scene, use object deletion instead (same effect, does not touch addons):\n\n${SAFE_CLEAR_SNIPPET}`,
         400,
         "blender_call_would_kill_bridge",
       );
     }
 
     if (input.code.length > MAX_STEP_CHARS) {      throw new ChatServiceError(
-        `这一步的代码有 ${input.code.length} 字符，超过单步上限 ${MAX_STEP_CHARS}。` +
-          `这基本一定是在一次调用里做完了整套建模——请拆成多步：每一步建一个部件或加一个修改器，` +
-          `每步之后看返回的 facts 再决定下一步。用户的视口在单次执行期间是冻住的，拆开才看得到过程。`,
+        `This step's code is ${input.code.length} characters, over the single-step limit of ${MAX_STEP_CHARS}.` +
+          ` This almost certainly means the whole modeling sequence was done in one call — split it into multiple steps: build one part or add one modifier per step,` +
+          ` and look at the returned facts after each step before deciding the next one. The user's viewport is frozen during a single execution, so only by splitting it can the process be seen.`,
         400,
         "blender_step_too_large",
       );
@@ -473,15 +473,15 @@ export const blenderRunTool = createTool({
     if (frameError) out.frameError = frameError;
     if (ms > SLOW_STEP_MS) {
       out.warning =
-        `这一步跑了 ${(ms / 1000).toFixed(1)} 秒，期间用户的视口是冻住的。` +
-        `下一步请拆得更小。`;
+        `This step ran for ${(ms / 1000).toFixed(1)} seconds, during which the user's viewport was frozen.` +
+        ` Please split the next step smaller.`;
     }
     // 面数为 0 是最典型的静默失败，直接点出来，别让模型自己从一堆 JSON 里找。
     const total = (facts as { totalFaces?: number } | null)?.totalFaces;
     if (typeof total === "number" && total === 0) {
       out.warning =
-        "执行后场景里**一个面都没有**——这一步多半静默失败了（对象没建出来、或者布尔把它减没了）。" +
-        "先修这一步，不要在空场景上继续。";
+        "After execution the scene has **not a single face** — this step most likely failed silently (the object was not created, or a boolean subtracted it away)." +
+        " Fix this step first; do not continue building on an empty scene.";
     }
     return out;
   },
@@ -494,10 +494,10 @@ export const blenderRunTool = createTool({
 export const blenderApiTool = createTool({
   id: "blender-api",
   description:
-    "查 Blender 的 **RNA/API 真实签名**：类型、属性、函数、以及 operator 的参数（名字、类型、是否必填、枚举取值、默认值）。\n\n" +
-    "两种用法：① `query` 查类型/属性/方法/operator，例如 `bpy.ops.mesh.primitive_cube_add`、`Object.ray_cast`、`ShaderNodeTexSky.sky_type`；② `nodeType` 看某个几何节点类型的输入输出。\n\n" +
-    "**这是省轮次的关键工具**：查的是**活着的** RNA 注册表，所以它同时能给出**你安装的社区插件**里 operator 的真实签名（插件注册的 operator 就在 `bpy.ops` 里）。凭记忆猜参数名在 Blender 里代价很高——一次报错就是一轮往返。\n\n" +
-    "**什么时候用它**：不确定某个 operator 的参数名、枚举取值，或者要用某个插件前想确认它的接口；以及 `blender-run` 报「operator not found / context is incorrect」之后。",
+    "Look up Blender's **real RNA/API signatures**: types, properties, functions, and operator parameters (name, type, whether required, enum values, default).\n\n" +
+    "Two usages: ① `query` looks up a type/property/method/operator, for example `bpy.ops.mesh.primitive_cube_add`, `Object.ray_cast`, `ShaderNodeTexSky.sky_type`; ② `nodeType` shows the inputs and outputs of a geometry node type.\n\n" +
+    "**This is the key tool for saving turns**: it queries the **live** RNA registry, so it can also give the real signatures of operators in **the community addons you installed** (operators registered by addons live in `bpy.ops`). Guessing parameter names from memory is very expensive in Blender — one error is one round trip.\n\n" +
+    "**When to use it**: when you are unsure of an operator's parameter names or enum values, or want to confirm an addon's interface before using it; and after `blender-run` reports \"operator not found / context is incorrect\".",
   inputSchema: z.object({
     /** 类型/属性/方法/operator 路径，如 bpy.ops.mesh.primitive_cube_add */
     query: z.string().min(1).optional(),
@@ -507,7 +507,7 @@ export const blenderApiTool = createTool({
   execute: async (input, context) => {
     projectOf(context);
     if (!input.query && !input.nodeType) {
-      throw new ChatServiceError("query 与 nodeType 至少给一个", 400, "blender_api_missing_query");
+      throw new ChatServiceError("Provide at least one of query and nodeType", 400, "blender_api_missing_query");
     }
     const mcp = getBlenderMcp();
     if (input.nodeType) {
@@ -526,9 +526,9 @@ export const blenderApiTool = createTool({
 export const blenderLookTool = createTool({
   id: "blender-look",
   description:
-    "抓一张**当前视口**的截图（PNG），让 agent 自己也能看到场景。\n\n" +
-    "注意它的定位：**这是给 agent 自检用的，不是给用户看的**。用户看到的是实时推流（本地是 Blender 自己的窗口，云端是 KasmVNC/Selkies）。所以别把它当成「给用户展示进度」的手段。\n\n" +
-    "**什么时候用它**：用户明确要求检查、或者用户对已产出的东西提出疑问、或者你要确认某个几何特征（破洞、穿模、比例）单看面数判断不了。**不要**每步都截图——它很慢，而且大部分问题看 blender-run 返回的引擎事实就够了。",
+    "Capture a screenshot (PNG) of the **current viewport**, so the agent itself can see the scene too.\n\n" +
+    "Note what it is for: **this is for the agent's self-check, not for the user**. What the user sees is the live stream (locally Blender's own window; in the cloud KasmVNC/Selkies). So do not treat it as a way to \"show the user progress\".\n\n" +
+    "**When to use it**: the user explicitly asks for a check, or the user questions something already produced, or you need to confirm a geometric feature (holes, interpenetration, proportions) that face counts alone cannot settle. **Do not** screenshot every step — it is slow, and the engine facts returned by blender-run are enough for most problems.",
   inputSchema: z.object({
     /** 图片长边上限（像素），默认 800；越大越慢 */
     maxSize: z.number().int().positive().max(2048).optional(),
@@ -548,8 +548,8 @@ export const blenderLookTool = createTool({
       text: result.text.slice(0, 500),
       ms: result.ms,
       note:
-        "如果这里没有图片数据，说明社区版把 PNG 放在 MCP 的 image content 段里、" +
-        "而本层只解析了 text 段。需要真正拿到 PNG 时补一条 raw content 通路。",
+        "If there is no image data here, it means the community version put the PNG in the MCP's image content block" +
+        " while this layer only parsed the text block. To actually get the PNG, add a raw content path.",
     };
   },
 });
@@ -561,9 +561,9 @@ export const blenderLookTool = createTool({
 export const blenderFrameTool = createTool({
   id: "blender-frame",
   description:
-    "把 Blender 的 3D 视口对准当前场景（或某个对象），让正在看的用户能看见刚做出来的东西。\n\n" +
-    "**这是这个功能能不能「看得见」的关键。** 物体建在原点之外、或者尺寸与当前视野差一个数量级时，用户盯着屏幕只会看到一片空白，会以为 agent 什么都没做。\n\n" +
-    "blender-run 默认已经会做这件事（frame=true），所以通常在「agent 自己挪了相机/改了视角」或「想固定一个机位看整体」时才单独调用它。",
+    "Aim Blender's 3D viewport at the current scene (or a specific object) so the user watching can see what was just made.\n\n" +
+    "**This is the key to whether the feature is \"visible\".** When an object is built outside the origin, or its size differs from the current view by an order of magnitude, the user staring at the screen sees only blank space and will think the agent did nothing.\n\n" +
+    "blender-run already does this by default (frame=true), so usually call it separately only when \"the agent moved the camera/changed the view itself\" or \"you want a fixed camera position to see the whole thing\".",
   inputSchema: z.object({}),
   execute: async (input, context) => {
     projectOf(context);
@@ -578,9 +578,9 @@ export const blenderFrameTool = createTool({
 export const blenderPluginsTool = createTool({
   id: "blender-plugins",
   description:
-    "列出**当前 Blender 实例里已启用**的插件。\n\n" +
-    "两个 MCP 都没有这个能力，而它是用社区插件的前提：查插件 operator 签名要靠 `blender-api`，而那个工具是**按名字查**的——你不知道插件叫什么，就不会去查它。所以要用某个插件（HardOps、Boxcutter、Node Wrangler…）之前，先在这里确认它确实装了并启用了。\n\n" +
-    "**注意**：云端容器里的 Blender 是干净的，只有镜像里打进去的插件。这里返回的清单反映的是**Blender 所在那台机器**，不是你这台 Mac。",
+    "List the addons **enabled in the current Blender instance**.\n\n" +
+    "Neither MCP has this capability, and it is the prerequisite for using community addons: looking up an addon operator's signature relies on `blender-api`, and that tool **looks up by name** — if you do not know what the addon is called, you will not go and look it up. So before using an addon (HardOps, Boxcutter, Node Wrangler…), first confirm here that it is indeed installed and enabled.\n\n" +
+    "**Note**: Blender in the cloud container is clean, with only the addons baked into the image. The list returned here reflects **the machine Blender runs on**, not your Mac.",
   inputSchema: z.object({}),
   execute: async (input, context) => {
     projectOf(context);
@@ -647,8 +647,8 @@ export function mapWorkdirPath(
   const normalizedRoot = blenderRoot.replace(/\/+$/, "");
   if (blenderPath !== normalizedRoot && !blenderPath.startsWith(`${normalizedRoot}/`)) {
     throw new ChatServiceError(
-      `Blender 写出的路径 \`${blenderPath}\` 不在共享目录 \`${blenderRoot}\` 里面，` +
-        `无法映射到宿主机。请确认 BLENDER_WORKDIR 与容器里挂载的目录一致。`,
+      `The path Blender wrote, \`${blenderPath}\`, is not inside the shared directory \`${blenderRoot}\`,` +
+        ` so it cannot be mapped to the host machine. Confirm that BLENDER_WORKDIR matches the directory mounted in the container.`,
       500,
       "blender_workdir_mismatch",
     );
@@ -713,12 +713,12 @@ export async function runBlenderExport(
     const file = cloud ? null : Bun.file(resolveBlenderOutputPath(exported));
     if (file && !(await file.exists())) {
       throw new ChatServiceError(
-        `Blender 报告导出完成，但从 chat/ 这边读不到文件。\n` +
-          `Blender 写的路径：${exported}\n` +
-          `chat/ 读的路径：${resolveBlenderOutputPath(exported)}\n` +
-          `两个进程在同一个文件系统上吗？配了 BLENDER_WORKDIR 就必须同时配 ` +
-          `CHATSPACE_BLENDER_WORKDIR（容器里则是把同一个目录挂给两边）。\n` +
-          `Blender 返回：${result.text.slice(0, 300) || "（空）"}`,
+        `Blender reports the export finished, but the file cannot be read from the chat/ side.\n` +
+          `Path Blender wrote: ${exported}\n` +
+          `Path chat/ reads: ${resolveBlenderOutputPath(exported)}\n` +
+          `Are the two processes on the same filesystem? If BLENDER_WORKDIR is configured, ` +
+          `CHATSPACE_BLENDER_WORKDIR must be configured as well (in a container, mount the same directory for both sides).\n` +
+          `Blender returned: ${result.text.slice(0, 300) || "(empty)"}`,
         502,
         "blender_export_missing_file",
       );
@@ -726,7 +726,7 @@ export async function runBlenderExport(
     const bytes = cloud ? await cloud.downloadExport(exportId) : new Uint8Array(await file!.arrayBuffer());
     if (bytes.byteLength < 1024) {
       throw new ChatServiceError(
-        `导出的 GLB 只有 ${bytes.byteLength} 字节，几乎肯定是坏的（导出中途失败）`,
+        `The exported GLB is only ${bytes.byteLength} bytes, almost certainly corrupt (the export failed midway)`,
         502,
         "blender_export_truncated",
       );
@@ -734,8 +734,8 @@ export async function runBlenderExport(
     const faces = glbTriangleCount(bytes);
     if (faces === 0) {
       throw new ChatServiceError(
-        "导出的 GLB 是 0 个三角面——场景里没有可导出的几何，或者最后一步静默失败了。" +
-          "先用 blender-scene 确认对象数与面数。",
+        "The exported GLB has 0 triangles — there is no exportable geometry in the scene, or the last step failed silently." +
+          " First use blender-scene to confirm the object count and face count.",
         422,
         "blender_export_empty",
       );
@@ -778,7 +778,7 @@ export async function runBlenderExport(
       await publishGeneratedModel(storage, projectSlug, {
         slug: input.assetSlug,
         name: input.name ?? input.assetSlug,
-        intent: input.intent ?? `Blender 建模：${input.name ?? input.assetSlug}`,
+        intent: input.intent ?? `Blender modeling: ${input.name ?? input.assetSlug}`,
         sourceImages: [],
       }, { files: [glbPath] });
     } catch (error) {
@@ -807,12 +807,12 @@ export async function runBlenderExport(
 export const blenderExportTool = createTool({
   id: "blender-export",
   description:
-    "把当前 Blender 场景导出成 GLB，并**发布进本工程的资产库**（成为该资产的新的一代）。这是「用 Blender 建完 → 拿到模型」的最后一步。\n\n" +
-    "发布之后这个模型就有了稳定 asset id，因此：会出现在模型列表里、可以被 place-object 摆放、视口会自动加载、缩略图与检查图都能生成。\n\n" +
-    "**导出前会自动应用修改器**（未应用的修改器不会进 GLB）。**产物会被校验**：0 个三角面或文件被截断都会判失败并如实报错——所以如果这一步报错，先去 blender-scene 看对象数和面数，不要在空场景上反复重试。\n\n" +
-    "**不会覆盖**旧产物：每次导出都是新的一代（索引递增），旧模型保留可回溯。所以「再改一版」是安全的。\n\n" +
-    "⚠️ **这是异步的**：调用立刻返回一个后台任务，导出在后台跑完，**工作台会自动刷新并把新模型显示出来**（不用你或用户手动刷新页面）。所以**完成后不要重复调用它去「确认」**——重复调用会发布出多余的一代。\n\n" +
-    "**什么时候不要用它**：只想要一张图用 blender-look；还没建完不要急着导出。",
+    "Export the current Blender scene as a GLB and **publish it into this project's asset library** (becoming a new generation of that asset). This is the last step of \"finish modeling with Blender → get the model\".\n\n" +
+    "After publishing, the model has a stable asset id, so: it appears in the model list, it can be placed by place-object, the viewport loads it automatically, and thumbnails and inspection sheets can be generated.\n\n" +
+    "**Modifiers are applied automatically before export** (unapplied modifiers do not go into the GLB). **The artifact is validated**: 0 triangles or a truncated file are both judged as failure and reported honestly — so if this step errors, first go to blender-scene to look at the object count and face count, and do not retry repeatedly on an empty scene.\n\n" +
+    "**It does not overwrite** old artifacts: every export is a new generation (the index increments), and old models are kept for traceability. So \"make another version\" is safe.\n\n" +
+    "⚠️ **This is asynchronous**: the call immediately returns a background task, the export finishes in the background, and **the workbench refreshes automatically and shows the new model** (neither you nor the user needs to refresh the page manually). So **after it completes do not call it again to \"confirm\"** — repeated calls publish a superfluous generation.\n\n" +
+    "**When not to use it**: if you only want an image use blender-look; if modeling is not finished, do not rush to export.",
   inputSchema: BlenderExportInputSchema,
   execute: async (input, context) => {
     const projectSlug = projectOf(context);
@@ -837,7 +837,7 @@ export const blenderExportTool = createTool({
     const task = startCustomTask(
       "blender",
       projectSlug,
-      `Blender 导出：${input.name ?? input.assetSlug}`,
+      `Blender export: ${input.name ?? input.assetSlug}`,
       () =>
         runBlenderExport(getAssetStorage(), projectSlug, {
           assetSlug: input.assetSlug,
@@ -849,8 +849,8 @@ export const blenderExportTool = createTool({
     return {
       task: { id: task.id, subject: task.subject, status: task.status },
       note:
-        "导出已在后台开始，完成后工作台会自动刷新模型列表并把它显示出来。" +
-        "你不用手动刷新页面；也不要重复调用这个工具等结果。",
+        "The export has started in the background; when it finishes the workbench will automatically refresh the model list and show it." +
+        " You do not need to refresh the page manually; and do not call this tool again to wait for the result.",
     };
   },
 });

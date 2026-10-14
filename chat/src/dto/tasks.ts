@@ -107,18 +107,18 @@ export const Start3dBatchRequestSchema = z
   })
   .superRefine((req, ctx) => {
     if (req.provider === "hi3d-volc" && req.faceCount && req.faceCount < 100000) {
-      ctx.addIssue({ code: "custom", message: "Hi3D 面数需在 10 万至 200 万之间" });
+      ctx.addIssue({ code: "custom", message: "Hi3D face count must be between 100,000 and 2,000,000" });
     }
     if (req.provider === "hyper3d-volc" && req.faceCount && req.faceCount > 1000000) {
-      ctx.addIssue({ code: "custom", message: "Hyper3D Raw 网格最多 100 万面" });
+      ctx.addIssue({ code: "custom", message: "Hyper3D Raw meshes are limited to 1,000,000 faces" });
     }
     if (req.provider === "tripo-direct") {
       if (!req.tripo3dApiKey) {
-        ctx.addIssue({ code: "custom", message: "provider=tripo-direct 需要 tripo3dApiKey" });
+        ctx.addIssue({ code: "custom", message: "provider=tripo-direct requires tripo3dApiKey" });
       }
     } else {
       if (!req.seed3dApiKey && !req.volcengineApiKey) {
-        ctx.addIssue({ code: "custom", message: "本机 chat/.env 未配置 VOLC_KEY" });
+        ctx.addIssue({ code: "custom", message: "VOLC_KEY is not configured in the local chat/.env" });
       }
     }
   });

@@ -7,7 +7,7 @@ import { z } from "zod";
 
 export const SlugSchema = z
   .string()
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "slug 只能是小写字母数字与连字符");
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "slug may only contain lowercase letters, digits, and hyphens");
 export type Slug = z.infer<typeof SlugSchema>;
 
 /** 逻辑路径：相对资产库根，禁绝对路径与目录穿越（云迁移纪律 ①） */
@@ -20,7 +20,7 @@ export const LogicalPathSchema = z
       !/^[a-zA-Z]:/.test(p) &&
       !p.split("/").includes("..") &&
       !p.split("/").includes(""),
-    { message: "必须是相对资产库根的逻辑路径（无绝对路径、无 ..、无空段）" },
+    { message: "Must be a logical path relative to the asset library root (no absolute path, no .., no empty segment)" },
   );
 export type LogicalPath = z.infer<typeof LogicalPathSchema>;
 
@@ -81,7 +81,7 @@ export const ObjectBoxSchema = z
     z.number().min(0).max(1),
   ])
   .refine(([x0, y0, x1, y1]) => x1 > x0 && y1 > y0, {
-    message: "包围框必须满足 x1 > x0 且 y1 > y0",
+    message: "Bounding box must satisfy x1 > x0 and y1 > y0",
   });
 export type ObjectBox = z.infer<typeof ObjectBoxSchema>;
 
@@ -374,7 +374,7 @@ export function migrateSceneLayout(
   const parsed = StoredSceneLayoutSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(
-      `场景文档不符合契约：${parsed.error.issues
+      `Scene document does not match the contract: ${parsed.error.issues
         .map((i) => `${i.path.join(".")}: ${i.message}`)
         .join("; ")}`,
     );
@@ -382,7 +382,7 @@ export function migrateSceneLayout(
   const stored = parsed.data;
   if (stored.schemaVersion > SCENE_SCHEMA_VERSION) {
     throw new Error(
-      `场景文档的 schemaVersion=${stored.schemaVersion} 高于当前支持的 ${SCENE_SCHEMA_VERSION}，请升级应用后再打开该工程`,
+      `Scene document schemaVersion=${stored.schemaVersion} is higher than the supported ${SCENE_SCHEMA_VERSION}; upgrade the app before opening this project`,
     );
   }
   // v1/v2 → v3：两张表从 slug 键改写为稳定 id 键。
@@ -446,7 +446,7 @@ export const RequestSidecarSchema = z.object({
   params: z
     .record(z.string(), z.unknown())
     .refine((params) => !containsSecretKey(params), {
-      message: "请求侧写不得包含密钥类字段（BYOK：key 只活在请求生命周期内）",
+      message: "The request sidecar must not contain key-like fields (BYOK: the key only lives for the lifetime of the request)",
     }),
   status: RequestStatusSchema,
   outputs: z.array(

@@ -19,7 +19,7 @@ test("超时文案用调用方给的主语，不再写死 Seed3D", async () => {
       timeoutMs: 60,
       pollIntervalMs: 1,
     }),
-  ).rejects.toThrow("Hi3D 任务超时（id=cgt-hi3d，可凭侧写续查）");
+  ).rejects.toThrow("Hi3D task timed out (id=cgt-hi3d; resume the poll from the sidecar)");
 });
 
 test("缺省主语仍是 Seed3D（直连渠道不受影响）", async () => {
@@ -30,7 +30,7 @@ test("缺省主语仍是 Seed3D（直连渠道不受影响）", async () => {
       timeoutMs: 60,
       pollIntervalMs: 1,
     }),
-  ).rejects.toThrow("Seed3D 任务超时（id=cgt-seed，可凭侧写续查）");
+  ).rejects.toThrow("Seed3D task timed out (id=cgt-seed; resume the poll from the sidecar)");
 });
 
 test("终态失败的文案也带主语", async () => {
@@ -38,5 +38,5 @@ test("终态失败的文案也带主语", async () => {
     Response.json({ status: "failed", error: { message: "nope" } })) as typeof fetch;
   await expect(
     waitForSeed3dTask("cgt-x", { apiKey: "k", label: "Hyper3D", fetchFn: failed }),
-  ).rejects.toThrow("Hyper3D 任务失败：nope");
+  ).rejects.toThrow("Hyper3D task failed: nope");
 });

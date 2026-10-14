@@ -79,7 +79,7 @@ describe("fetchWithTimeout", () => {
     expect(error).toBeInstanceOf(ChatServiceError);
     expect((error as ChatServiceError).code).toBe("request_timeout");
     expect((error as ChatServiceError).status).toBe(504);
-    expect((error as ChatServiceError).message).toContain("测试请求超时");
+    expect((error as ChatServiceError).message).toContain("request timed out");
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 

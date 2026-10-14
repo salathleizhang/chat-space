@@ -136,14 +136,14 @@ export async function runAnalyzeReference(
     !IMAGE_EXT_RE.test(ext)
   ) {
     throw new ChatServiceError(
-      `参考图不属于当前项目或格式不受支持：${input.image}`,
+      `The reference image does not belong to the current project or its format is not supported: ${input.image}`,
       400,
       "invalid_reference_image",
     );
   }
   if (!(await storage.exists(input.image))) {
     throw new ChatServiceError(
-      `参考图不存在：${input.image}`,
+      `Reference image does not exist: ${input.image}`,
       404,
       "reference_image_not_found",
     );
@@ -181,8 +181,8 @@ export async function runAnalyzeReference(
   );
   return {
     runId,
-    title: `在「${analysis.sceneName}」中发现 ${objects.length} 个可生成对象`,
-    description: "请确认要建立为 3D 资产的对象；未选择的对象不会落盘。",
+    title: `Found ${objects.length} objects that can be generated in "${analysis.sceneName}"`,
+    description: "Please confirm which objects to create as 3D assets; unselected objects will not be written to disk.",
     objects,
   };
 }
@@ -199,7 +199,7 @@ async function pendingRunPath(projectSlug: string, runId?: string): Promise<stri
     const path = parsed.success ? pendingAnalysisPath(projectSlug, parsed.data) : "";
     if (path && await storage.exists(path)) return path;
     throw new ChatServiceError(
-      `没有可恢复的参考图分析 run「${runId}」（可能不存在或已经确认过，请重新调用 analyze-reference）`,
+      `There is no recoverable reference image analysis run "${runId}" (it may not exist or may already have been confirmed; call analyze-reference again)`,
       404,
       "run_not_found",
     );
@@ -209,8 +209,8 @@ async function pendingRunPath(projectSlug: string, runId?: string): Promise<stri
   if (pending.length === 1) return `${projectDir(projectSlug)}/${pending[0]}`;
   throw new ChatServiceError(
     pending.length === 0
-      ? "没有待确认的参考图分析，请重新调用 analyze-reference"
-      : "当前项目有多份待确认的参考图分析，请指定 runId",
+      ? "There is no reference image analysis pending confirmation; call analyze-reference again"
+      : "The current project has multiple reference image analyses pending confirmation; specify a runId",
     409,
     pending.length === 0 ? "run_not_found" : "multiple_pending_runs",
   );
@@ -247,7 +247,7 @@ export async function runConfirmReferenceAssets(
           : confirmation.allSelected;
         if (!matchesPreviousSelection) {
           throw new ChatServiceError(
-            "这次参考图分析已经用另一份对象选择启动过 SceneJob；如需更改选择，请重新调用 analyze-reference",
+            "This reference image analysis has already started a SceneJob with a different object selection; to change the selection, call analyze-reference again",
             409,
             "confirmation_selection_mismatch",
           );
@@ -268,7 +268,7 @@ export async function runConfirmReferenceAssets(
   );
   if (pending.projectSlug !== projectSlug) {
     throw new ChatServiceError(
-      "参考图分析 run 属于其他项目，无法在当前项目继续",
+      "The reference image analysis run belongs to another project and cannot be continued in the current project",
       409,
       "confirm_reference_assets_project_mismatch",
     );
@@ -282,7 +282,7 @@ export async function runConfirmReferenceAssets(
   );
   if (unknownSlugs.length > 0) {
     throw new ChatServiceError(
-      `对象选择不属于这次参考图分析：${unknownSlugs.join("、")}`,
+      `Object selection does not belong to this reference image analysis: ${unknownSlugs.join(", ")}`,
       409,
       "unknown_selected_objects",
     );
@@ -292,7 +292,7 @@ export async function runConfirmReferenceAssets(
     // 空选择（[] 或全不匹配的 slug）不能静默清空 analysis.json 并消费 run——
     // 完整场景 SceneJob / generate-reference-images(mode=plate) 都读 analysis.json，会把它清成空。
     throw new ChatServiceError(
-      "没有选中任何候选对象，请至少确认一个对象",
+      "No candidate objects were selected; confirm at least one object",
       409,
       "no_selected_objects",
     );
@@ -352,12 +352,12 @@ export async function runConfirmReferenceAssets(
 export const analyzeReferenceTool = createTool({
   id: "analyze-reference",
   description:
-    "把本条用户消息明确附带的图片作为完整场景生成的正式参考图，并产出等待用户确认的对象候选（免费，本地落盘，不会再调用另一个 LLM）。你已经能直接看到当前图片：请按实际画面填写场景描述，并把每件可独立拿起、独立建模的原子物品列入 objects；不要把墙、地面、地毯、天空、水面列为对象，也不要把一组家具合并成套装。**每个对象都要给出归一化包围框 box=[x0,y0,x1,y1]（原点左上、取值 0–1，紧贴该物体自身外轮廓，不要把地面投影、阴影或相邻物体框进去），并尽量给出 heightMeters 真实高度**；缺失 box 的对象无法被自动摆回 3D 场景。同时按你的观察填写 camera：horizonRow（地平线所在的归一化行，0 是图顶，相机水平时约等于画面中线）、cameraHeightMeters（拍摄高度，站立手持约 1.4–1.6）、verticalFovDeg（竖直视场角，手机主摄约 55–70）——摆放要靠这三个值把像素换算成米。用户确认后把返回的 runId 和可选 selectedSlugs 直接交给 start-scene-job。普通看图、截图排错、设计评价不调用。",
+    "Use the image explicitly attached to this user message as the official reference image for full scene generation, and produce object candidates awaiting user confirmation (free, written to disk locally, does not call another LLM). You can already see the current image directly: fill in the scene description according to the actual picture, and list in objects every atomic item that can be picked up and modeled independently; do not list walls, floors, carpets, sky, or water as objects, and do not merge a group of furniture into a set. **Every object must be given a normalized bounding box box=[x0,y0,x1,y1] (origin at top-left, values 0–1, tightly following the object's own outline; do not frame the ground projection, shadows, or neighboring objects), and give the real heightMeters where possible**; objects missing box cannot be automatically placed back into the 3D scene. Also fill in camera according to your observation: horizonRow (the normalized row where the horizon is; 0 is the top of the image; approximately the image centerline when the camera is level), cameraHeightMeters (shooting height; about 1.4–1.6 for a standing handheld shot), verticalFovDeg (vertical field of view; about 55–70 for a phone main camera) — placement relies on these three values to convert pixels into meters. After the user confirms, pass the returned runId and the optional selectedSlugs directly to start-scene-job. Do not call it for ordinary image viewing, screenshot debugging, or design critique.",
   inputSchema: AnalyzeReferenceDraftSchema,
   execute: async (input, context) => {
     if (!referenceAnalysisAllowed(context)) {
       throw new ChatServiceError(
-        "本条消息没有明确要求把附图作为参考图提取 3D 资产",
+        "This message does not explicitly ask to extract 3D assets from the attached image as a reference image",
         400,
         "reference_analysis_intent_required",
       );
@@ -366,8 +366,8 @@ export const analyzeReferenceTool = createTool({
     if (images.length !== 1) {
       throw new ChatServiceError(
         images.length === 0
-          ? "本条消息没有附带图片，不能启动参考图资产提取"
-          : "本条消息附带多张图片，当前参考图资产提取只支持单图",
+          ? "This message has no attached image, so reference image asset extraction cannot be started"
+          : "This message has multiple attached images; reference image asset extraction currently supports only a single image",
         400,
         "reference_image_required",
       );

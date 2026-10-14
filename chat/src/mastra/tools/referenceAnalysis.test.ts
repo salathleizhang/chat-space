@@ -157,7 +157,7 @@ describe("analyze-reference / 场景确认服务", () => {
           }),
         } as never,
       ),
-    ).rejects.toThrow("本条消息没有附带图片");
+    ).rejects.toThrow("This message has no attached image");
   });
 
   test("普通附图消息即使有图片也不能启动参考图资产提取", () => {
@@ -172,7 +172,7 @@ describe("analyze-reference / 场景确认服务", () => {
           }),
         } as never,
       ),
-    ).rejects.toThrow("没有明确要求");
+    ).rejects.toThrow("does not explicitly ask");
   });
 
   test("分析停在对象确认站 → 确认后只落候选，不点火或创建空资产", async () => {
@@ -253,7 +253,7 @@ describe("analyze-reference / 场景确认服务", () => {
     const first = await runAnalyzeReference("multiple-pending", { image, analysis: GARAGE_ANALYSIS });
     const second = await runAnalyzeReference("multiple-pending", { image, analysis: GARAGE_ANALYSIS });
 
-    await expect(runConfirmReferenceAssets("multiple-pending", {})).rejects.toThrow("请指定 runId");
+    await expect(runConfirmReferenceAssets("multiple-pending", {})).rejects.toThrow("specify a runId");
     await runConfirmReferenceAssets("multiple-pending", { runId: second.runId });
     expect(await storage.exists(`${projectDir("multiple-pending")}/.analyze-reference-${first.runId}.json`)).toBe(true);
   });
@@ -271,7 +271,7 @@ describe("analyze-reference / 场景确认服务", () => {
   test("找不到 run 时报错", () => {
     expect(
       runConfirmReferenceAssets("ost", { runId: "gone" }),
-    ).rejects.toThrow("重新调用 analyze-reference");
+    ).rejects.toThrow("call analyze-reference again");
   });
 });
 

@@ -184,7 +184,7 @@ export class TripoTaskQuerier {
   }
 
   private async request(ids: string[], requestTimeoutMs: number): Promise<BatchResult> {
-    const label = "Tripo 批量任务查询";
+    const label = "Tripo batch task query";
     const response = await fetchWithTimeout(
       this.options.fetchFn,
       `${this.options.baseUrl}/tasks/list`,
@@ -208,7 +208,7 @@ export class TripoTaskQuerier {
     );
     if (!response.ok) {
       throw new ChatServiceError(
-        `Tripo 任务查询失败（${response.status}）：${JSON.stringify(payload).slice(0, 300)}`,
+        `Tripo task query failed (${response.status}): ${JSON.stringify(payload).slice(0, 300)}`,
         502,
         "tripo_status_failed",
       );
@@ -217,7 +217,7 @@ export class TripoTaskQuerier {
     const tasks = data.tasks;
     if (!tasks || typeof tasks !== "object") {
       throw new ChatServiceError(
-        "Tripo 批量查询响应缺少 data.tasks",
+        "Tripo batch query response is missing data.tasks",
         502,
         "tripo_status_failed",
       );
@@ -227,7 +227,7 @@ export class TripoTaskQuerier {
 
   /** 逐任务查询（旧的 GET /tasks/{id}）：批量不可用时的退路，也是失败面最小的路径 */
   private async requestOne(taskId: string, requestTimeoutMs: number): Promise<Record<string, unknown>> {
-    const label = "Tripo 任务查询";
+    const label = "Tripo task query";
     const response = await fetchWithTimeout(
       this.options.fetchFn,
       `${this.options.baseUrl}/tasks/${taskId}`,
@@ -243,7 +243,7 @@ export class TripoTaskQuerier {
     );
     if (!response.ok) {
       throw new ChatServiceError(
-        `Tripo 任务查询失败（${response.status}）`,
+        `Tripo task query failed (${response.status})`,
         502,
         "tripo_status_failed",
       );
@@ -269,7 +269,7 @@ onTaskPumpTick(flushAllTripoQueriers);
 /** 服务端在 `missed` 里点名（id 非法 / key 不对 / 已过期）时用这个错误，别混成"还在跑" */
 function taskNotFound(taskId: string): ChatServiceError {
   return new ChatServiceError(
-    `Tripo 任务不存在或已过期（task_id=${taskId}）`,
+    `Tripo task does not exist or has expired (task_id=${taskId})`,
     502,
     "tripo_task_not_found",
   );

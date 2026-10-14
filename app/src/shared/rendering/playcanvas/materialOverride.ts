@@ -101,9 +101,9 @@ export function createOverrideTextureLoader(app: unknown): (url: string) => Prom
     };
     return new Promise((resolve, reject) => {
       assets.loadFromUrl(url, "texture", (err, asset) => {
-        if (err) { reject(new Error(`贴图加载失败: ${err instanceof Error ? err.message : JSON.stringify(err)}`)); return; }
+        if (err) { reject(new Error(`texture load failed: ${err instanceof Error ? err.message : JSON.stringify(err)}`)); return; }
         const resource = (asset as { resource?: unknown }).resource;
-        if (!resource) { reject(new Error("贴图资源为空")); return; }
+        if (!resource) { reject(new Error("the texture resource is empty")); return; }
         void pc;
         resolve(resource);
       });

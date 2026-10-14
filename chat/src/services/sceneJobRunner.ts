@@ -47,7 +47,7 @@ function requireRunKey(keys: RunKeys, name: "volcengineApiKey" | "seed3dApiKey" 
   const value = keys[name];
   if (value) return value;
   throw new ChatServiceError(
-    `完整场景生成需要本机 chat/.env 配置 ${name === "worldLabsApiKey" ? "WORLDLABS_KEY" : "VOLC_KEY"}`,
+    `Full scene generation requires ${name === "worldLabsApiKey" ? "WORLDLABS_KEY" : "VOLC_KEY"} to be configured in the local chat/.env`,
     401,
     "scene_job_missing_key",
   );
@@ -93,7 +93,7 @@ async function updateNode(
   return mutateSceneJob(storage, job.projectSlug, job.id, (current) => {
     const previous = current.nodes[nodeId];
     if (!previous) {
-      throw new ChatServiceError(`场景节点不存在：${nodeId}`, 500, "scene_node_missing");
+      throw new ChatServiceError(`Scene node does not exist: ${nodeId}`, 500, "scene_node_missing");
     }
     return {
       ...current,
@@ -119,8 +119,8 @@ async function waitForModelTask(projectSlug: string, taskId: string): Promise<st
     MODEL_TASK_WAIT_TIMEOUT_MS,
     () =>
       new ChatServiceError(
-        `等待物体生成任务超时（task_id=${taskId}）：超过 ${MODEL_TASK_WAIT_TIMEOUT_MS / 60_000} 分钟仍未结束。` +
-          "产物可能已经落盘，先用 list-generation-tasks 确认，再用 repair-assets 补齐缺失文件。",
+        `Timed out waiting for the object generation task (task_id=${taskId}): still not finished after ${MODEL_TASK_WAIT_TIMEOUT_MS / 60_000} minutes. ` +
+          "The artifacts may already be on disk; confirm with list-generation-tasks first, then fill in any missing files with repair-assets.",
         504,
         "scene_model_wait_timeout",
       ),
@@ -136,14 +136,14 @@ async function waitForModelTask(projectSlug: string, taskId: string): Promise<st
       }
       if (task.status === "failed") {
         throw new ChatServiceError(
-          `物体生成失败：${task.error ?? "未知错误"}`,
+          `Object generation failed: ${task.error ?? "unknown error"}`,
           502,
           "scene_model_failed",
         );
       }
       const files = renderablePathsFromResult(task.result);
       if (files.length === 0) {
-        throw new ChatServiceError("物体生成完成但没有可渲染模型文件", 502, "scene_model_empty");
+        throw new ChatServiceError("Object generation finished but there is no renderable model file", 502, "scene_model_empty");
       }
       return files;
     }
@@ -161,7 +161,7 @@ async function executeReferenceNode(
   mayReuse: boolean,
 ): Promise<string[]> {
   const object = spec.objects.find((candidate) => candidate.slug === node.objectSlug);
-  if (!object) throw new ChatServiceError(`场景对象不存在：${node.objectSlug}`, 409, "scene_object_missing");
+  if (!object) throw new ChatServiceError(`Scene object does not exist: ${node.objectSlug}`, 409, "scene_object_missing");
 
   if (mayReuse) {
     const candidates = await readCandidates(storage, job.projectSlug);
@@ -221,7 +221,7 @@ async function executeWorldNode(
 ): Promise<string[]> {
   const current = await readSceneJob(storage, job.projectSlug, job.id);
   const plate = current.nodes.plate?.outputs[0];
-  if (!plate) throw new ChatServiceError("干净底板节点没有输出", 409, "scene_plate_missing");
+  if (!plate) throw new ChatServiceError("The clean plate node has no output", 409, "scene_plate_missing");
   const prompt = composeEmptyWorldPrompt({
     schemaVersion: 1,
     sceneName: spec.sceneName,
@@ -263,10 +263,10 @@ async function executeModelNode(
   keys: RunKeys,
 ): Promise<string[]> {
   const object = spec.objects.find((candidate) => candidate.slug === node.objectSlug);
-  if (!object) throw new ChatServiceError(`场景对象不存在：${node.objectSlug}`, 409, "scene_object_missing");
+  if (!object) throw new ChatServiceError(`Scene object does not exist: ${node.objectSlug}`, 409, "scene_object_missing");
   const current = await readSceneJob(storage, job.projectSlug, job.id);
   const reference = current.nodes[`reference:${object.slug}`]?.outputs[0];
-  if (!reference) throw new ChatServiceError(`对象「${object.name}」没有参考图输出`, 409, "scene_reference_missing");
+  if (!reference) throw new ChatServiceError(`Object "${object.name}" has no reference image output`, 409, "scene_reference_missing");
 
   const identityPath = assetIdentityFile(job.projectSlug, object.slug);
   if (await storage.exists(identityPath)) {
@@ -289,7 +289,7 @@ async function executeModelNode(
     [{ slug: object.slug, name: object.name, intent: object.description, sourceImages: [reference] }],
     { seed3dApiKey: requireRunKey(keys, "seed3dApiKey") },
   )[0];
-  if (!task) throw new ChatServiceError("无法创建 Seed3D 任务", 500, "scene_model_task_missing");
+  if (!task) throw new ChatServiceError("Could not create the Seed3D task", 500, "scene_model_task_missing");
   await updateNode(storage, job, node.id, (currentNode) => ({
     ...currentNode,
     taskIds: [...new Set([...currentNode.taskIds, task.id])],
@@ -386,10 +386,10 @@ export async function runSceneJob(
 ): Promise<{ jobId: string; specRevision: number; outputs: string[] }> {
   const storage = getAssetStorage();
   const spec = await readSceneSpec(storage, projectSlug);
-  if (!spec) throw new ChatServiceError("场景规格不存在", 409, "scene_spec_missing");
+  if (!spec) throw new ChatServiceError("Scene spec does not exist", 409, "scene_spec_missing");
   const initial = await readSceneJob(storage, projectSlug, jobId);
   if (initial.specRevision !== spec.revision) {
-    throw new ChatServiceError("场景任务与当前规格版本不一致", 409, "scene_spec_revision_conflict");
+    throw new ChatServiceError("The scene job does not match the current spec revision", 409, "scene_spec_revision_conflict");
   }
 
   // 完整新任务仍会在任何付费请求前验证三类凭证；局部重跑只要求它
@@ -435,13 +435,13 @@ export async function runSceneJob(
     }
     const failures = activeNodes.filter((node) => node.status === "failed");
     const message = failures.length > 0
-      ? failures.map((node) => `${node.id}：${node.error ?? "未知错误"}`).join("；")
-      : "场景节点之间存在无法解锁的依赖";
+      ? failures.map((node) => `${node.id}: ${node.error ?? "unknown error"}`).join("; ")
+      : "The scene nodes have a dependency that cannot be unblocked";
     await mutateSceneJob(storage, projectSlug, jobId, (current) => ({
       ...current,
       status: "failed",
     }));
-    throw new ChatServiceError(`完整场景生成未完成：${message}`, 502, "scene_job_failed");
+    throw new ChatServiceError(`Full scene generation did not finish: ${message}`, 502, "scene_job_failed");
   }
 }
 
@@ -458,7 +458,7 @@ export async function startSceneJobExecution(
   const task = startCustomTask(
     workflowId,
     projectSlug,
-    "完整场景生成",
+    "Complete scene generation",
     async (execution: TaskExecutionContext) => {
       await execution.setPhase("generating");
       return runSceneJob(projectSlug, jobId, keys);

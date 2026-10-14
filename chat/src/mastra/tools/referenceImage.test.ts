@@ -119,20 +119,20 @@ describe("routeImageGenerateChannel", () => {
       entry: { model: volc },
     });
     expect(() => routeImageGenerateChannel(model, { googleApiKey: "gk", openrouterApiKey: "ok" }))
-      .toThrow("火山方舟");
-    expect(() => routeImageGenerateChannel(model, keys, "google")).toThrow("不支持");
-    expect(() => routeImageGenerateChannel(model, keys, "openrouter")).toThrow("不支持");
+      .toThrow("Volcano Engine Ark");
+    expect(() => routeImageGenerateChannel(model, keys, "google")).toThrow("cannot be called via");
+    expect(() => routeImageGenerateChannel(model, keys, "openrouter")).toThrow("cannot be called via");
   });
 
   test("指定渠道但模型不支持 → 400；没 key → 401", () => {
     expect(() =>
       routeImageGenerateChannel("seedream", { googleApiKey: "gk" }, "google"),
-    ).toThrow("不支持");
+    ).toThrow("cannot be called via");
     expect(() =>
       routeImageGenerateChannel("nano-banana", {}, "google"),
     ).toThrow("API key");
     expect(() => routeImageGenerateChannel("gpt-image-2", {})).toThrow(
-      "都没有配置",
+      "has an API key configured",
     );
   });
 });
@@ -365,7 +365,7 @@ describe("runReferenceImageGeneration", () => {
         { volcengineApiKey: "vk" },
         { fetchFn: countingFetch },
       ),
-    ).rejects.toThrow("已被 world 资产占用");
+    ).rejects.toThrow("is already occupied by a world asset");
     expect(calls).toBe(0);
   });
 
@@ -497,7 +497,7 @@ describe("runReferenceImageGeneration", () => {
         { volcengineApiKey: "vk" },
         { fetchFn: failFetch },
       ),
-    ).rejects.toThrow("图片生成失败");
+    ).rejects.toThrow("Image generation failed");
   });
 
   /**
@@ -541,7 +541,7 @@ describe("runReferenceImageEdit", () => {
         { projectSlug: "ref-demo", assetSlug: "nope-asset", prompt: "x" },
         { googleApiKey: "gk" },
       ),
-    ).rejects.toThrow("不存在");
+    ).rejects.toThrow("does not exist");
   });
 
   test("资产没有参考图时报错", async () => {
@@ -560,7 +560,7 @@ describe("runReferenceImageEdit", () => {
         { projectSlug: "ref-demo", assetSlug: "no-ref-asset", prompt: "x" },
         { googleApiKey: "gk" },
       ),
-    ).rejects.toThrow("还没有参考图");
+    ).rejects.toThrow("has no reference image yet");
   });
 
 
@@ -609,11 +609,11 @@ describe("runReferenceImageEdit", () => {
     expect(result).toMatchObject({ mode: "edit", channel: "volcengine" });
     expect(result.images).toHaveLength(1);
     // 参考图与 3D 是两次同意：工具结果也要带上"先让用户看图、别接着调 start-3d-batch"
-    expect(result.note).toContain("不要在同一条回复里调用 start-3d-batch");
-    expect(result.note).toContain("贴进对话");
+    expect(result.note).toContain("do not call start-3d-batch in the same reply");
+    expect(result.note).toContain("paste them into the conversation");
     // 工作台会在图落盘后自动把 Agent 拉起来接着问：这一轮不许用正文要用户手打「继续」
-    expect(result.note).toContain("自动把你拉起来继续");
-    expect(result.note).toContain("回复继续");
+    expect(result.note).toContain("automatically wake you up to continue");
+    expect(result.note).toContain("reply to continue");
     expect(submittedBodies[0]).toMatchObject({
       model: "doubao-seedream-4-5-251128",
       size: "2K",
@@ -825,7 +825,7 @@ describe("runAttachSourceImage", () => {
   test("本条消息没有附图且没显式指定 → 报错而不是静默拿项目的旧图", async () => {
     await expect(
       runAttachSourceImage(storage, { projectSlug: "attach-demo", assetSlug: "solo" }, []),
-    ).rejects.toThrow("这场对话里还没有用户附带的图片");
+    ).rejects.toThrow("There are no user-attached images in this conversation yet");
   });
 
   /**
@@ -861,7 +861,7 @@ describe("runAttachSourceImage", () => {
         "projects/attach-earlier/source/0-a.png",
         "projects/attach-earlier/source/1-b.png",
       ]),
-    ).rejects.toThrow("指名要用哪一张");
+    ).rejects.toThrow("name which one to use");
   });
 
   test("本条消息带了图时优先用本条那张，不被对话里的旧图抢走", async () => {
@@ -940,7 +940,7 @@ describe("runAttachSourceImage", () => {
         { projectSlug: "attach-demo", assetSlug: "solo" },
         ["projects/attach-demo/source/0-a.png", "projects/attach-demo/source/1-b.png"],
       ),
-    ).rejects.toThrow("指名");
+    ).rejects.toThrow("name which one to use");
   });
 
   test("AI 生成/编辑出来的参考图不能走这条通路", async () => {
@@ -970,7 +970,7 @@ describe("runAttachSourceImage", () => {
         { projectSlug: "attach-demo", assetSlug: "machine", image: generated },
         [],
       ),
-    ).rejects.toThrow("只能绑定用户上传的原图");
+    ).rejects.toThrow("can only bind user-uploaded original images");
   });
 
   test("显式路径必须落在本项目 source/ 内（挡住任意历史文件）", async () => {
@@ -982,7 +982,7 @@ describe("runAttachSourceImage", () => {
         { projectSlug: "attach-demo", assetSlug: "probe", image: outside },
         [],
       ),
-    ).rejects.toThrow("只能绑定本项目 source/");
+    ).rejects.toThrow("You can only bind a source image from this project's source/ directory");
   });
 
   test("不给 assetSlug 时只确认可用，并明说没有目标可被 start-3d-batch 找到", async () => {
@@ -998,7 +998,7 @@ describe("runAttachSourceImage", () => {
 
     expect(result.image).toBe(uploaded);
     expect(result.target).toBeUndefined();
-    expect(result.note).toContain("没有绑定到任何生成目标");
+    expect(result.note).toContain("not bound to any generation target");
     // 没有任何 slug 被登记：start-3d-batch 会报 no_objects，而不是静默拿这张图开工
     expect(await storage.exists(projectCandidatesFile("attach-unbound"))).toBe(false);
   });
@@ -1076,7 +1076,7 @@ describe("runAttachSourceImage", () => {
         { projectSlug: "attach-conflict", assetSlug: "world" },
         [uploaded],
       ),
-    ).rejects.toThrow("已被 world 资产占用");
+    ).rejects.toThrow("is already occupied by a world asset");
   });
 });
 
@@ -1181,6 +1181,6 @@ describe("runReferenceImageEdit 的新对象通路", () => {
         { volcengineApiKey: "vk" },
         { fetchFn: fakeFetch, pollIntervalMs: 1 },
       ),
-    ).rejects.toThrow("已被 world 资产占用");
+    ).rejects.toThrow("is already occupied by a world asset");
   });
 });

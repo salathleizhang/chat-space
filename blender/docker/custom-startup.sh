@@ -47,7 +47,7 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-kasm}"
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || true
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
 
-echo "[chatspace] $(date -Is) 启动脚本开始（DISPLAY=${DISPLAY:-未设置}）"
+echo "[chatspace] $(date -Is) startup script beginning (DISPLAY=${DISPLAY:-unset})"
 
 # ---- 关掉社区版遥测 ---------------------------------------------------------
 # 三个别名全设。**这只是意图**；真正的执行是网络策略（见 blender/README.md）。
@@ -56,7 +56,7 @@ export BLENDER_MCP_DISABLE_TELEMETRY=1
 export MCP_DISABLE_TELEMETRY=1
 
 if [[ ! -x "$BLENDER" ]]; then
-  echo "[chatspace] 致命：找不到 Blender（$BLENDER）" >&2
+  echo "[chatspace] fatal: Blender not found ($BLENDER)" >&2
   exit 1
 fi
 echo "[chatspace] $("$BLENDER" --version | head -1)"
@@ -72,12 +72,12 @@ selfcheck() {
 
 if [[ "${CHATSPACE_SKIP_SELFCHECK:-0}" != "1" ]]; then
   if selfcheck; then
-    echo "[chatspace] 自检通过"
+    echo "[chatspace] self-check passed"
   elif [[ "${CHATSPACE_PATCH_REPAIR:-1}" == "1" ]] \
        && python3 /patch/install.py --blender "$BLENDER" && selfcheck; then
-    echo "[chatspace] 自检最初没过，重装补丁后通过"
+    echo "[chatspace] self-check failed at first, passed after reinstalling the patch"
   else
-    echo "[chatspace] 致命：自检没过，而且重装也没救回来。" >&2
+    echo "[chatspace] fatal: self-check failed and reinstalling did not recover it." >&2
     "$BLENDER" --background --python-expr "exec(open('/patch/selfcheck.py').read())" 2>&1 | tail -30 >&2
     exit 1
   fi
@@ -85,7 +85,7 @@ fi
 
 # ---- 无头模式（显式选择时）---------------------------------------------------
 if [[ "${CHATSPACE_NO_GUI:-0}" == "1" ]]; then
-  echo "[chatspace] CHATSPACE_NO_GUI=1：无头启动。**没有人能看到画面**，只能跑流水线。"
+  echo "[chatspace] CHATSPACE_NO_GUI=1: starting headless. **Nobody can see the viewport**; only pipelines can run."
   exec "$BLENDER" --background --python-expr "import bpy; bpy.ops.mcp.start_server() if hasattr(bpy.ops, 'mcp') else None"
 fi
 
@@ -107,7 +107,7 @@ bpy.ops.wm.save_userpref()
 " 2>&1 | grep -E "chatspace|Error" | head -3 || true
 fi
 
-echo "[chatspace] 启动 Blender（DISPLAY=${DISPLAY:-未设置}）…"
+echo "[chatspace] starting Blender (DISPLAY=${DISPLAY:-unset})…"
 # ⚠️ **初始窗口尺寸按桌面实际大小给，不要写死 1440×900。**
 # 写死的那一版在 1024×768 的桌面上开出一个**比屏幕还大**的窗口，画面上于是永远只能看到
 # 它的一部分 —— 工作台那个实时画面窗无论怎么调都"看不到整个 Blender"。见下面最大化那段。
@@ -118,7 +118,7 @@ WIN_H="${DESKTOP_SIZE#*x}"
 [[ "$WIN_H" =~ ^[0-9]+$ ]] || WIN_H=768
 "$BLENDER" --window-geometry 0 0 "$WIN_W" "$WIN_H" &
 BLENDER_PID=$!
-echo "[chatspace] Blender pid=$BLENDER_PID（初始窗口 ${WIN_W}×${WIN_H}，桌面 ${DESKTOP_SIZE:-未知}）"
+echo "[chatspace] Blender pid=$BLENDER_PID (initial window ${WIN_W}×${WIN_H}, desktop ${DESKTOP_SIZE:-unknown})"
 
 # ---- 把 Blender 窗口最大化 -------------------------------------------------
 #
@@ -133,32 +133,32 @@ if command -v wmctrl >/dev/null 2>&1; then
   for i in $(seq 1 30); do
     if wmctrl -x -r Blender.Blender -b add,maximized_vert,maximized_horz >/dev/null 2>&1; then
       MAXIMIZED=1
-      echo "[chatspace] Blender 窗口已最大化（第 ${i} 次尝试）"
+      echo "[chatspace] Blender window maximized (attempt ${i})"
       break
     fi
     sleep 1
   done
 fi
 if [[ "$MAXIMIZED" != "1" ]]; then
-  echo "[chatspace] 警告：没能最大化 Blender 窗口（缺 wmctrl，或窗口一直没出现）。" >&2
-  echo "[chatspace]       后果：实时画面里只能看到 Blender 窗口的一部分。" >&2
+  echo "[chatspace] warning: could not maximize the Blender window (wmctrl missing, or the window never appeared)." >&2
+  echo "[chatspace]       Consequence: the live view will only show part of the Blender window." >&2
 fi
 
 # 等 addon socket。**这一步让"容器起来了"和"能被驱动了"变成两个可区分的状态**：
 # 编排层/客户端一连就是通的，不用自己重试；而如果它一直不通，日志里看得到。
 for i in $(seq 1 90); do
   if (echo > /dev/tcp/127.0.0.1/9876) 2>/dev/null; then
-    echo "[chatspace] addon socket 9876 已就绪（等了 ${i}s）"
+    echo "[chatspace] addon socket 9876 is ready (waited ${i}s)"
     break
   fi
   if ! kill -0 "$BLENDER_PID" 2>/dev/null; then
-    echo "[chatspace] 致命：Blender 进程已经退出，没等到 socket。" >&2
+    echo "[chatspace] fatal: the Blender process already exited; the socket never arrived." >&2
     exit 1
   fi
   sleep 1
   if [[ "$i" == "90" ]]; then
-    echo "[chatspace] 警告：90 秒还没等到 9876。Blender 在跑，但插件可能没启动监听。" >&2
-    echo "[chatspace] 在 Blender 的 3D 视口侧栏（N 键）里手动 Start 一次即可。" >&2
+    echo "[chatspace] warning: 9876 did not come up within 90 seconds. Blender is running, but the add-on may not have started listening." >&2
+    echo "[chatspace] Open the Blender 3D viewport sidebar (N key) and press Start once to fix it." >&2
   fi
 done
 
@@ -177,7 +177,7 @@ done
 # compose 里映射的是 `127.0.0.1:9876 -> 容器:9877`，
 # 所以 chat/ 那边看到的仍然是熟悉的 9876，配置一个字都不用改。
 if command -v socat >/dev/null 2>&1; then
-  echo "[chatspace] 启动 socat 中继 0.0.0.0:9877 -> 127.0.0.1:9876"
+  echo "[chatspace] starting the socat relay 0.0.0.0:9877 -> 127.0.0.1:9876"
   # ⚠️ `nodelay` 的来历要说清楚：**它是"合理但未单独验证"的选择，不是已证实的因果**。
   #
   # 我最初看到的是「`get_addon_status` 能通、`execute_blender_code` 断连」，据此加了 nodelay。
@@ -190,13 +190,13 @@ if command -v socat >/dev/null 2>&1; then
   socat TCP-LISTEN:9877,fork,reuseaddr,nodelay TCP:127.0.0.1:9876 &
   sleep 1
   if (echo > /dev/tcp/127.0.0.1/9877) 2>/dev/null; then
-    echo "[chatspace] 中继 9877 已就绪"
+    echo "[chatspace] relay 9877 is ready"
   else
-    echo "[chatspace] 警告：中继 9877 没起来，容器外将无法连接" >&2
+    echo "[chatspace] warning: relay 9877 did not start; the container will not be reachable from outside" >&2
   fi
 else
-  echo "[chatspace] 警告：没有 socat，容器外无法连接（addon 只绑 127.0.0.1）" >&2
+  echo "[chatspace] warning: no socat, so the container is unreachable from outside (the add-on only binds 127.0.0.1)" >&2
 fi
 
-echo "[chatspace] 进入等待（保持容器存活）"
+echo "[chatspace] entering wait (keeping the container alive)"
 wait "$BLENDER_PID"

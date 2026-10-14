@@ -35,7 +35,7 @@ function startTripoTask(
   const apiKey = requireContextString(
     context as never,
     "tripo3dApiKey",
-    "本机 chat/.env 未配置 TRIPO_KEY",
+    "TRIPO_KEY is not configured in the local chat/.env",
   );
   const task = startCustomTask(kind, projectSlug, subject, (task) =>
     // 后处理都是「提交 → 轮询 → 下载」，阶段必须落盘（否则全程停在 queued）
@@ -48,7 +48,7 @@ function startTripoTask(
 export const retopologizeTool = createTool({
   id: "retopologize",
   description:
-    "降面工具：通过 Tripo v3 智能重拓扑/减面资产库中的模型（付费操作——启动前须经用户同意；高模生成完成后要主动用 ask-user 问一次）。三角面目标 500–20000，四边面目标 500–10000；省略 targetPolycount 时由 Tripo 自适应。产物是**新的一代**（原高模保留，视口与摆放自动用最新一代），所以减面糊了也不用重新生成。任务化返回",
+    "Decimation tool: intelligently retopologize/decimate a model in the asset library via Tripo v3 (paid operation — user consent is required before starting; after a high-poly model is generated, proactively ask once with ask-user). Triangle target 500–20000, quad target 500–10000; when targetPolycount is omitted, Tripo adapts automatically. The output is a **new generation** (the original high-poly model is kept, and the viewport and placement automatically use the latest generation), so you do not need to regenerate if the decimation looks bad. Returns a task",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     targetPolycount: z
@@ -63,7 +63,7 @@ export const retopologizeTool = createTool({
     bake: z.boolean().optional(),
   }),
   execute: async (input, context) =>
-    startTripoTask(context, "retopo", `重拓扑：${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
+    startTripoTask(context, "retopo", `Retopology: ${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
       // 结果里也带 modelInfo：交付时能如实报出"现在多少面"（降面任务本身不再触发降面卡片）
       runWithGeneratedModelInfo(getAssetStorage(), projectSlug, input.assetSlug, () =>
         runTripoRetopology(
@@ -85,7 +85,7 @@ export const retopologizeTool = createTool({
 export const rigModelTool = createTool({
   id: "rig-model",
   description:
-    "通过 Tripo v3 为资产库中的模型绑骨蒙皮（付费操作——启动前须经用户同意）。支持人形、四足、六足、八足、禽类、蛇形和水生骨架；非 Tripo 资产会自动导入。任务化返回",
+    "Rig and skin a model in the asset library via Tripo v3 (paid operation — user consent is required before starting). Supports humanoid, quadruped, hexapod, octopod, avian, serpentine and aquatic skeletons; non-Tripo assets are imported automatically. Returns a task",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     rigType: z
@@ -95,7 +95,7 @@ export const rigModelTool = createTool({
     tripoRigModel: z.enum(["v1.0-20240301", "v2.5-20260210"]).optional(),
   }),
   execute: async (input, context) =>
-    startTripoTask(context, "rig", `绑骨蒙皮：${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
+    startTripoTask(context, "rig", `Rigging and skinning: ${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
       runTripoRig(
         getAssetStorage(),
         {
@@ -113,14 +113,14 @@ export const rigModelTool = createTool({
 export const generateAnimationTool = createTool({
   id: "generate-animation",
   description:
-    "通过 Tripo v3 /animations/retarget 将官方预设动作应用到已有模型（付费操作——启动前须经用户同意）。必须先完成 rig-model 或 generate-character，工具引用该资产最近一次成功的 Tripo 绑骨任务，不会自动重新绑骨。animation 是官方 preset: 标识：v1.0 人形使用 preset:biped:walk/run/idle 等；v2.5 人形使用 preset:walk/run/idle 等，四足使用 preset:quadruped:walk。动作必须匹配绑骨版本和骨架类型，不支持自由文本生成动作。输出包含模型几何与烘焙动画的 GLB；animateInPlace=true 时原地播放。任务化返回，用 list-generation-tasks 跟进。",
+    "Apply an official preset animation to an existing model via Tripo v3 /animations/retarget (paid operation — user consent is required before starting). You must first complete rig-model or generate-character; the tool references the asset's most recent successful Tripo rig task and will not rig automatically. animation is an official preset: identifier: v1.0 humanoids use preset:biped:walk/run/idle etc.; v2.5 humanoids use preset:walk/run/idle etc., and quadrupeds use preset:quadruped:walk. The animation must match the rig version and skeleton type; free-text animation generation is not supported. The output is a GLB containing the model geometry and baked animation; with animateInPlace=true it plays in place. Returns a task; follow up with list-generation-tasks.",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     animation: z.string().regex(/^preset:[A-Za-z0-9_:-]+$/),
     animateInPlace: z.boolean().optional(),
   }),
   execute: async (input, context) =>
-    startTripoTask(context, "animation", `动画生成：${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
+    startTripoTask(context, "animation", `Animation generation: ${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
       runTripoAnimationRetarget(
         getAssetStorage(),
         { projectSlug, ...input },

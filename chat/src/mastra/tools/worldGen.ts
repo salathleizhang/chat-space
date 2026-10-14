@@ -141,7 +141,7 @@ export async function runWorldGeneration(
       ? (submittedResponse ??
         (() => {
           throw new ChatServiceError(
-            "World Labs operation 完成但没有 response",
+            "World Labs operation completed but returned no response",
             502,
             "worldlabs_bad_response",
           );
@@ -290,7 +290,7 @@ export async function runProjectWorldGeneration(
     const analysisPath = projectAnalysisFile(input.projectSlug);
     if (!(await storage.exists(analysisPath))) {
       throw new ChatServiceError(
-        `项目「${input.projectSlug}」还没有场景分析；生成空环境前请先分析并确认参考图对象`,
+        `Project "${input.projectSlug}" has no scene analysis yet; analyze and confirm the reference-image objects before generating an empty environment`,
         409,
         "analysis_missing",
       );
@@ -300,7 +300,7 @@ export async function runProjectWorldGeneration(
   }
   if (!image && !prompt?.trim()) {
     throw new ChatServiceError(
-      "直接生成世界需要源图或文字 prompt",
+      "Direct world generation requires a source image or a text prompt",
       400,
       "worldlabs_missing_prompt",
     );

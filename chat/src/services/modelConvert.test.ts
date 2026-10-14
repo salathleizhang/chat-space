@@ -80,7 +80,9 @@ describe("convertModel", () => {
     await storage.writeText(path, JSON.stringify({
       asset: { version: "2.0" }, buffers: [{ uri: "missing.bin", byteLength: 4 }],
     }));
-    await expect(convertModel(storage, path, "gltf")).rejects.toThrow("导出缺少资源：missing.bin");
+    await expect(convertModel(storage, path, "gltf")).rejects.toThrow(
+      "Export is missing a resource: missing.bin",
+    );
   });
 
   test("glTF 导出拒绝网络 URL 和越出资产目录的资源", async () => {
@@ -89,7 +91,9 @@ describe("convertModel", () => {
       await storage.writeText(path, JSON.stringify({
         asset: { version: "2.0" }, buffers: [{ uri, byteLength: 4 }],
       }));
-      await expect(convertModel(storage, path, "gltf")).rejects.toThrow("模型资源必须位于资产目录内");
+      await expect(convertModel(storage, path, "gltf")).rejects.toThrow(
+        "Model resources must live inside the asset directory",
+      );
     }
   });
 

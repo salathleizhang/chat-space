@@ -41,19 +41,19 @@ export async function runBrowserJob(id: string) {
     const execution = { id, setPhase: (phase: GenerationTask["phase"]) => patch({ phase }), setAssetSlug: (assetSlug: string) => patch({ assetSlug }) };
     try {
       const result = await withAssetStorage(storage, () => withCloudContext(context, () => runWithTaskPump(id, task.projectSlug, async () => {
-        if (Date.now() - Date.parse(task.createdAt) > 90 * 60_000) throw new Error("任务超过 90 分钟，请凭供应商回执续跑");
+        if (Date.now() - Date.parse(task.createdAt) > 90 * 60_000) throw new Error("The task exceeded 90 minutes; resume with the provider receipt");
         if (!job.started) {
           // Commit before sending any paid request. A lost response requires manual recovery.
           job.started = true; await storage.writeText(localJobPath(id), JSON.stringify(job));
           return executeCloudOperation(task, job.descriptor, execution);
         }
         if (!job.receipts.length && !["scene-job", "resume"].includes(job.descriptor.operation)) {
-          throw new Error("上次执行中断且没有供应商回执；为避免重复付费，没有重新提交。请核对供应商记录后重试");
+          throw new Error("The previous run was interrupted with no provider receipt; to avoid paying twice it was not resubmitted. Check the provider records and try again");
         }
         let resumed: unknown;
         for (const path of job.receipts) {
           const receipt = await readJson(storage, path, RequestSidecarSchema);
-          if (receipt.status !== "succeeded" && !receipt.providerTaskId) throw new Error("提交结果未知，未自动重发付费请求");
+          if (receipt.status !== "succeeded" && !receipt.providerTaskId) throw new Error("The submission result is unknown; the paid request was not resent automatically");
           resumed = await resumeGeneration(storage, path, serverResumeKeys(), execution.setPhase);
         }
         if (["scene-job", "resume"].includes(job.descriptor.operation)) return executeCloudOperation(task, job.descriptor, execution);

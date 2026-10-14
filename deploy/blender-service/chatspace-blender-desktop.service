@@ -1,0 +1,23 @@
+[Unit]
+Description=ChatSpace Blender desktop WebSocket gateway (Node)
+After=network-online.target chatspace-blender.service
+Wants=chatspace-blender.service
+
+[Service]
+Type=simple
+User=chatspace
+Group=chatspace
+WorkingDirectory=/opt/chatspace/repo/chat
+EnvironmentFile=/etc/chatspace/blender-service.conf
+UMask=0077
+ExecStart=/usr/local/bin/node dist/blender-service/gatewayServer.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

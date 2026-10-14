@@ -451,7 +451,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         loadModel: loaders.loadModel,
         createSplat: loaders.createSplat,
         loadCollider: loaders.loadCollider,
-        onError: (spec, error) => { console.warn(`[pcViewport] 资产 ${spec.id} 加载失败`, error); },
+        onError: (spec, error) => { console.warn(`[pcViewport] asset ${spec.id} failed to load`, error); },
       });
       await next.sync(specs);
       if (cancelled) { next.dispose(); return; }
@@ -803,7 +803,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     inspectionDoneRef.current = request.id;
     let cancelled = false;
     if (request.target === "closeup") {
-      console.warn("[pcViewport] 贴近检查尚未在 PlayCanvas 视口上实现，如实回传失败");
+      console.warn("[pcViewport] closeup inspection is not implemented on the PlayCanvas viewport yet; reporting the failure as-is");
       props.onInspectionCaptured(request.id, null);
       return;
     }
@@ -841,7 +841,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         const png = await captureInspectionSheet(app, frame);
         if (!cancelled) props.onInspectionCaptured?.(request.id, png);
       } catch (error) {
-        console.warn("[pcViewport] 检查图失败", error);
+        console.warn("[pcViewport] inspection sheet failed", error);
         if (!cancelled) props.onInspectionCaptured?.(request.id, null);
       }
     })();
@@ -1638,21 +1638,21 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
           // **读引擎事实**，不是读自己的意图：赋值被忽略时这里要如实报出来
           const applied = !!scene.skybox && !!scene.envAtlas;
           skyboxInfoRef.current = {
-            url, applied, error: applied ? null : "赋值被引擎忽略（scene.skybox/envAtlas 仍为空）",
+            url, applied, error: applied ? null : "assignment ignored by the engine (scene.skybox/envAtlas is still empty)",
           };
           // 这一张成功了就收手（候选表是"按顺序试"，不是"全部都要"）
           if (applied) return;
-          lastError = new Error("赋值被引擎忽略（scene.skybox/envAtlas 仍为空）");
+          lastError = new Error("assignment ignored by the engine (scene.skybox/envAtlas is still empty)");
         } catch (error) {
           lastError = error;
-          console.warn(`[pcViewport] 环境贴图加载失败：${url}（引擎只认 img/dds/basis/hdr，不认 .exr）`, error);
+          console.warn(`[pcViewport] environment texture failed to load: ${url} (the engine only accepts img/dds/basis/hdr, not .exr)`, error);
         }
       }
       // 走到这里 = 所有候选都失败，如实记下最后一条错（别把"没有环境贴图"留成沉默状态）
       skyboxInfoRef.current = {
         url: candidates[candidates.length - 1]!,
         applied: false,
-        error: lastError instanceof Error ? lastError.message : String(lastError ?? "没有可用的候选"),
+        error: lastError instanceof Error ? lastError.message : String(lastError ?? "no usable candidate"),
       };
     })();
     return () => { cancelled = true; };
@@ -1685,7 +1685,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
           // 绝对 URL/路径直接用（探针传 `/@fs/…`），相对逻辑路径走 libraryUrl
           const url = /^(https?:)?\//.test(path) ? path : libraryUrl(path);
           try { textures[slot] = await loadTexture(url); }
-          catch (error) { console.warn(`[pcViewport] 覆盖贴图 ${slot} 加载失败`, error); }
+          catch (error) { console.warn(`[pcViewport] override texture ${slot} failed to load`, error); }
         }
         if (cancelled) return;
         applyMaterialOverrides(collectMaterials(entity as never), textures, materialLedgerRef.current);
@@ -1834,7 +1834,7 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       />
       {status ? (
         <div className="absolute inset-0 grid place-items-center bg-surface/80 text-xs text-ink-subtle">
-          PlayCanvas 视口初始化失败：{status}
+          Failed to initialize the PlayCanvas viewport: {status}
         </div>
       ) : null}
     </div>

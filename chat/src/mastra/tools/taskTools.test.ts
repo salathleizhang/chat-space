@@ -185,7 +185,7 @@ describe("start-world-task 的图片来源", () => {
     expect(() => resolveWorldSourceImage({
       sourceMode: "explicit-path",
       sourceImage: "__OMIT__",
-    })).toThrow("必须提供真实的 sourceImage");
+    })).toThrow("requires a real sourceImage logical path");
   });
 });
 

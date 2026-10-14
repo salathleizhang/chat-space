@@ -69,7 +69,7 @@ describe("AskUserCard 待回答", () => {
     expect(container.querySelectorAll("[data-ask-user-details] li")).toHaveLength(2);
     expect(container.querySelectorAll("[data-ask-user-option]")).toHaveLength(2);
     // 推荐项有标记，危险项用 signal 色
-    expect(container.textContent).toContain("推荐");
+    expect(container.textContent).toContain("Recommended");
     expect(optionButton(container, "stop").textContent).toContain("停止");
   });
 
@@ -140,7 +140,7 @@ describe("AskUserCard 终态", () => {
       },
     });
     expect(container.querySelector("[data-ask-user-card]")?.getAttribute("data-ask-user-card")).toBe("answered");
-    expect(container.textContent).toContain("已选择：同意");
+    expect(container.textContent).toContain("Selected: 同意");
     expect(container.querySelectorAll("[data-ask-user-option]")).toHaveLength(0);
     expect(onAnswer).not.toHaveBeenCalled();
   });
@@ -148,7 +148,7 @@ describe("AskUserCard 终态", () => {
   test("被跳过：置灰并说明原因，问题本身仍留在历史里", async () => {
     const { container } = await render({ superseded: true });
     expect(container.querySelector("[data-ask-user-card]")?.getAttribute("data-ask-user-card")).toBe("superseded");
-    expect(container.textContent).toContain("已忽略");
+    expect(container.textContent).toContain("Ignored");
     expect(container.textContent).toContain("是否按上述计划生成？");
     expect(container.querySelectorAll("[data-ask-user-option]")).toHaveLength(0);
   });

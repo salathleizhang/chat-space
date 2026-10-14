@@ -29,7 +29,7 @@ function assertValidModelBytes(bytes: Uint8Array, ext: ModelExtension): void {
     )
   ) {
     throw new ChatServiceError(
-      "Seed3D GLB 产物缺少有效的 glTF 文件头",
+      "Seed3D GLB output is missing a valid glTF header",
       502,
       "seed3d_invalid_glb",
     );
@@ -76,7 +76,7 @@ export async function landSeed3dOutputBytes(
   target: Seed3dOutputTarget,
 ): Promise<string> {
   if (bytes.length === 0) {
-    throw new ChatServiceError("Seed3D 下载产物为空", 502, "seed3d_empty_output");
+    throw new ChatServiceError("Seed3D downloaded output is empty", 502, "seed3d_empty_output");
   }
 
   if (isZip(bytes)) {
@@ -85,7 +85,7 @@ export async function landSeed3dOutputBytes(
       archive = await JSZip.loadAsync(bytes);
     } catch (err) {
       throw new ChatServiceError(
-        `Seed3D 产物 ZIP 无法读取：${err instanceof Error ? err.message : String(err)}`,
+        `Cannot read Seed3D output ZIP: ${err instanceof Error ? err.message : String(err)}`,
         502,
         "seed3d_invalid_archive",
       );
@@ -98,7 +98,7 @@ export async function landSeed3dOutputBytes(
     const ext = selected ? modelExtension(selected.name) : undefined;
     if (!selected || !ext) {
       throw new ChatServiceError(
-        "Seed3D 产物 ZIP 中没有可用模型文件",
+        "No usable model file in the Seed3D output ZIP",
         502,
         "seed3d_archive_no_model",
       );
@@ -107,7 +107,7 @@ export async function landSeed3dOutputBytes(
     const extracted = await selected.async("uint8array");
     if (extracted.length === 0) {
       throw new ChatServiceError(
-        `Seed3D 产物 ZIP 中的模型为空：${selected.name}`,
+        `Model in the Seed3D output ZIP is empty: ${selected.name}`,
         502,
         "seed3d_empty_archive_model",
       );
@@ -134,11 +134,11 @@ export async function downloadAndLandSeed3dOutput(
   // 走公共下载：有限重试 + Range 断点续传（Seed3D 的 GLB/ZIP 也常常几十 MB）。
   const bytes = await downloadBytesWithRetry(url, {
     ...(target.fetchFn ? { fetchFn: target.fetchFn } : {}),
-    label: "Seed3D 产物下载",
+    label: "Seed3D output download",
   });
   if (/\.zip(?:\?|$)/i.test(url) && !isZip(bytes)) {
     throw new ChatServiceError(
-      "Seed3D 返回的 ZIP 产物格式无效",
+      "Seed3D returned a ZIP output in an invalid format",
       502,
       "seed3d_invalid_archive",
     );

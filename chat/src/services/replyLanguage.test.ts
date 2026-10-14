@@ -64,7 +64,9 @@ describe("replyLanguageDirective", () => {
   test("英文指令点名目标语言，并禁止因为中文上下文切成中文", () => {
     const directive = replyLanguageDirective("en");
     expect(directive).toContain("writing in English");
-    expect(directive).toContain("Do not switch to Chinese");
+    expect(directive).toContain(
+      "Do not switch to another language just because the internal project context",
+    );
     // 用户可见文字都算在内：计划标题、ask-user 卡片、资产名
     expect(directive).toContain("plan titles");
     expect(directive).toContain("ask-user card");

@@ -115,13 +115,13 @@ export class ReferenceReuseConsentError extends ChatServiceError {
 
 /** 清单文案：图 + 是否属本轮，模型据此向用户解释"为什么要问"。 */
 function formatAvailable(references: SourceReferenceInfo[]): string {
-  if (references.length === 0) return "（source/ 里没有任何图片）";
+  if (references.length === 0) return "(there are no images in source/ at all)";
   return references
     .map((reference) => {
       const stamp = reference.generatedAt
-        ? `生成于 ${reference.generatedAt}`
-        : "用户上传的原图";
-      return `- ${reference.path}（${stamp}）`;
+        ? `generated at ${reference.generatedAt}`
+        : "original image uploaded by the user";
+      return `- ${reference.path} (${stamp})`;
     })
     .join("\n");
 }
@@ -138,16 +138,16 @@ export function assertReferenceReusable(
   options: ReferenceResolutionOptions,
 ): void {
   if (isReferenceReusableInSession(reference, options.sessionStartedAt)) return;
-  const operation = options.operation ? `${options.operation}：` : "";
+  const operation = options.operation ? `${options.operation}: ` : "";
   throw new ReferenceReuseConsentError(
-    `${operation}没有可自动使用的参考图。` +
-      `原本会默认取最新的那张 ${reference.path}，但它不是本轮会话的产物（而是更早生成的），` +
-      "按纪律不能自动复用。\n" +
-      "当前 source/ 里可用的图：\n" +
+    `${operation}there is no reference image that can be used automatically. ` +
+      `By default the most recent one, ${reference.path}, would have been taken, but it is not a product of the current session (it was generated earlier), ` +
+      "so by discipline it cannot be reused automatically.\n" +
+      "Images currently available in source/:\n" +
       `${formatAvailable(available)}\n` +
-      "下一步：如果确实要用其中一张，**先用 ask-user 卡片向用户确认用哪张**（写清是哪张图、" +
-      "为什么合适、以及要拿它做什么付费操作），得到同意后再调用本工具并显式传入 image 参数；" +
-      "如果这是新对象，就用 generate-reference-images 重新生成一张，不要复用旧图。",
+      "Next step: if you really need to use one of them, **first use an ask-user card to confirm with the user which one to use** (state clearly which image it is, " +
+      "why it is suitable, and what paid operation it will be used for), and only after getting consent call this tool again and pass the image parameter explicitly; " +
+      "if this is a new object, use generate-reference-images to generate a new one instead of reusing an old image.",
     available,
     available
       .filter((candidate) => isReferenceReusableInSession(candidate, options.sessionStartedAt))
@@ -186,7 +186,7 @@ export async function resolveSessionReferenceImage(
 
   if (explicit) {
     if (!(await storage.exists(explicit))) {
-      throw new ChatServiceError(`参考图不存在：${explicit}`, 404, "input_image_missing");
+      throw new ChatServiceError(`Reference image does not exist: ${explicit}`, 404, "input_image_missing");
     }
     if (explicitMustBeFresh) {
       const available = await listSourceReferences(storage, projectSlug);
@@ -213,7 +213,7 @@ export async function resolveSessionReferenceImage(
   const latest = pickLatestSourceImage(await storage.list(sourceDir));
   if (!latest) {
     throw new ChatServiceError(
-      `项目「${projectSlug}」没有可用参考图，请先上传源图或用 generate-reference-images 生成`,
+      `Project "${projectSlug}" has no usable reference image; upload a source image first or generate one with generate-reference-images`,
       409,
       "reference_image_missing",
     );
@@ -241,7 +241,7 @@ export async function assertSelectedReferenceUsable(
   options: ReferenceResolutionOptions,
 ): Promise<void> {
   if (!(await storage.exists(path))) {
-    throw new ChatServiceError(`参考图不存在：${path}`, 404, "input_image_missing");
+    throw new ChatServiceError(`Reference image does not exist: ${path}`, 404, "input_image_missing");
   }
   const available = await listSourceReferences(storage, projectSlug);
   const info = available.find((reference) => reference.path === path) ?? { path };

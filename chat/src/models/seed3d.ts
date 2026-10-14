@@ -91,7 +91,7 @@ async function callArk(
   );
   if (!response.ok) {
     throw new ChatServiceError(
-      `${label} 请求失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
+      `${label} request failed (${response.status}): ${JSON.stringify(body).slice(0, 300)}`,
       502,
       "seed3d_request_failed",
     );
@@ -133,7 +133,7 @@ export async function submitSeed3dTask(
   const id = body.id;
   if (typeof id !== "string" || !id) {
     throw new ChatServiceError(
-      `${options.label ?? "Seed3D"} 提交响应缺少任务 id`,
+      `${options.label ?? "Seed3D"} submit response is missing the task id`,
       502,
       "seed3d_request_failed",
     );
@@ -151,7 +151,7 @@ export async function pollSeed3dTask(
     `/contents/generations/tasks/${encodeURIComponent(taskId)}`,
     {},
     options,
-    { label: `${options.label ?? "Seed3D"} 任务查询`, ...override },
+    { label: `${options.label ?? "Seed3D"} task poll`, ...override },
   );
 }
 
@@ -166,13 +166,13 @@ export async function waitForSeed3dTask(
   const label = options.label ?? "Seed3D";
   const timeoutError = () =>
     new ChatServiceError(
-      `${label} 任务超时（id=${taskId}，可凭侧写续查）`,
+      `${label} task timed out (id=${taskId}; resume the poll from the sidecar)`,
       504,
       "seed3d_timeout",
     );
 
   return pollProviderTask<Record<string, unknown>>({
-    label: `${label} 任务查询`,
+    label: `${label} task poll`,
     timeoutMs: options.timeoutMs ?? 15 * 60_000,
     requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
     pollIntervalMs: options.pollIntervalMs ?? 10_000,
@@ -187,7 +187,7 @@ export async function waitForSeed3dTask(
       if (!TERMINAL_FAIL.has(status)) return undefined;
       const error = result.error as { message?: string } | undefined;
       return new ChatServiceError(
-        `${label} 任务失败：${error?.message ?? status}`,
+        `${label} task failed: ${error?.message ?? status}`,
         502,
         "seed3d_task_failed",
       );

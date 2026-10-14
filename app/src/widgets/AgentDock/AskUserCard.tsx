@@ -193,7 +193,7 @@ export function AskUserCard({
           data-ask-user-result
           className={`mt-3 text-xs leading-5 ${superseded && !answer ? "text-ink-faint" : "text-ink-subtle"}`}
         >
-          {answer ? `已选择：${chosenLabel}` : "已忽略（你在输入框里直接回答了）"}
+          {answer ? `Selected: ${chosenLabel}` : "Ignored (you answered directly in the input box)"}
         </p>
       ) : (
         <div className="mt-3 flex flex-col gap-2">
@@ -238,7 +238,7 @@ export function AskUserCard({
                       {option.label}
                     </span>
                     {option.recommended && (
-                      <Badge className="text-[10px]">推荐</Badge>
+                      <Badge className="text-[10px]">Recommended</Badge>
                     )}
                   </span>
                   {option.description && (
@@ -256,7 +256,7 @@ export function AskUserCard({
               <input
                 data-ask-user-other
                 value={other}
-                placeholder="或者直接输入你的决定"
+                placeholder="Or type your decision directly"
                 className="h-8 min-w-0 flex-1 rounded-control border border-line bg-surface px-2.5 text-xs text-ink outline-none focus:border-accent"
                 onChange={(event) => setOther(event.target.value)}
                 onKeyDown={(event) => {
@@ -287,7 +287,7 @@ export function AskUserCard({
                   submit(checked, labels, other.trim() || undefined);
                 }}
               >
-                确认选择
+                Confirm selection
               </Button>
             </div>
           )}

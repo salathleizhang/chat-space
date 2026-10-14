@@ -43,7 +43,7 @@ export const SaveInspectionParamsSchema = z.object({
   projectSlug: SlugSchema,
   assetSlug: SlugSchema,
   /** 截图批次 id（app 侧用 toolCallId 或时间戳），限定字符集防路径注入 */
-  inspectionId: z.string().regex(INSPECTION_ID_RE, "检查图 id 只能是字母数字、-、_"),
+  inspectionId: z.string().regex(INSPECTION_ID_RE, "The inspection sheet id may only contain letters, digits, -, and _"),
   /** PNG 字节（2×2 四视角合成 sheet） */
   bytes: z.instanceof(Uint8Array),
 });
@@ -57,7 +57,7 @@ export async function saveInspectionSheet(
   const params = SaveInspectionParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
   if (params.bytes.length === 0) {
-    throw new ChatServiceError("检查图内容为空", 400, "empty_inspection");
+    throw new ChatServiceError("The inspection sheet content is empty", 400, "empty_inspection");
   }
   const path = `${assetDir(params.projectSlug, params.assetSlug)}/inspections/${params.inspectionId}.png`;
   await storage.writeBytes(path, params.bytes);
@@ -66,7 +66,7 @@ export async function saveInspectionSheet(
 
 export const SaveSceneInspectionParamsSchema = z.object({
   projectSlug: SlugSchema,
-  inspectionId: z.string().regex(INSPECTION_ID_RE, "检查图 id 只能是字母数字、-、_"),
+  inspectionId: z.string().regex(INSPECTION_ID_RE, "The inspection sheet id may only contain letters, digits, -, and _"),
   /** PNG 字节（单个机位的整场景图） */
   bytes: z.instanceof(Uint8Array),
 });
@@ -80,7 +80,7 @@ export async function saveSceneInspectionSheet(
   const params = SaveSceneInspectionParamsSchema.parse(rawParams);
   await requireProject(storage, params.projectSlug);
   if (params.bytes.length === 0) {
-    throw new ChatServiceError("检查图内容为空", 400, "empty_inspection");
+    throw new ChatServiceError("The inspection sheet content is empty", 400, "empty_inspection");
   }
   const path = `${projectInspectionsDir(params.projectSlug)}/${params.inspectionId}.png`;
   await storage.writeBytes(path, params.bytes);
@@ -99,7 +99,7 @@ export const InspectParamsSchema = z.object({
   target: z
     .enum(["asset", "scene", "closeup"])
     .describe(
-      "asset = 检查一个资产自己的模型（单独看外观）；scene = 检查当前项目的整个场景；closeup = 凑近看某个资产摆在场景里的样子",
+      "asset = inspect a model belonging to one asset (look at its appearance on its own); scene = inspect the entire current project scene; closeup = look up close at how an asset sits in the scene",
     ),
   /** target=asset / closeup 时必填 */
   assetSlug: SlugSchema.optional(),
@@ -122,14 +122,14 @@ const CLOSEUP_HINT =
 export const inspectTool = createTool({
   id: "inspect",
   description:
-    "让工作台渲染一张检查图并交回给你（免费）。“检查这只狗/这个模型”用 target=\"asset\" + assetSlug（默认四视角 ISO/前/右/顶，可用 views 只要某几个面，例如只剩底面）；“检查整个场景/场景摆得对不对”用 target=\"scene\"（按 views[0] 指定的机位拍整张场景图）；“凑近看看它摆在这儿合不合适”（贴合、悬空、穿模、与邻居的间距）用 target=\"closeup\" + assetSlug——相机会真的飞到那个模型旁边拍一张，带着周围环境，拍完飞回原机位。本轮不会返回图片：收到 [Self-check]/[Scene check]/[Close-up check] 后逐视角或按机位对照用户的要求检查（缺件、比例失调、部件断开、贴图错位、摆放不合理都算不合格）。只在用户明确要求检查、或用户对已产出的模型/场景提出疑问时调用；单模型生成完成不要自检。",
+    "Have the workbench render an inspection sheet and hand it back to you (free). Use target=\"asset\" + assetSlug for \"check this dog / this model\" (defaults to four views ISO/front/right/top; views can request just some faces, for example the bottom only); use target=\"scene\" for \"check the whole scene / whether the scene is placed correctly\" (captures the full scene image from the camera view given by views[0]); use target=\"closeup\" + assetSlug for \"look up close at whether it fits here\" (contact, floating, clipping, spacing from neighbors) — the camera really flies next to that model and takes a shot with the surrounding environment, then flies back to its original position. This call returns no image: after you receive [Self-check]/[Scene check]/[Close-up check], check each view or camera angle against what the user asked for (missing parts, wrong proportions, disconnected parts, misaligned textures, and unreasonable placement all count as failing). Call it only when the user explicitly asks for an inspection or questions models/scenes already produced; do not self-check after a single-model generation finishes.",
   inputSchema: InspectParamsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
     const storage = getAssetStorage();
     if (input.target === "closeup") {
       if (!input.assetSlug) {
-        throw new ChatServiceError("target=closeup 时必须给 assetSlug", 400, "missing_asset_slug");
+        throw new ChatServiceError("assetSlug is required when target=closeup", 400, "missing_asset_slug");
       }
       // 与 asset 检查同一道前置：没有可渲染模型时立刻失败，避免 app 侧空转
       const modelPath = await latestAssetModel(storage, projectSlug, input.assetSlug);
@@ -138,12 +138,12 @@ export const inspectTool = createTool({
         target: "closeup" as const,
         assetSlug: input.assetSlug,
         modelPath,
-        note: `已请求工作台把相机飞到 "${input.assetSlug}" 旁边拍一张贴近检查图（拍完相机飞回原机位）。${CLOSEUP_HINT}`,
+        note: `Requested the workbench to fly the camera next to "${input.assetSlug}" for a close-up inspection sheet (the camera flies back to its original position afterwards). ${CLOSEUP_HINT}`,
       };
     }
     if (input.target === "asset") {
       if (!input.assetSlug) {
-        throw new ChatServiceError("target=asset 时必须给 assetSlug", 400, "missing_asset_slug");
+        throw new ChatServiceError("assetSlug is required when target=asset", 400, "missing_asset_slug");
       }
       // 没有可渲染模型时立刻失败，避免 app 侧空转
       const modelPath = await latestAssetModel(storage, projectSlug, input.assetSlug);
@@ -153,7 +153,7 @@ export const inspectTool = createTool({
         assetSlug: input.assetSlug,
         modelPath,
         views: input.views ?? ["iso", "front", "right", "top"],
-        note: "已请求工作台截图。2×2 检查图会随后直接交回，请收到后逐视角对照生成意图检查。",
+        note: "Requested a screenshot from the workbench. The 2×2 inspection sheet will be handed back shortly; once you receive it, check each view against the generation intent.",
       };
     }
     // 整场景：项目里一个可渲染的东西都没有时立刻失败，同样不让 app 空转
@@ -169,7 +169,7 @@ export const inspectTool = createTool({
     );
     if (!candidates.some(Boolean)) {
       throw new ChatServiceError(
-        "项目里还没有可渲染的模型或场景内容",
+        "The project has no renderable models or scene content yet",
         400,
         "empty_scene",
       );
@@ -180,7 +180,7 @@ export const inspectTool = createTool({
       target: "scene" as const,
       view,
       views: INSPECTION_VIEW_IDS,
-      note: `已请求工作台按机位 "${view}" 拍整张场景图（不是某个模型的四方向图）。${SCENE_VIEW_HINT}`,
+      note: `Requested the workbench to capture a full scene image from camera view "${view}" (not a four-direction image of one model). ${SCENE_VIEW_HINT}`,
     };
   },
 });

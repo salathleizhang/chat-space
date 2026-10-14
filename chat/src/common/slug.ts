@@ -9,7 +9,7 @@ export function slugify(input: string): string {
     .replace(/^-+|-+$/g, "");
   const parsed = SlugSchema.safeParse(slug);
   if (!parsed.success) {
-    throw new ChatServiceError(`无法从「${input}」生成合法 slug`, 400, "invalid_slug");
+    throw new ChatServiceError(`Cannot generate a valid slug from "${input}"`, 400, "invalid_slug");
   }
   return parsed.data;
 }

@@ -24,6 +24,8 @@
     "@gltf-transform/functions": "^4.4.1",
     "@mastra/core": "^1.48.0",
     "@playcanvas/splat-transform": "^3.8.0",
+    "@volcengine/openapi": "1.36.2",
+    "@volcengine/tos-sdk": "2.9.1",
     "hono": "^4.12.27",
     "jszip": "^3.10.1",
     "three": "^0.185.1",

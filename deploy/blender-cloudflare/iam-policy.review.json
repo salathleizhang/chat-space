@@ -1,0 +1,21 @@
+{
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "vefaas:CreateSandbox",
+        "vefaas:ListSandboxes",
+        "vefaas:PauseSandbox",
+        "vefaas:ResumeSandbox",
+        "vefaas:SetSandboxTimeout"
+      ],
+      "Resource": ["*"],
+      "Condition": { "StringEquals": { "volc:RequestedRegion": ["cn-beijing"] } }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["tos:GetObject", "tos:PutObject"],
+      "Resource": ["trn:tos:::chatspace-blender-cn-beijing-20261011/blender/*"]
+    }
+  ]
+}

@@ -189,7 +189,7 @@ export async function ensureSceneSpecFromAnalysis(
     const analysisPath = projectAnalysisFile(projectSlug);
     if (!(await storage.exists(analysisPath))) {
       throw new ChatServiceError(
-        `项目「${projectSlug}」还没有已确认的场景分析`,
+        `Project "${projectSlug}" has no confirmed scene analysis yet`,
         409,
         "analysis_missing",
       );
@@ -197,10 +197,10 @@ export async function ensureSceneSpecFromAnalysis(
     const analysis = await readJson(storage, analysisPath, SceneAnalysisSchema);
     const sourceImage = analysis.sources[0];
     if (!sourceImage || !(await storage.exists(sourceImage))) {
-      throw new ChatServiceError("已确认场景的源图不存在", 409, "source_image_missing");
+      throw new ChatServiceError("The source image of the confirmed scene does not exist", 409, "source_image_missing");
     }
     if (analysis.objects.length === 0) {
-      throw new ChatServiceError("已确认场景没有可生成对象", 409, "no_objects");
+      throw new ChatServiceError("The confirmed scene has no generatable object", 409, "no_objects");
     }
 
     const existing = await readSceneSpec(storage, projectSlug);
@@ -217,7 +217,7 @@ export async function ensureSceneSpecFromAnalysis(
       schemaVersion: 1,
       projectSlug,
       revision,
-      revisionReason: existing ? "用新的已确认场景分析替换" : "从已确认场景分析创建",
+      revisionReason: existing ? "Replaced by a new confirmed scene analysis" : "Created from the confirmed scene analysis",
       sourceImage,
       ...(analysis.confirmation?.runId
         ? { sourceAnalysisRunId: analysis.confirmation.runId }
@@ -270,7 +270,7 @@ export async function readSceneJob(
 ): Promise<SceneJob> {
   const path = projectSceneJobFile(projectSlug, jobId);
   if (!(await storage.exists(path))) {
-    throw new ChatServiceError(`场景任务不存在：${jobId}`, 404, "scene_job_not_found");
+    throw new ChatServiceError(`Scene job does not exist: ${jobId}`, 404, "scene_job_not_found");
   }
   return readJson(storage, path, SceneJobSchema);
 }
@@ -340,7 +340,7 @@ export async function reviseSceneSpecAndJob(
   const job = await readSceneJob(storage, projectSlug, jobId);
   if (job.status === "running") {
     throw new ChatServiceError(
-      "场景任务正在执行，请等当前节点结束后再修订对象清单",
+      "The scene job is running; wait for the current node to finish before revising the object list",
       409,
       "scene_job_running",
     );
@@ -348,7 +348,7 @@ export async function reviseSceneSpecAndJob(
   const previous = await readSceneSpec(storage, projectSlug);
   if (!previous || previous.revision !== job.specRevision) {
     throw new ChatServiceError(
-      "场景任务与当前场景规格版本不一致，请先选择要继续的任务",
+      "The scene job does not match the current scene spec revision; first choose which job to continue",
       409,
       "scene_spec_revision_conflict",
     );
@@ -359,17 +359,17 @@ export async function reviseSceneSpecAndJob(
   const existing = new Map(previous.objects.map((object) => [object.slug, object]));
   for (const object of input.addObjects) {
     if (existing.has(object.slug)) {
-      throw new ChatServiceError(`场景对象已存在：${object.slug}`, 409, "scene_object_exists");
+      throw new ChatServiceError(`Scene object already exists: ${object.slug}`, 409, "scene_object_exists");
     }
   }
   for (const slug of remove) {
     if (!existing.has(slug)) {
-      throw new ChatServiceError(`场景对象不存在：${slug}`, 404, "scene_object_not_found");
+      throw new ChatServiceError(`Scene object does not exist: ${slug}`, 404, "scene_object_not_found");
     }
   }
   for (const slug of updates.keys()) {
     if (!existing.has(slug)) {
-      throw new ChatServiceError(`场景对象不存在：${slug}`, 404, "scene_object_not_found");
+      throw new ChatServiceError(`Scene object does not exist: ${slug}`, 404, "scene_object_not_found");
     }
   }
 
@@ -396,7 +396,7 @@ export async function reviseSceneSpecAndJob(
       addedAtRevision: revision,
     })));
   if (objects.length === 0) {
-    throw new ChatServiceError("场景至少需要保留一个对象", 409, "scene_objects_empty");
+    throw new ChatServiceError("A scene must keep at least one object", 409, "scene_objects_empty");
   }
   const spec: SceneSpec = {
     ...previous,
@@ -578,7 +578,7 @@ export function planNodeInvalidation(
     const id = queue.shift()!;
     const current = nodes[id];
     if (!current || current.status === "obsolete") {
-      throw new ChatServiceError(`场景节点不存在或已废弃：${id}`, 404, "scene_node_not_found");
+      throw new ChatServiceError(`Scene node does not exist or is obsolete: ${id}`, 404, "scene_node_not_found");
     }
     if (touched.has(id)) continue;
     touched.add(id);
@@ -599,7 +599,7 @@ export async function retrySceneJobNodes(
 ): Promise<SceneJob> {
   return mutateSceneJob(storage, projectSlug, jobId, (job) => {
     if (job.status === "running") {
-      throw new ChatServiceError("场景任务正在执行", 409, "scene_job_running");
+      throw new ChatServiceError("The scene job is running", 409, "scene_job_running");
     }
     const { pending, stale } = planNodeInvalidation(job.nodes, nodeIds);
     const nodes = { ...job.nodes };

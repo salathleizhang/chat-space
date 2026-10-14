@@ -37,7 +37,7 @@ console.log("exr:", tex.width, tex.height, tex.data.constructor.name, "type", te
 
 const { width: TW, height: TH } = tex;
 const src = tex.data as Float32Array;
-if (!(src instanceof Float32Array)) throw new Error("期望 FloatType 数据");
+if (!(src instanceof Float32Array)) throw new Error("Expected FloatType data");
 
 /** 线性 → sRGB（与 toneMapped={false} 时渲染器的输出编码一致） */
 function encodeSrgb(v: number): number {

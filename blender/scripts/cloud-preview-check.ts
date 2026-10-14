@@ -6,7 +6,7 @@ import { LocalFileStorage } from "../../chat/src/services/assetStorage";
 import { createProject } from "../../chat/src/mastra/tools/projectTools";
 
 const settings = readBlenderCloudSettings();
-if (!settings || settings.projectSlug !== "cloud-public-check") throw new Error("缺少独立验收工程的云端配置");
+if (!settings || settings.projectSlug !== "cloud-public-check") throw new Error("Missing cloud configuration for the standalone acceptance project");
 const root = resolve(process.env.CHATSPACE_LIBRARY_DIR!);
 const storage = new LocalFileStorage(root);
 const client = new BlenderCloudClient(settings);
@@ -15,7 +15,7 @@ try {
   const status = await client.call("get_addon_status", {}, { timeoutMs: 30_000 });
   const facts = await client.call("get_object_info", { object_name: "CloudPublicProbe" });
   if (!await storage.exists(`projects/${settings.projectSlug}/project.json`)) {
-    await createProject(storage, { name: "云端 Blender 接入验收", slug: settings.projectSlug });
+    await createProject(storage, { name: "Cloud Blender integration acceptance", slug: settings.projectSlug });
   }
   const result = await runBlenderExport(storage, settings.projectSlug, {
     assetSlug: "cloud-probe-sphere", objectNames: ["CloudPublicProbe"],
@@ -23,7 +23,7 @@ try {
   await storage.writeTextAtomic("acceptance-result.json", JSON.stringify({
     instanceName: settings.instanceName, status: status.json, object: facts.json, export: result,
   }, null, 2));
-  console.log(`公网 GLB 已进入验收资产库：${result.bytes} 字节，${result.faces} 个三角面。`);
+  console.log(`Public GLB has entered the acceptance asset library: ${result.bytes} bytes, ${result.faces} triangles.`);
 } finally {
   setBlenderMcp(null);
   await client.stop();

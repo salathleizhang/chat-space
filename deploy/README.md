@@ -17,6 +17,9 @@ Vercel 服务端需要至少 32 字符的 `CHATSPACE_SESSION_SECRET`，以及实
 `VOLC_KEY` / `TRIPO_KEY` / `WORLDLABS_KEY`，见 `vercel.env.example`。
 供应商密钥不得使用 `VITE_` 前缀；浏览器只获得能力标记，不获得服务端密钥。
 已配置火山和 Tripo，WorldLabs 未配置。Blender 在 Vercel 版关闭。
+新增的 Blender 持久服务已有代码与本机验收，尚未完成云端部署；配置及验收清单见
+[Blender 服务部署](blender-service/README.md)。仅该服务保存 Blender 调度记录与工程文件，
+现有项目和聊天仍保存在浏览器；当前不要设置其公开分配变量。
 Production / Preview 的数据库与 Blob 连接及相关环境变量已断开；
 云端原件已备份，经用户确认后，两个 Neon 数据库和两个 Blob 仓库均已永久删除。
 原生产工作区「我的第一个项目」已通过备份导入到 Chrome 的 Vercel 域名下。

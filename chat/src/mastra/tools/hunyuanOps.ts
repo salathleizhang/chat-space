@@ -86,7 +86,7 @@ export async function runHunyuanUvUnwrap(
     );
     const jobId = submitted.JobId;
     if (typeof jobId !== "string" || !jobId) {
-      throw new ChatServiceError("混元提交响应缺少 JobId", 502, "hunyuan_request_failed");
+      throw new ChatServiceError("Hunyuan submission response is missing JobId", 502, "hunyuan_request_failed");
     }
     sidecar.providerTaskId = jobId;
     sidecar.status = "running";
@@ -112,7 +112,7 @@ export async function runHunyuanUvUnwrap(
       sidecar.outputs.push({ path, providerUrl: ref.url });
     }
     if (files.length === 0) {
-      throw new ChatServiceError("混元 UV 展开结果中没有可下载文件", 502, "hunyuan_no_files");
+      throw new ChatServiceError("No downloadable files in the Hunyuan UV unwrapping result", 502, "hunyuan_no_files");
     }
     sidecar.status = "succeeded";
     await saveSidecar();
@@ -129,7 +129,7 @@ export async function runHunyuanUvUnwrap(
 export const unwrapUvTool = createTool({
   id: "unwrap-uv",
   description:
-    "通过腾讯混元对资产的最新模型做 UV 展开（唯一保留的混元能力，付费操作——启动前须经用户同意）。模型输入需要可访问的供应商 URL。任务化返回",
+    "UV-unwrap the asset's latest model via Tencent Hunyuan (the only remaining Hunyuan capability; paid operation — user consent is required before starting). The model input needs an accessible provider URL. Returns a task",
   inputSchema: z.object({
     assetSlug: SlugSchema,
   }),
@@ -138,12 +138,12 @@ export const unwrapUvTool = createTool({
     const apiKey = requireContextString(
       context,
       "hunyuanApiKey",
-      "本机 chat/.env 未配置 HUNYUAN_KEY（格式为 SecretId:SecretKey）",
+      "HUNYUAN_KEY is not configured in the local chat/.env (format: SecretId:SecretKey)",
     );
     const task = startCustomTask(
       "uv",
       projectSlug,
-      `UV 展开：${input.assetSlug}`,
+      `UV unwrapping: ${input.assetSlug}`,
       () =>
         runHunyuanUvUnwrap(
           getAssetStorage(),

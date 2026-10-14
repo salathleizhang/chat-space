@@ -27,7 +27,7 @@ function readContextValue(context: ToolContextLike | undefined, key: string): un
 export function requireCurrentProject(context: ToolContextLike | undefined): string {
   const parsed = SlugSchema.safeParse(readContextValue(context, "projectSlug"));
   if (!parsed.success) {
-    throw new ChatServiceError("当前请求没有有效的项目上下文", 400, "missing_project_context");
+    throw new ChatServiceError("The current request has no valid project context", 400, "missing_project_context");
   }
   return parsed.data;
 }

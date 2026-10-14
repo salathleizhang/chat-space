@@ -30,7 +30,7 @@ describe("cloud Blender transport", () => {
     expect(requests[0]?.headers.get("x-faas-instance-name")).toBe(settings.instanceName);
     expect(await requests[0]?.json()).toEqual({ tool: "get_scene_info", arguments: {} });
     expect(JSON.stringify(client.diagnostics)).not.toContain(settings.token);
-    await expect(client.call("generate_tripo_model")).rejects.toThrow("白名单");
+    await expect(client.call("generate_tripo_model")).rejects.toThrow("allowlist");
     expect(requests).toHaveLength(1);
   });
 
@@ -80,7 +80,7 @@ describe("cloud Blender transport", () => {
     const tooLarge = new BlenderCloudClient(settings, mock(async () => new Response("x", {
       headers: { "Content-Length": String(256 * 1024 * 1024 + 1) },
     })) as unknown as typeof fetch);
-    await expect(tooLarge.downloadExport(id)).rejects.toThrow("上限");
+    await expect(tooLarge.downloadExport(id)).rejects.toThrow("transfer limit");
   });
 
   test("dead timers plus external task tick still abort a stalled request", async () => {
@@ -100,7 +100,7 @@ describe("cloud Blender transport", () => {
       expect(aborted).toBe(false);
       now = 150;
       tickTaskPumps();
-      expect((await failure as Error).message).toContain("执行结果未知");
+      expect((await failure as Error).message).toContain("outcome is unknown");
       expect(aborted).toBe(true);
     } finally { Date.now = clock; }
   });
