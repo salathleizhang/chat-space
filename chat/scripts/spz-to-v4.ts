@@ -99,8 +99,8 @@ async function main(): Promise<number> {
   const converter = await loadSpzConverter(modulePath);
   if (!converter) {
     console.error(
-      "[spz-to-v4] 拿不到转换器：装 `@playcanvas/splat-transform`，" +
-      "或用 `--tool <…/splat-transform/dist/index.mjs>`（也可用 SPLAT_TRANSFORM_PATH）指向本地副本。",
+      "[spz-to-v4] cannot get the converter: install `@playcanvas/splat-transform`, " +
+      "or point `--tool <…/splat-transform/dist/index.mjs>` (SPLAT_TRANSFORM_PATH also works) at a local copy.",
     );
     return 1;
   }
@@ -114,7 +114,7 @@ async function main(): Promise<number> {
         continue;
       }
       if (!isLegacyGzipSpz(bytes)) {
-        entries.push({ path, status: "unrecognised", bytesIn: bytes.byteLength, reason: "不是 v4 也不是 gzip" });
+        entries.push({ path, status: "unrecognised", bytesIn: bytes.byteLength, reason: "neither v4 nor gzip" });
         continue;
       }
       if (dryRun) {
@@ -137,7 +137,7 @@ async function main(): Promise<number> {
       if (outHeader.numPoints !== legacyHeader.numPoints || outHeader.shDegree !== legacyHeader.shDegree) {
         entries.push({
           path, status: "failed", bytesIn: bytes.byteLength,
-          reason: `校验不一致：points ${legacyHeader.numPoints} → ${outHeader.numPoints}、sh ${legacyHeader.shDegree} → ${outHeader.shDegree}`,
+          reason: `verification mismatch: points ${legacyHeader.numPoints} → ${outHeader.numPoints}, sh ${legacyHeader.shDegree} → ${outHeader.shDegree}`,
         });
         continue;
       }
@@ -151,7 +151,7 @@ async function main(): Promise<number> {
         await writeFile(path, result.bytes);
       } catch (error) {
         await copyFile(backup, path);
-        entries.push({ path, status: "failed", bytesIn: bytes.byteLength, reason: `写回失败：${String(error)}` });
+        entries.push({ path, status: "failed", bytesIn: bytes.byteLength, reason: `write-back failed: ${String(error)}` });
         continue;
       }
       entries.push({
@@ -178,10 +178,10 @@ async function main(): Promise<number> {
   };
   console.log(JSON.stringify(report, null, 2));
   for (const entry of converted) {
-    console.log(`[spz-to-v4] ${entry.path}: v${entry.legacyVersion} → v4，${entry.points} 点，${entry.bytesIn} → ${entry.bytesOut} 字节（${entry.ms} ms）`);
+    console.log(`[spz-to-v4] ${entry.path}: v${entry.legacyVersion} → v4, ${entry.points} points, ${entry.bytesIn} → ${entry.bytesOut} bytes (${entry.ms} ms)`);
   }
-  for (const entry of failed) console.error(`[spz-to-v4] 失败 ${entry.path}：${entry.reason}`);
-  if (dryRun) console.log(`[spz-to-v4] 预演：${pending.length} 件待转，未写入任何文件`);
+  for (const entry of failed) console.error(`[spz-to-v4] failed ${entry.path}: ${entry.reason}`);
+  if (dryRun) console.log(`[spz-to-v4] dry run: ${pending.length} item(s) pending conversion, no files were written`);
   return failed.length > 0 ? 1 : 0;
 }
 

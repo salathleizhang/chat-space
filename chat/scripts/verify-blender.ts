@@ -61,7 +61,7 @@ const HOST = process.env.BLENDER_HOST ?? "127.0.0.1";
 const PORT = process.env.BLENDER_PORT ?? "9876";
 
 // ---------------------------------------------------------------------------
-section(`第 1 层 · 连接（${HOST}:${PORT}）`);
+section(`Layer 1 · Connection (${HOST}:${PORT})`);
 {
   const r = (await blenderSessionTool.execute!({} as never, ctx)) as {
     connected: boolean;
@@ -70,40 +70,40 @@ section(`第 1 层 · 连接（${HOST}:${PORT}）`);
     addon?: unknown;
   };
   if (r.connected) {
-    ok("握手成功", JSON.stringify(r.addon ?? {}).slice(0, 120));
+    ok("handshake succeeded", JSON.stringify(r.addon ?? {}).slice(0, 120));
   } else {
-    bad("连不上", String(r.error ?? "").slice(0, 160));
+    bad("cannot connect", String(r.error ?? "").slice(0, 160));
     console.log(`     ↳ ${r.hint ?? ""}`);
-    console.log("\n停在第 1 层：后面几层没有意义。先看容器：");
+    console.log("\nStopped at layer 1: the following layers are meaningless. Look at the container first:");
     console.log("     docker logs docker-blender-1 | grep chatspace");
-    console.log("     里面应该有「自检通过」和「中继 9877 已就绪」两行。");
+    console.log("     It should contain the lines \"self-check passed\" and \"relay 9877 is ready\".");
     process.exit(1);
   }
 }
 
 // ---------------------------------------------------------------------------
-section("第 2 层 · 执行一步代码");
+section("Layer 2 · Execute one step of code");
 {
   const r = (await blenderRunTool.execute!(
     {
       code: "print('CS_VERIFY_OK')",
-      step: "验收：最简执行",
+      step: "Verification: minimal execution",
       frame: false,
     } as never,
     ctx,
   )) as { output?: string; facts?: unknown; factsUnavailable?: string };
   if (/CS_VERIFY_OK/.test(r.output ?? "")) {
-    ok("代码真的在 Blender 里跑了", `${(r.output ?? "").length} 字节返回`);
+    ok("the code really ran inside Blender", `${(r.output ?? "").length} bytes returned`);
   } else {
-    bad("执行失败", String(r.output ?? "").slice(0, 160));
+    bad("execution failed", String(r.output ?? "").slice(0, 160));
     if (/Connection closed/.test(r.output ?? "")) {
-      console.log("     ↳ 这是 socat 少了 nodelay 的典型症状。");
+      console.log("     ↳ This is the classic symptom of socat missing nodelay.");
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-section("第 3 层 · 引擎事实（面数 / 包围盒 / 退化检测）");
+section("Layer 3 · Engine facts (face count / bounding box / degenerate detection)");
 {
   await blenderRunTool.execute!(
     {
@@ -117,7 +117,7 @@ section("第 3 层 · 引擎事实（面数 / 包围盒 / 退化检测）");
         "o = bpy.data.objects.new('CS_Verify_Cube', m)",
         "bpy.context.scene.collection.objects.link(o)",
       ].join("\n"),
-      step: "验收：建一个 2m 立方体",
+      step: "Verification: build a 2m cube",
       frame: false,
     } as never,
     ctx,
@@ -135,28 +135,28 @@ section("第 3 层 · 引擎事实（面数 / 包围盒 / 退化检测）");
   // 这一层是最容易"看起来绿其实空转"的：社区版的 get_scene_info 只返回
   // name/type/location，没有面数——那时 totalFaces 会静默地是 undefined。
   if (typeof sc?.totalFaces !== "number") {
-    bad("拿不到面数", `totalFaces=${String(sc?.totalFaces)} —— 检查是否误用了 get_scene_info`);
+    bad("cannot get the face count", `totalFaces=${String(sc?.totalFaces)} — check whether get_scene_info was used by mistake`);
   } else if (!(sc.totalFaces > 0)) {
-    bad("场景里一个面都没有", `totalFaces=${sc.totalFaces}`);
+    bad("there is not a single face in the scene", `totalFaces=${sc.totalFaces}`);
   } else {
     const mine = (sc.objects ?? []).find((o) => o.name === "CS_Verify_Cube");
     ok(
-      "面数与包围盒都拿到了",
-      `总计 ${sc.totalFaces} 面 / ${sc.objectCount} 对象 / 尺寸 ${JSON.stringify(sc.bounds?.size)} / 我们那个 ${mine?.faces} 面 / 退化项 ${JSON.stringify(sc.degenerate)}`,
+      "face count and bounding box both obtained",
+      `total ${sc.totalFaces} faces / ${sc.objectCount} objects / size ${JSON.stringify(sc.bounds?.size)} / our cube ${mine?.faces} faces / degenerate items ${JSON.stringify(sc.degenerate)}`,
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-section("第 4 层 · 导出进资产库");
+section("Layer 4 · Export into the asset library");
 if (!projectSlug) {
-  console.log("  ⏭  跳过（没给项目 slug）。要验这一层：");
+  console.log("  ⏭  Skipped (no project slug given). To verify this layer:");
   console.log("     BLENDER_WORKDIR=/workspace CHATSPACE_BLENDER_WORKDIR=\"$HOME/ChatSpace/blender-work\" \\");
-  console.log("       bun run --cwd chat scripts/verify-blender.ts <项目slug>");
-  console.log("     前提：容器挂着共享卷（docker compose up 默认就挂）");
+  console.log("       bun run --cwd chat scripts/verify-blender.ts <project slug>");
+  console.log("     Requirement: the container has the shared volume mounted (docker compose up mounts it by default)");
 } else if (!process.env.BLENDER_WORKDIR || !process.env.CHATSPACE_BLENDER_WORKDIR) {
-  console.log("  ⏭  跳过（缺 BLENDER_WORKDIR / CHATSPACE_BLENDER_WORKDIR）。");
-  console.log("     容器里 Blender 写的是容器路径，宿主机读的是另一个路径，两个都要给。");
+  console.log("  ⏭  Skipped (missing BLENDER_WORKDIR / CHATSPACE_BLENDER_WORKDIR).");
+  console.log("     Blender inside the container writes a container path while the host reads a different path; both must be given.");
 } else {
   try {
     /*
@@ -173,14 +173,14 @@ if (!projectSlug) {
     const started = (await blenderExportTool.execute!(
       {
         assetSlug: "blender-verify",
-        name: "Blender 验收件",
-        intent: "验收脚本产出，可删",
+        name: "Blender acceptance artifact",
+        intent: "produced by the verification script, safe to delete",
       } as never,
       ctx,
     )) as { task?: { id?: string } };
     const taskId = started.task?.id;
     if (!taskId) {
-      bad("导出没起任务", JSON.stringify(started).slice(0, 160));
+      bad("export did not start a task", JSON.stringify(started).slice(0, 160));
     } else {
       const deadline = Date.now() + 180_000;
       // `listTasks()` 自己会 tick 任务闸门，所以这个轮询同时是外部时钟——即使进程内
@@ -194,13 +194,13 @@ if (!projectSlug) {
       }
 
       if (!task) {
-        bad("读不到导出任务", taskId);
+        bad("cannot read the export task", taskId);
       } else if (task.status === "running") {
-        bad("导出超时", `等了 180s 仍未落定（phase=${task.phase}）`);
+        bad("export timed out", `waited 180s and it still has not settled (phase=${task.phase})`);
       } else if (task.status === "failed") {
-        bad("导出失败", String(task.error ?? "").slice(0, 200));
+        bad("export failed", String(task.error ?? "").slice(0, 200));
         if (/读不到文件/.test(String(task.error ?? ""))) {
-          console.log("     ↳ 这是共享目录两端没对上：容器写 /workspace，宿主机要能读到同一个目录。");
+          console.log("     ↳ The two ends of the shared directory do not line up: the container writes /workspace, and the host must be able to read that same directory.");
         }
       } else {
         const r = (task.result ?? {}) as {
@@ -212,19 +212,19 @@ if (!projectSlug) {
         };
         if ((r.bytes ?? 0) > 1024) {
           ok(
-            "导出并发布成功",
-            `${r.glbPath} · ${r.bytes} 字节 · ${r.faces} 面 · Blender ${r.blenderVersion} · 第 ${r.index} 代`,
+            "exported and published successfully",
+            `${r.glbPath} · ${r.bytes} bytes · ${r.faces} faces · Blender ${r.blenderVersion} · generation ${r.index}`,
           );
-          console.log(`     ↳ 宿主机上：cat ~/ChatSpace/${r.glbPath} 同级目录里应有 asset.json 与请求侧写`);
+          console.log(`     ↳ On the host: the directory alongside ~/ChatSpace/${r.glbPath} should contain asset.json and the request sidecar`);
         } else {
-          bad("导出产物太小", JSON.stringify(r).slice(0, 160));
+          bad("the export artifact is too small", JSON.stringify(r).slice(0, 160));
         }
       }
     }
   } catch (error) {
-    bad("导出失败", String((error as Error).message).slice(0, 200));
+    bad("export failed", String((error as Error).message).slice(0, 200));
     if (/读不到文件/.test(String((error as Error).message))) {
-      console.log("     ↳ 这是共享目录两端没对上：容器写 /workspace，宿主机要能读到同一个目录。");
+      console.log("     ↳ The two ends of the shared directory do not line up: the container writes /workspace, and the host must be able to read that same directory.");
     }
   }
 }
@@ -232,8 +232,8 @@ if (!projectSlug) {
 // ---------------------------------------------------------------------------
 console.log();
 if (failed === 0) {
-  console.log("✅ 验收通过。");
+  console.log("✅ Verification passed.");
 } else {
-  console.log(`❌ 有 ${failed} 层没过（上面每层都是独立结论，从第一处红的地方往下看）。`);
+  console.log(`❌ ${failed} layer(s) did not pass (each layer above is an independent conclusion; start reading from the first red spot).`);
 }
 process.exit(failed === 0 ? 0 : 1);
