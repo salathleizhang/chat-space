@@ -1,6 +1,7 @@
 export { Badge } from "./Badge";
 export { Button } from "./Button";
 export { Dialog, DialogDescription, DialogTitle } from "./Dialog";
+export { dockCornerSlotRef, dockRightSlotRef, useDockSlot, type DockSlotName } from "./dockRow";
 export { Empty } from "./Empty";
 export { Input } from "./Input";
 export { Panel } from "./Panel";

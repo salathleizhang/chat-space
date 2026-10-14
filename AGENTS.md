@@ -359,6 +359,27 @@ bun run check                        # typecheck + test + build
   以及"点云背景"徽章——PC 还没画世界泼溅，见 §四之二）。
   **控制簇的 z-index 必须高于外壳那排输入框的 `z-10`**（实测：两者同为 10 且外壳在 DOM 里更靠后时，
   窄窗口下 `Undo/Redo/Move/Rotate` 的按钮中心被外壳接住、**点不动**；现在 `z-20`，回归测试钉住）。
+  **但产品里控制簇已经不在右下角了**（2026-10-14，用户要求把左下 Sidebar 与右下工具栏挪到输入框底下；
+  随后又调了一版：整体往下、两个菜单放大、与输入框更近、撤销/重做单拎到屏幕右下角）：
+  `pages/AppDashboard` 的底部停靠区把**两个**槽位登记进 `shared/ui/dockRow.ts`，`ViewportChrome` 有槽位就
+  `createPortal` 进去——`right` = 停靠行右端那一格（布局/透视/网格/线框/第一人称/手势），
+  `corner` = **屏幕右下角**那一格（撤销/重做，靠 `bottom-0` 与停靠行**同底对齐**）。
+  左对齐 Sidebar、右对齐控制簇，两者与输入框同一列、宽 `min(48rem, calc(100% - 2rem))`；
+  没有外壳的宿主（`pc-panes.html` 探针页）才走右下角那条老路（控制簇**含撤销/重做**、顺序不变）——
+  **两套落点都由这一处决定，别在调用方各写一遍**。
+  三条容易踩的：
+  ① 停靠行是**底对齐的流**：窄窗口下工具栏折行 → 行变高 → 输入框自动往上让位，两边不会互相压住；
+  ② 菜单"大一号"用的是 `scale-110` + **贴边 origin**（左格 `origin-bottom-left`、右格与角落 `origin-bottom-right`），
+     共享的 `ToolbarButton` 不为这里改尺寸——origin 写错就会把"左对齐/右对齐"顶掉；
+  ③ 角落那一格必须带窄窗口退路（`max-[1000px]:static max-[1000px]:ml-auto`），
+     否则停靠行两侧余量不够时它会盖住工具栏右端那几个按钮。
+  回归：`ViewportChrome.test.ts`（有/无/半套槽位三态 + 槽位晚到 + 撤销只出现一份）、`shared/ui/dockRow.test.ts`
+  （两个槽位互不串台）、`pages/AppDashboard/dockRowLayout.test.ts`（列宽同一条字面量、`pointer-events-auto`、
+  `ml-auto`、缩放 origin、角落的绝对定位与退路、`-bottom-2.5` 的间距）。真机读数（1500×950 窗口 =
+  1470×718 视口，`app/dist` + 3901）：列 351–1119、停靠行 660–702（**与输入框间距 10px、离屏幕底 16px**）、
+  Sidebar 左 351、控制簇右 1119、按钮高 35.2（原 32）、撤销/重做 1368.2–1454 且 bottom = 702（= 行底）、
+  按钮中心 `elementFromPoint` 命中自身、可信点击 `Hide grid → Show grid`；900×700 窗口那一轮
+  撤销/重做按预期退回行内（`static`，right 834 = 行右）且 18 条判据全过。
 - **PlayCanvas 的线框不是材质标志位**：`StandardMaterial` 上**没有** `wireframe`；正确做法是
   `meshInstance.renderStyle = RENDERSTYLE_WIREFRAME`（引擎为每个 mesh 备了线框索引缓冲，
   setter 里 `mesh.prepareRenderState()` 会挑对那份）。**已真机验证**：27/27 个 mesh instance 切过去、

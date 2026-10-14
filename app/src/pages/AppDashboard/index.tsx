@@ -16,7 +16,7 @@ import {
   retryGenerationTask,
   type GenerationTask,
 } from "../../shared/lib/workflowClient";
-import { Button, Panel, Tooltip } from "../../shared/ui";
+import { Button, Panel, dockCornerSlotRef, dockRightSlotRef, Tooltip } from "../../shared/ui";
 import { ImageGallery } from "../../widgets/ImageGallery";
 import { Inspector } from "../../widgets/Inspector";
 import { ModelList } from "../../widgets/ModelList";
@@ -56,8 +56,8 @@ const BlenderLiveWindow = lazy(() =>
 
 /**
  * `/app/:projectSlug` — 单项目工作台。布局是全屏 Viewport 画布 + 悬浮面板
- * （左上 ModelList、左下 Sidebar、底部居中 AgentDock）；共享状态与业务编排
- * 拆到同目录的 hooks 里，本文件只负责状态组合与布局。
+ * （左上 ModelList、底部居中 AgentDock，**输入框正下方一行**是 Sidebar（左）与视口工具栏（右））；
+ * 共享状态与业务编排拆到同目录的 hooks 里，本文件只负责状态组合与布局。
  */
 export function AppDashboard() {
   const { projectSlug = "" } = useParams();
@@ -582,10 +582,10 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
       )}
       {blenderLive && (
         /*
-          Blender 实时画面。**位置是挑过的**：四个角分别被 Inspector / ModelPreviewWindow（右上）、
-          ModelList（左上）、Sidebar（左下）、Viewport 工具栏（右下 bottom-4 right-4）占着，
-          唯一空着的是「右下、工具栏之上」——工具栏约 42px 高 + 16px 边距，所以 bottom-20（80px）
-          正好让开，不压住任何已有控件。
+          Blender 实时画面。**位置是挑过的**：右上角是 Inspector / ModelPreviewWindow，
+          左上角是 ModelList，底部中间是输入框那一列 + 它下面那一行停靠行（Sidebar 与视口工具栏，
+          见本文件末尾的停靠区）。所以这里钉在**右下角、停靠行之上**：bottom-20（80px）比停靠行
+          顶边（约 64px）高，也不去碰底部中间那一列。改停靠行的尺寸/位置时记得同步这一项。
         */
         <div className="absolute right-4 bottom-20 z-20 animate-chrome-enter">
           <Suspense fallback={null}>
@@ -593,28 +593,74 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           </Suspense>
         </div>
       )}
-      <div className="absolute bottom-4 left-4 z-10 animate-chrome-enter max-sm:top-36 max-sm:bottom-auto">
-        <Sidebar active={section} onChange={setSection} />
+      {/*
+        底部停靠区：**输入框那一列 + 它正下方那两格 chrome**。
+
+        这一层就是 AgentDock 原来的容器（`pointer-events-none absolute inset-x-0 bottom-5 z-10`），
+        只是把输入框包进一个**零高的定位祖先**，再在它后面接一行停靠行：
+        - AgentDock 自带 `absolute inset-x-0 bottom-5`（= 离定位祖先底边 20px），所以输入框停在
+          停靠行之上；再给这一层 `-bottom-2.5` 把它往下推 10px，**输入框与停靠行之间就是 10px**
+          （原来 20px 太散，用户要求"近一点"）。
+        - 停靠行在**流内**、列是底对齐的：窄窗口下工具栏折行时行变高，输入框自动往上让位，
+          不会互相压住——这正是"两个绝对定位层各自摆"做不到的地方。
+        - **包着 AgentDock 的那一层必须占满视口宽**（`w-full`）：它内部自己算
+          `min(48rem, 100% - 2rem)`，这一层再收一次宽度，输入框就会比停靠行窄一圈。
+      */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex flex-col items-center">
+        <div className="relative -bottom-2.5 w-full">
+          <AgentDock
+            messages={messages}
+            activity={activity}
+            streaming={streaming}
+            onStop={stopStream}
+            onNewSession={startNewSession}
+            activeSessionId={activeSessionId}
+            sessions={sessions}
+            sessionsLoading={sessionsLoading}
+            sessionsError={sessionsError}
+            onOpenSessions={refreshSessions}
+            onSelectSession={switchSession}
+            onSend={send}
+            selectedAssets={selectedAssets}
+            onRemoveSelectedAsset={removeSelectedAsset}
+            plan={sessionPlan}
+            initiallyExpanded={pendingImages.length > 0}
+            onAnswerQuestion={answerQuestion}
+          />
+        </div>
+        {/*
+          停靠行本身。几条不能省的细节：
+          - `pointer-events-auto`：外层是 `pointer-events-none`，漏了它这一行的按钮**全都点不动**
+            （画得出来、点了没反应，不报错）。
+          - 宽度与 AgentDock 内的列**同一条字面量**（`min(48rem, calc(100% - 2rem))`）：
+            分叉了输入框和停靠行就不再对齐。`dockRowLayout.test.ts` 钉住两处一致。
+          - `scale-110` + 底角 origin：菜单比设计系统默认的工具栏按钮大一号（用户要求"稍微大一点"），
+            而 `ToolbarButton`/`Sidebar` 是共享组件、不该为这里改尺寸；缩放**保持贴边的那一角不动**
+            （左格 `origin-bottom-left`、右格与右下角格 `origin-bottom-right`），所以左对齐/右对齐不受影响。
+          - 右侧那格是 `ViewportChrome` 的 portal 目标（`shared/ui/dockRow.ts`）：工具栏的状态住在
+            `Viewport` 里，位置归这里管，两者只能靠这两个槽位接头。
+        */}
+        <div className="pointer-events-auto flex w-[min(48rem,calc(100%-2rem))] flex-wrap items-center gap-2">
+          <div className="origin-bottom-left scale-110 animate-chrome-enter">
+            <Sidebar active={section} onChange={setSection} />
+          </div>
+          <div
+            ref={dockRightSlotRef}
+            className="ml-auto flex min-w-0 origin-bottom-right scale-110 items-center gap-2"
+          />
+          {/*
+            屏幕右下角那一格：撤销/重做。`bottom-0` 贴着停靠行的**底边**，两边一样高
+            （用户要求"跟菜单在高度上对齐"）；`right-4` 与其它 chrome 的边距同一档。
+            窄窗口要退回行内：停靠行宽 48rem，屏幕两侧余量不够放下这一格时，`absolute`
+            会盖住工具栏右端那几个按钮，所以 `max-[1000px]:static` 让它回到停靠行的流里
+            （`ml-auto` 保证它换到第二行也贴右）。
+          */}
+          <div
+            ref={dockCornerSlotRef}
+            className="absolute right-4 bottom-0 flex origin-bottom-right scale-110 items-center gap-2 max-[1000px]:static max-[1000px]:ml-auto"
+          />
+        </div>
       </div>
-      <AgentDock
-        messages={messages}
-        activity={activity}
-        streaming={streaming}
-        onStop={stopStream}
-        onNewSession={startNewSession}
-        activeSessionId={activeSessionId}
-        sessions={sessions}
-        sessionsLoading={sessionsLoading}
-        sessionsError={sessionsError}
-        onOpenSessions={refreshSessions}
-        onSelectSession={switchSession}
-        onSend={send}
-        selectedAssets={selectedAssets}
-        onRemoveSelectedAsset={removeSelectedAsset}
-        plan={sessionPlan}
-        initiallyExpanded={pendingImages.length > 0}
-        onAnswerQuestion={answerQuestion}
-      />
       {/* 放在 Dashboard 而不是资产列表里：用户切到图片/任务分区时，
           新 3D 模型仍能完成缩略图渲染并回填到对话。 */}
       {thumbnails.current &&

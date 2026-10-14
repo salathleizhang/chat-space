@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { dockCornerSlotRef, dockRightSlotRef } from "../../shared/ui";
 import { ViewportChrome, type ViewportChromeProps } from "./ViewportChrome";
 
 /**
@@ -9,9 +10,15 @@ import { ViewportChrome, type ViewportChromeProps } from "./ViewportChrome";
  * 走查过：`?pcViewport=1` 那条路曾经自带一版"最小工具栏"（纯文字药丸），用户一眼看出两样。
  *
  * 判据全部盯**渲染出来的 DOM**（探针与可信驱动也是按 `aria-label` 找按钮的）。
+ *
+ * 也钉住两处落点（`shared/ui/dockRow.ts`）：
+ * - 没有外壳（探针页）：控制簇**含撤销/重做**整块留在右下角，顺序不变；
+ * - 有外壳（`pages/AppDashboard`）：控制簇钻进行右端那一格，**撤销/重做单独去屏幕右下角**。
  */
 
 const mounted: { root: Root; container: HTMLElement }[] = [];
+/** 测试里造出来的停靠行槽位节点（统一在 afterEach 里摘掉，避免活在其它用例的 DOM 里） */
+const slotNodes: HTMLElement[] = [];
 
 async function render(props: Partial<ViewportChromeProps>): Promise<HTMLElement> {
   const container = document.createElement("div");
@@ -70,10 +77,14 @@ const FULL_ORDER = [
 ];
 
 afterEach(async () => {
+  // 先卸组件再清槽位：反过来的话那次通知会落到已经没人订阅的 store 上（React 会告警"裸更新"）
   for (const { root, container } of mounted.splice(0)) {
     await act(async () => root.unmount());
     container.remove();
   }
+  dockRightSlotRef(null);
+  dockCornerSlotRef(null);
+  for (const node of slotNodes.splice(0)) node.remove();
 });
 
 describe("ViewportChrome", () => {
@@ -247,12 +258,89 @@ describe("ViewportChrome", () => {
     expect(badges.className).toContain("pointer-events-none");
   });
 
+  test("外壳给了两个槽位时：控制簇进行右端那一格、撤销/重做单独去角落那一格", async () => {
+    /*
+      停靠区（`pages/AppDashboard` 底部）把两格交给这里：控制簇在输入框**正下方**、右对齐；
+      撤销/重做在**屏幕右下角**、与停靠行同底对齐。判据有四条，缺一条都会静默走样：
+      ① 按钮真的挂到各自的槽位下（不然工具栏/撤销还在右下角悬浮）；
+      ② 进槽位后不再带 `absolute`（它已经是那一行的 flex item，再绝对定位就会脱出那一行）；
+      ③ **撤销/重做只出现一份**（既在角落又留在簇里 = 用户看到两组撤销按钮）；
+      ④ 徽章**不跟着走**——它属于视口，不属于外壳那一行。
+    */
+    const right = document.createElement("div");
+    const corner = document.createElement("div");
+    document.body.append(right, corner);
+    slotNodes.push(right, corner);
+    dockRightSlotRef(right);
+    dockCornerSlotRef(corner);
+
+    const container = await render({ "data-pc-toolbar": "1" });
+    expect(container.querySelector('[data-pc-toolbar="1"]')).toBeNull();
+
+    const cluster = right.querySelector('[data-pc-toolbar="1"]') as HTMLElement;
+    expect(cluster).toBeTruthy();
+    expect(cluster.className).not.toContain("absolute");
+    // 角落那一格只有撤销/重做；簇里是其余控件（顺序与原 FULL_ORDER 去掉前两个一致）
+    expect(labels(corner)).toEqual(["Undo", "Redo"]);
+    expect(labels(cluster)).toEqual(FULL_ORDER.slice(2));
+    expect([...cluster.querySelectorAll("button")].length).toBe(FULL_ORDER.length - 2);
+    expect(texts(container)).toContain("10 objects");
+  });
+
+  test("只给行右端那一格（没有角落）时，撤销/重做仍留在簇里、顺序不变", async () => {
+    /*
+      窄窗口下外壳会把角落那一格退回行内（`max-[1000px]:static`），但**两个槽位节点都还在**；
+      这条守的是另一半：宿主只登记了一个槽位时，撤销/重做不能凭空消失，也不能跑到簇尾。
+    */
+    const right = document.createElement("div");
+    document.body.appendChild(right);
+    slotNodes.push(right);
+    dockRightSlotRef(right);
+
+    const container = await render({ "data-pc-toolbar": "1" });
+    expect(container.querySelector('[data-pc-toolbar="1"]')).toBeNull();
+    const cluster = right.querySelector('[data-pc-toolbar="1"]') as HTMLElement;
+    expect(labels(cluster)).toEqual(FULL_ORDER);
+  });
+
+  test("槽位登记得晚也会跟上：先渲染（右下角）→ 再登记 → 整块挪进停靠区", async () => {
+    /*
+      真实装载顺序是"先渲染视口、外壳的 ref 回调随后跑"，所以这个方向才是产品里第一次
+      生效的那条路。用 `useSyncExternalStore` 订阅槽位就是为了这一步。
+    */
+    const container = await render({ "data-pc-toolbar": "1" });
+    expect(container.querySelector('[data-pc-toolbar="1"]')).toBeTruthy();
+    expect(button(container, "Undo")).toBeTruthy();
+
+    const right = document.createElement("div");
+    const corner = document.createElement("div");
+    document.body.append(right, corner);
+    slotNodes.push(right, corner);
+    await act(async () => {
+      dockRightSlotRef(right);
+      dockCornerSlotRef(corner);
+    });
+    expect(container.querySelector('[data-pc-toolbar="1"]')).toBeNull();
+    expect(right.querySelector('[data-pc-toolbar="1"]')).toBeTruthy();
+    expect(labels(corner)).toEqual(["Undo", "Redo"]);
+    expect(button(container, "Undo")).toBeUndefined();
+
+    await act(async () => {
+      dockRightSlotRef(null);
+      dockCornerSlotRef(null);
+    });
+    expect(container.querySelector('[data-pc-toolbar="1"]')).toBeTruthy();
+    expect(button(container, "Undo")).toBeTruthy();
+  });
+
   test("控制簇的层级要**高于外壳的 z-10**，否则窄窗口里左半截点不动", async () => {
     /*
       实测（2026-10-02，真实页面 1500×950）：外壳输入框那排的容器是
       `pointer-events-none absolute inset-x-0 bottom-5 z-10`，而它在 DOM 里排在视口之后——
       平级 z-index 下后来者赢：`document.elementFromPoint()` 在 `Undo/Redo/Move/Rotate`
       的按钮中心返回的是外壳的 DIV，那几个按钮**点不动**。抬到 z-20 才修好，这条钉住它。
+      （产品里控制簇现在钻在输入框**下面**那一行，这种重叠结构上不会再有；这条守的是
+      **没有外壳槽位**的宿主——探针页、按 `bottom-4 right-4` 落位的那些。）
     */
     const container = await render({});
     const cluster = container.querySelector("div.absolute") as HTMLElement;
