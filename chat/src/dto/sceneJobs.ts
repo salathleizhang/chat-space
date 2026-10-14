@@ -103,6 +103,8 @@ export const SceneJobSchema = z.object({
   projectSlug: SlugSchema,
   specRevision: z.number().int().positive(),
   status: SceneJobStatusSchema,
+  /** 在节点执行前失败时也保留原因，例如缺少供应商凭证。 */
+  error: z.string().optional(),
   /** 不含任何密钥；重启后要由 resume 请求重新注入本机凭证。 */
   parentTaskId: z.string().optional(),
   nodes: z.record(z.string(), SceneJobNodeSchema),

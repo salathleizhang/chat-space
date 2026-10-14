@@ -10,6 +10,16 @@ export function ensureBrowserLocal() {
       navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
     });
     await navigator.storage?.persist?.().catch(() => false);
+    // 历史版本可能把人物任务记为成功却漏写 asset.json。启动时只补本地元数据，
+    // 在项目首次读取前完成，不重新提交任何供应商请求。
+    const repairs = (await localEntries(".jobs/")).filter(entry => {
+      try {
+        const job = JSON.parse(entry.value as string) as { done?: boolean; publicationChecked?: boolean; descriptor?: { operation?: string } };
+        return job.done && job.descriptor?.operation === "character" && !job.publicationChecked;
+      } catch { return false; }
+    });
+    const repaired = await Promise.allSettled(repairs.map(entry => workerRequest({ job: entry.path.split("/").pop()!.replace(/\.json$/, "") })));
+    for (const result of repaired) if (result.status === "rejected") console.error("Failed to publish a previously completed character", result.reason);
   })().catch(error => { ready = undefined; throw error; });
   return ready;
 }

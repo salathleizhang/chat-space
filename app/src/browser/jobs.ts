@@ -8,7 +8,10 @@ import { resumeGeneration } from "../../../chat/src/mastra/tools/resumeGeneratio
 import { withAssetStorage, readJson, writeJson } from "../../../chat/src/services/assetStorage";
 import { runWithTaskPump } from "../../../chat/src/common/taskPump";
 import { BrowserAssetStorage } from "./storage";
-export interface LocalJob { task: GenerationTask; descriptor: CloudOperation; started: boolean; receipts: string[]; nextAt: number; done?: boolean }
+import { browserErrorMessage } from "./errors";
+import { publishCompletedCharacter } from "./characterCompletion";
+import { runWithGeneratedModelInfo } from "../../../chat/src/mastra/tools/modelInfo";
+export interface LocalJob { task: GenerationTask; descriptor: CloudOperation; started: boolean; receipts: string[]; nextAt: number; done?: boolean; publicationChecked?: boolean }
 export const localJobPath = (id: string) => `.jobs/${id}.json`;
 export function browserContext(storage: BrowserAssetStorage, ownJob?: LocalJob): CloudContext {
   return { workspace: "browser", pending: [], polling: true, activeTaskIds: async () => new Set((await navigator.locks.query()).held?.filter(lock => lock.name?.startsWith("chatspace:job:")).map(lock => lock.name!.slice("chatspace:job:".length))),
@@ -30,12 +33,24 @@ export async function runBrowserJob(id: string) {
     if (!lock) return;
     const storage = new BrowserAssetStorage();
     const job = JSON.parse(await storage.readText(localJobPath(id))) as LocalJob;
-    if (job.done || job.nextAt > Date.now()) return;
+    if (job.nextAt > Date.now()) return;
     let task = await readJson(storage, projectTaskFile(job.task.projectSlug, id), GenerationTaskSchema);
     const patch = async (changes: Partial<GenerationTask>) => {
       task = { ...task, ...changes, updatedAt: new Date().toISOString() };
       await writeJson(storage, projectTaskFile(task.projectSlug, id), GenerationTaskSchema, task);
     };
+    if (job.done) {
+      if (job.descriptor.operation === "character" && !job.publicationChecked) {
+        if (task.status === "succeeded") {
+          await publishCompletedCharacter(storage, task.projectSlug, String(job.descriptor.input.assetSlug), job.receipts, task.result);
+          const result = await runWithGeneratedModelInfo(storage, task.projectSlug, String(job.descriptor.input.assetSlug), async () => task.result);
+          await patch({ result });
+        }
+        job.publicationChecked = true;
+        await storage.writeText(localJobPath(id), JSON.stringify(job));
+      }
+      return;
+    }
     const context = browserContext(storage, job);
     storage.onSidecar = context.onSidecar;
     const execution = { id, setPhase: (phase: GenerationTask["phase"]) => patch({ phase }), setAssetSlug: (assetSlug: string) => patch({ assetSlug }) };
@@ -73,12 +88,19 @@ export async function runBrowserJob(id: string) {
         return resumed;
       })));
       await Promise.all(context.pending);
-      await patch({ status: "succeeded", phase: "completed", result, error: undefined });
+      if (job.descriptor.operation === "character") {
+        await publishCompletedCharacter(storage, task.projectSlug, String(job.descriptor.input.assetSlug), job.receipts, result);
+        job.publicationChecked = true;
+      }
+      const measured = ["3d", "retopo", "character"].includes(job.descriptor.operation)
+        ? await runWithGeneratedModelInfo(storage, task.projectSlug, task.assetSlug ?? String(job.descriptor.input.assetSlug), async () => result)
+        : result;
+      await patch({ status: "succeeded", phase: "completed", result: measured, error: undefined });
       job.done = true;
     } catch (error) {
       await Promise.all(context.pending);
       if (error instanceof CloudTaskPending) { job.nextAt = Date.now() + error.delaySeconds * 1000; }
-      else { await patch({ status: "failed", phase: "failed", error: error instanceof Error ? error.message : String(error) }); job.done = true; }
+      else { await patch({ status: "failed", phase: "failed", error: browserErrorMessage(error) }); job.done = true; }
     }
     await storage.writeText(localJobPath(id), JSON.stringify(job));
   });

@@ -399,13 +399,21 @@ export async function runSceneJob(
       .filter((node) => !["succeeded", "obsolete"].includes(node.status))
       .map((node) => node.kind),
   );
-  if (unfinishedKinds.has("reference") || unfinishedKinds.has("plate")) {
-    requireRunKey(keys, "volcengineApiKey");
+  try {
+    if (unfinishedKinds.has("reference") || unfinishedKinds.has("plate")) {
+      requireRunKey(keys, "volcengineApiKey");
+    }
+    if (unfinishedKinds.has("model")) requireRunKey(keys, "seed3dApiKey");
+    if (unfinishedKinds.has("world")) requireRunKey(keys, "worldLabsApiKey");
+  } catch (error) {
+    // 父任务会失败，但 get-scene-job 读的是这份记录；不能永远留在 running。
+    await mutateSceneJob(storage, projectSlug, jobId, (job) => ({
+      ...job, status: "failed", error: toErrorMessage(error),
+    }));
+    throw error;
   }
-  if (unfinishedKinds.has("model")) requireRunKey(keys, "seed3dApiKey");
-  if (unfinishedKinds.has("world")) requireRunKey(keys, "worldLabsApiKey");
 
-  await mutateSceneJob(storage, projectSlug, jobId, (job) => ({ ...job, status: "running",
+  await mutateSceneJob(storage, projectSlug, jobId, (job) => ({ ...job, status: "running", error: undefined,
     ...(currentCloudContext() ? { nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [id,
       node.status === "running" ? { ...node, status: "pending", attempts: Math.max(0, node.attempts - 1) } : node])) } : {}),
   }));
@@ -440,6 +448,7 @@ export async function runSceneJob(
     await mutateSceneJob(storage, projectSlug, jobId, (current) => ({
       ...current,
       status: "failed",
+      error: message,
     }));
     throw new ChatServiceError(`Full scene generation did not finish: ${message}`, 502, "scene_job_failed");
   }
@@ -502,6 +511,7 @@ export async function resumeSceneJob(projectSlug: string, jobId: string, keys: R
     const resumed: SceneJob = {
       ...job,
       status: "paused",
+      error: undefined,
       nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [
         id,
         node.status === "running" || node.status === "failed"

@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useDockSlot } from "../shared/ui/dockRow";
 import { commitLocal, localEntries } from "./storage";
 import { ensureBrowserLocal } from "./client";
 
 export function LocalStorageNotice() {
+  const dock = useDockSlot("storage");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -44,11 +47,12 @@ export function LocalStorageNotice() {
     } catch (error) { setMessage(error instanceof Error ? error.message : "Import failed"); }
     finally { setBusy(false); if (input.current) input.current.value = ""; }
   }
-  return <div className="fixed bottom-3 left-3 z-50 rounded-lg border border-border bg-panel/95 px-3 py-2 text-xs text-ink shadow-sm">
+  const notice = <div className={`${dock ? "w-full" : "fixed bottom-3 left-3 z-50"} rounded-lg border border-border bg-panel/95 px-3 py-2 text-xs text-ink shadow-sm`}>
     <span title="Projects, chats, and files are stored only in this browser. They will not sync automatically after you switch devices, change the URL, or clear site data; export a backup.">Data is stored in this browser</span>
     <button type="button" className="ml-3 underline" disabled={busy} onClick={() => void backup()}>{busy ? "Working…" : "Export backup"}</button>
     <button type="button" className="ml-3 underline" disabled={busy} onClick={() => input.current?.click()}>Import backup</button>
     <input ref={input} className="hidden" type="file" accept=".zip" onChange={event => void restore(event.target.files?.[0])} />
     {message && <p role="status" className="mt-1 max-w-xs">{message}</p>}
   </div>;
+  return dock ? createPortal(notice, dock) : notice;
 }

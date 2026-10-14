@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LibraryAsset } from "../../shared/lib/libraryApi";
 import { taskSubjectLabel } from "../../shared/lib/taskText";
 import {
@@ -9,6 +9,8 @@ import type { AgentActivity, ChatMessage } from "../../widgets/AgentDock";
 
 interface UseTaskPollingOptions {
   projectSlug: string;
+  /** 任务在项目内推进，完成消息只属于显式登记它的会话。 */
+  sessionId?: string;
   /** 先恢复会话，再允许轮询写入完成消息，避免抢占恢复窗口。 */
   enabled?: boolean;
   assets: LibraryAsset[];
@@ -76,6 +78,7 @@ export function modelInfoSuffix(result: unknown): string {
 /** 轮询当前项目的生成任务，逐个回报完成/失败，全部结束后停止 */
 export function useTaskPolling({
   projectSlug,
+  sessionId,
   enabled = true,
   assets,
   pushAssistant,
@@ -85,6 +88,9 @@ export function useTaskPolling({
 }: UseTaskPollingOptions) {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const reportedTasksRef = useRef<Set<string>>(new Set());
+  const refreshedTasksRef = useRef<Set<string>>(new Set());
+  const sessionRef = useRef(sessionId);
+  const scoped = sessionId !== undefined;
   /** 主模型路径 → 等待缩略图的完成消息；批量生成时逐件回填。 */
   const pendingPreviewsRef = useRef<Map<string, Set<string>>>(new Map());
   const assetsRef = useRef(assets);
@@ -99,6 +105,15 @@ export function useTaskPolling({
   const cancelledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pollFailureCountRef = useRef(0);
+
+  useLayoutEffect(() => {
+    if (sessionRef.current === sessionId) return;
+    sessionRef.current = sessionId;
+    activeBatchesRef.current.clear();
+    reportedTasksRef.current.clear();
+    pendingPreviewsRef.current.clear();
+    setActivity({ state: "idle", message: "Waiting for your instructions" });
+  }, [sessionId, setActivity]);
 
   const attachPreview = useCallback(
     (sourcePath: string, thumbnailPath: string) => {
@@ -164,10 +179,11 @@ export function useTaskPolling({
         const failureCount = ++pollFailureCountRef.current;
         const retryDelay = Math.min(4_000 * 2 ** (failureCount - 1), 30_000);
         const reason = err instanceof Error ? err.message : String(err);
-        if (failureCount === 1) {
+        const hasConversationWork = !scoped || activeBatchesRef.current.size > 0;
+        if (failureCount === 1 && hasConversationWork) {
           pushAssistant(`⚠️ Could not read background task status: ${reason}. Retrying automatically.`);
         }
-        setActivity({
+        if (hasConversationWork) setActivity({
           state: "working",
           message: `Failed to read background task status; retrying in ${Math.round(retryDelay / 1000)} seconds`,
         });
@@ -185,13 +201,19 @@ export function useTaskPolling({
       const trackedIds = new Set(
         [...activeBatchesRef.current.values()].flatMap((batch) => [...batch.ids]),
       );
-      const visibleTasks = trackedIds.size > 0
+      // 项目后台时钟照常推进，包括其它会话的任务；新产物仍然进入资产库。
+      for (const task of tasks) {
+        if (task.status === "running" || refreshedTasksRef.current.has(task.id)) continue;
+        refreshedTasksRef.current.add(task.id);
+        bumpRefresh();
+      }
+      const visibleTasks = scoped || trackedIds.size > 0
         ? tasks.filter((task) => trackedIds.has(task.id))
         : tasks;
+      const hasConversationWork = !scoped || trackedIds.size > 0;
       for (const task of visibleTasks) {
         if (task.status === "running" || reportedTasksRef.current.has(task.id)) continue;
         reportedTasksRef.current.add(task.id);
-        bumpRefresh();
         if (task.status === "succeeded") {
           const model = (task.result as { model?: string } | undefined)?.model;
           const files = (task.result as { files?: string[] } | undefined)?.files;
@@ -237,24 +259,26 @@ export function useTaskPolling({
       const runningTasks = visibleTasks.filter((t) => t.status === "running");
       const runningModelTasks = runningTasks.filter((task) => task.workflowId === "3d");
       const waitingForRegisteredTasks = activeBatchesRef.current.size > 0;
-      if (runningTasks.length > 0 || waitingForRegisteredTasks) {
-        setActivity({
-          state: "working",
-          message:
-            runningTasks.length === 1
-              ? runningModelTasks.length === 1
-                ? `Generating model: ${taskSubjectLabel(runningTasks[0]!.subject).replace(/^3D generation(?: \([^)]*\))?: /, "")}`
-                : `Running: ${taskSubjectLabel(runningTasks[0]!.subject)}`
-              : runningTasks.length > 1 && runningModelTasks.length === runningTasks.length
-                ? `Generating ${runningTasks.length} models`
-                : runningTasks.length > 1
-                  ? `Running ${runningTasks.length} generation tasks`
-                : "Waiting for background tasks",
-        });
+      if (tasks.some((task) => task.status === "running") || waitingForRegisteredTasks) {
+        if (hasConversationWork) {
+          setActivity({
+            state: "working",
+            message:
+              runningTasks.length === 1
+                ? runningModelTasks.length === 1
+                  ? `Generating model: ${taskSubjectLabel(runningTasks[0]!.subject).replace(/^3D generation(?: \([^)]*\))?: /, "")}`
+                  : `Running: ${taskSubjectLabel(runningTasks[0]!.subject)}`
+                : runningTasks.length > 1 && runningModelTasks.length === runningTasks.length
+                  ? `Generating ${runningTasks.length} models`
+                  : runningTasks.length > 1
+                    ? `Running ${runningTasks.length} generation tasks`
+                  : "Waiting for background tasks",
+          });
+        }
         timerRef.current = setTimeout(() => void tick(), TASK_POLL_INTERVAL_MS);
       } else {
         const failedCount = visibleTasks.filter((t) => t.status === "failed").length;
-        setActivity({
+        if (hasConversationWork) setActivity({
           state: failedCount > 0 ? "attention" : "idle",
           message:
             failedCount > 0
@@ -267,7 +291,7 @@ export function useTaskPolling({
       for (const callback of callbacks) callback();
     };
     void tick();
-  }, [projectSlug, enabled, pushAssistant, updateMessage, setActivity, bumpRefresh]);
+  }, [projectSlug, enabled, scoped, pushAssistant, updateMessage, setActivity, bumpRefresh]);
 
   useEffect(() => {
     if (!projectSlug || !enabled) return;
@@ -281,7 +305,9 @@ export function useTaskPolling({
             .filter((task) => task.status === "running")
             .map((task) => task.id);
           initialLoadingRef.current = false;
-          if (runningIds.length > 0) pollTasks(runningIds);
+          // 已落盘的任务由 useAgentChat 从本会话 pendingTaskIds 登记；
+          // 发现其它会话的 running 只负责驱动，不能把它认领进当前会话。
+          if (runningIds.length > 0) pollTasks(scoped ? [] : runningIds);
         }
       })
       .catch(() => undefined)
@@ -295,7 +321,7 @@ export function useTaskPolling({
     return () => {
       cancelled = true;
     };
-  }, [projectSlug, enabled, pollTasks]);
+  }, [projectSlug, enabled, scoped, pollTasks]);
 
   return { tasks, pollTasks, onThumbnailGenerated };
 }

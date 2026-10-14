@@ -69,11 +69,9 @@ export class Deadline {
   private readonly controller = new AbortController();
   private readonly timer: ReturnType<typeof setTimeout>;
   private readonly expiresAt: number;
-  private readonly timeoutMs: number;
   private readonly makeError: () => ChatServiceError;
 
   constructor(timeoutMs: number, makeError: () => ChatServiceError) {
-    this.timeoutMs = timeoutMs;
     this.makeError = makeError;
     this.expiresAt = Date.now() + timeoutMs;
     // abort 的 reason 直接用调用方的错误：使用 signal 的请求会带着正确的错误码拒绝，

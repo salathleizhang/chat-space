@@ -4,7 +4,6 @@ import {
   API_REQUEST_TIMEOUT_MS,
   UPLOAD_REQUEST_TIMEOUT_MS,
   fetchWithTimeout,
-  readBodyWithTimeout,
   sleep,
 } from "../common/http";
 import { pollProviderTask } from "../common/polling";

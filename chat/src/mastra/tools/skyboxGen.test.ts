@@ -6,12 +6,34 @@ import { assetDir, assetIdentityFile } from "../../common/libraryPaths";
 import { AssetIdentitySchema, ProjectSchema, RequestSidecarSchema } from "../../dto/library";
 import { LocalFileStorage, readJson, writeJson } from "../../services/assetStorage";
 import { createProject, requireProject, setCurrentSkybox } from "./projectTools";
-import { runCurrentSkyboxEdit, runSkyboxGeneration } from "./skyboxGen";
+import { fetchDefaultSkyboxDataUri, runCurrentSkyboxEdit, runSkyboxGeneration } from "./skyboxGen";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-skybox-test-"));
 const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const HDR_BYTES = new Uint8Array([0x23, 0x3f, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4e, 0x43, 0x45]);
+
+test("浏览器从同源静态路径读默认全景，返回原图字节而不依赖 Bun.file", async () => {
+  let requested = "";
+  const fetchFn = (async (input: string | URL | Request) => {
+    requested = String(input);
+    return new Response(PNG_BYTES, { headers: { "content-type": "image/jpeg" } });
+  }) as typeof fetch;
+  expect(await fetchDefaultSkyboxDataUri(fetchFn, "https://site.test/local-runtime.js"))
+    .toBe(`data:image/jpeg;base64,${Buffer.from(PNG_BYTES).toString("base64")}`);
+  expect(requested).toBe("https://site.test/env/sky.jpg");
+});
+
+test("默认全景路由返回 HTML 或 404 时先失败，不把错误页面当输入图提交付费生成", async () => {
+  for (const response of [
+    new Response("<!doctype html>", { headers: { "content-type": "text/html" } }),
+    new Response("missing", { status: 404 }),
+  ]) {
+    const fetchFn = (async () => response) as unknown as typeof fetch;
+    await expect(fetchDefaultSkyboxDataUri(fetchFn, "https://site.test/local-runtime.js"))
+      .rejects.toThrow("default skybox image could not be loaded");
+  }
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });

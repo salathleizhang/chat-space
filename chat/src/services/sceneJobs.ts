@@ -6,8 +6,10 @@ import {
   projectSceneJobsDir,
   projectSceneSpecFile,
   projectSceneSpecRevisionFile,
+  projectTaskFile,
 } from "../common/libraryPaths";
 import { SceneAnalysisSchema } from "../dto/library";
+import { GenerationTaskSchema } from "../dto/tasks";
 import {
   SceneJobSchema,
   SceneSpecRevisionInputSchema,
@@ -272,7 +274,18 @@ export async function readSceneJob(
   if (!(await storage.exists(path))) {
     throw new ChatServiceError(`Scene job does not exist: ${jobId}`, 404, "scene_job_not_found");
   }
-  return readJson(storage, path, SceneJobSchema);
+  return withParentFailure(storage, await readJson(storage, path, SceneJobSchema));
+}
+
+/** 旧版本可能只把父任务标失败；读取时恢复真实状态，使历史任务也能被修订。 */
+async function withParentFailure(storage: AssetStorage, job: SceneJob): Promise<SceneJob> {
+  if (job.status !== "running" || !job.parentTaskId) return job;
+  const path = projectTaskFile(job.projectSlug, job.parentTaskId);
+  if (!(await storage.exists(path))) return job;
+  const parent = await readJson(storage, path, GenerationTaskSchema);
+  return parent.status === "failed"
+    ? { ...job, status: "failed", error: parent.error ?? "Parent scene task failed", updatedAt: parent.updatedAt }
+    : job;
 }
 
 export async function listSceneJobs(
@@ -283,11 +296,11 @@ export async function listSceneJobs(
   for (const name of await storage.list(projectSceneJobsDir(projectSlug))) {
     if (!name.endsWith(".json")) continue;
     try {
-      jobs.push(await readJson(
+      jobs.push(await withParentFailure(storage, await readJson(
         storage,
         `${projectSceneJobsDir(projectSlug)}/${name}`,
         SceneJobSchema,
-      ));
+      )));
     } catch {
       // 单个损坏记录不影响其他场景任务。
     }

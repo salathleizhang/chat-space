@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { browserErrorMessage } from "./errors";
 interface Tool { description?: string; inputSchema: z.ZodType; execute: (input: any, context: any) => Promise<unknown> }
 type Message = { role: string; content: any; tool_calls?: any[]; tool_call_id?: string };
 function messagesForApi(messages: Message[]): Message[] {
@@ -26,7 +27,8 @@ export class Agent {
     return response;
   }
   private async *run(input: Message[], options: { abortSignal?: AbortSignal; requestContext: unknown }): AsyncGenerator<any> {
-    const messages: Message[] = [{ role: "system", content: this.options.instructions }, ...input];
+    const messages: Message[] = [{ role: "system", content: this.options.instructions +
+      "\n当前运行环境是公开网站的浏览器本地版。供应商凭据由网站服务端提供；缺少服务配置时需网站管理员处理，不能让访问者在自己电脑上配置 chat/.env。" }, ...input];
     for (let step = 0; step < 12; step++) {
       if (options.abortSignal?.aborted) return;
       const response = await this.call(messages, true, options.abortSignal);
@@ -71,7 +73,7 @@ export class Agent {
           // Ask-user is a hard stop before any remaining paid tool in the same response.
           if (name === "ask-user") return;
         } catch (error) {
-          result = { error: error instanceof Error ? error.message : String(error) };
+          result = { error: browserErrorMessage(error) };
           yield { type: "tool-error", payload: { toolName: name, toolCallId: id, error: result } };
         }
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });

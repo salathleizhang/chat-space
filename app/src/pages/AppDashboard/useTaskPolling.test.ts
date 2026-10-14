@@ -82,6 +82,71 @@ describe("生成完成通知里的面数（modelInfo）", () => {
 });
 
 describe("useTaskPolling", () => {
+  test("项目里其它会话的任务完成只刷新资产，不插入当前会话", async () => {
+    listTasks.mockResolvedValue([task({ status: "succeeded", id: "other-session" })]);
+    const { pushAssistant, updateMessage, setActivity, bumpRefresh } = harnessFor("p1");
+    const h = await renderHook(() => useTaskPolling({
+      projectSlug: "p1", sessionId: "new-session", assets: [],
+      pushAssistant, updateMessage: updateMessage as never, setActivity, bumpRefresh,
+    }), undefined);
+    h.result.current.pollTasks();
+    await flush();
+    expect(pushAssistant).not.toHaveBeenCalled();
+    expect(setActivity).not.toHaveBeenCalled();
+    expect(bumpRefresh).toHaveBeenCalledTimes(1);
+    expect(h.result.current.tasks[0]?.id).toBe("other-session");
+    await h.unmount();
+  });
+
+  test("切换会话时在途任务完成不污染新会话或唤醒旧回调，恢复后能重新接续", async () => {
+    const pending = deferred<GenerationTask[]>();
+    listTasks.mockResolvedValue([]);
+    const { pushAssistant, updateMessage, setActivity, bumpRefresh } = harnessFor("p1");
+    const h = await renderHook((sessionId: string) => useTaskPolling({
+      projectSlug: "p1", sessionId, assets: [],
+      pushAssistant, updateMessage: updateMessage as never, setActivity, bumpRefresh,
+    }), "old-session" as string);
+    await flush();
+    listTasks.mockImplementation(() => pending.promise);
+    const oldSettled = mock(() => {});
+    h.result.current.pollTasks(["old-task"], oldSettled);
+    await h.rerender("new-session");
+    setActivity.mockClear();
+    pending.resolve([task({ id: "old-task", status: "succeeded" })]);
+    await flush();
+    expect(pushAssistant).not.toHaveBeenCalled();
+    expect(setActivity).not.toHaveBeenCalled();
+    expect(oldSettled).not.toHaveBeenCalled();
+    expect(bumpRefresh).toHaveBeenCalledTimes(1);
+
+    await h.rerender("old-session");
+    const restoredSettled = mock(() => {});
+    h.result.current.pollTasks(["old-task"], restoredSettled);
+    await flush();
+    expect(pushAssistant).toHaveBeenCalledTimes(1);
+    expect(restoredSettled).toHaveBeenCalledTimes(1);
+    await h.unmount();
+  });
+
+  test("本会话登记的批次正常结算，不报告同时完成的其它任务", async () => {
+    listTasks.mockResolvedValue([
+      task({ id: "mine", status: "succeeded", subject: "本会话模型" }),
+      task({ id: "other", status: "failed", error: "其它会话失败" }),
+    ]);
+    const { pushAssistant, updateMessage, setActivity, bumpRefresh } = harnessFor("p1");
+    const h = await renderHook(() => useTaskPolling({
+      projectSlug: "p1", sessionId: "session", assets: [],
+      pushAssistant, updateMessage: updateMessage as never, setActivity, bumpRefresh,
+    }), undefined);
+    const settled = mock(() => {});
+    h.result.current.pollTasks(["mine"], settled);
+    await flush();
+    expect(pushAssistant).toHaveBeenCalledTimes(1);
+    expect(pushAssistant.mock.calls[0]?.[0]).toContain("本会话模型");
+    expect(settled).toHaveBeenCalledTimes(1);
+    await h.unmount();
+  });
+
   test("单个后台任务把具体动作显示在 Agent 状态栏", async () => {
     listTasks.mockImplementation(async () => [
       task({ status: "running", subject: "贴图生成：chair" }),

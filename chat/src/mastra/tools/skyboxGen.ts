@@ -2,6 +2,8 @@ import { CloudTaskPending } from "../../cloud/context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError, toErrorMessage } from "../../common/errors";
+import { API_REQUEST_TIMEOUT_MS, fetchWithTimeout, readBodyWithTimeout } from "../../common/http";
+import { currentTaskPump } from "../../common/taskPump";
 import {
   formatIndexedName,
   formatRequestSidecarName,
@@ -142,6 +144,7 @@ const DEFAULT_SKYBOX_IMAGE_URLS = [
 ];
 
 async function defaultSkyboxDataUri(): Promise<string> {
+  if (typeof Bun === "undefined") return fetchDefaultSkyboxDataUri();
   for (const url of DEFAULT_SKYBOX_IMAGE_URLS) {
     const file = Bun.file(url);
     if (await file.exists()) {
@@ -153,6 +156,27 @@ async function defaultSkyboxDataUri(): Promise<string> {
     500,
     "default_skybox_missing",
   );
+}
+
+/** 浏览器 Worker 从网站静态文件读默认全景，不能调用 Bun.file 或本机文件系统。 */
+export async function fetchDefaultSkyboxDataUri(
+  fetchFn: typeof fetch = fetch,
+  baseUrl: string = import.meta.url,
+): Promise<string> {
+  const pump = currentTaskPump();
+  pump?.enter(API_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetchWithTimeout(fetchFn, new URL("/env/sky.jpg", baseUrl),
+      pump ? { signal: pump.signal } : undefined, API_REQUEST_TIMEOUT_MS, "Default skybox");
+    if (!response.ok || !response.headers.get("content-type")?.startsWith("image/jpeg")) {
+      throw new ChatServiceError("The built-in default skybox image could not be loaded",
+        500, "default_skybox_missing");
+    }
+    const bytes = await readBodyWithTimeout(() => response.arrayBuffer(), API_REQUEST_TIMEOUT_MS, "Default skybox");
+    return `data:image/jpeg;base64,${Buffer.from(bytes).toString("base64")}`;
+  } finally {
+    pump?.leave();
+  }
 }
 
 interface ResolvedSkyboxInput {
