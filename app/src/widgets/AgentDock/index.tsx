@@ -32,6 +32,7 @@ import {
   Select,
   ThinkingIndicator,
   Tooltip,
+  VoiceInputButton,
 } from "../../shared/ui";
 import {
   IMAGE_GENERATE_MODEL_PRESETS,
@@ -1222,20 +1223,28 @@ export function AgentDock({
               用户看出方向不对时必须能收回。把按钮禁用掉是把人锁在一个他已经知道
               错了的过程里，比允许并发更糟。
             */}
-            {streaming ? (
-              <Tooltip content="Stop this generation">
+            {/*
+              语音输入紧挨在发送按钮**左边**（用户指定的位置）：说话只是往输入框里
+              写字，发送仍然要用户自己按——一轮生成会花钱，不能让它自己发出去。
+              它不随 streaming 变灰：生成期间打字本来就是允许的。
+            */}
+            <div className="flex shrink-0 items-center gap-2">
+              <VoiceInputButton value={text} onChange={setText} />
+              {streaming ? (
+                <Tooltip content="Stop this generation">
+                  <LiquidMetalSendButton
+                    intent="stop"
+                    type="button"
+                    aria-label="Stop generation"
+                    onClick={onStop}
+                  />
+                </Tooltip>
+              ) : (
                 <LiquidMetalSendButton
-                  intent="stop"
-                  type="button"
-                  aria-label="Stop generation"
-                  onClick={onStop}
+                  aria-label={imageFiles.length > 0 ? "Send images" : "Send instructions"}
                 />
-              </Tooltip>
-            ) : (
-              <LiquidMetalSendButton
-                aria-label={imageFiles.length > 0 ? "Send images" : "Send instructions"}
-              />
-            )}
+              )}
+            </div>
           </div>
         </form>
         </Panel>
