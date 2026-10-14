@@ -7,14 +7,26 @@ import { serverResumeKeys } from "./config";
 import { resumeGeneration } from "../../../chat/src/mastra/tools/resumeGeneration";
 import { withAssetStorage, readJson, writeJson } from "../../../chat/src/services/assetStorage";
 import { runWithTaskPump } from "../../../chat/src/common/taskPump";
-import { BrowserAssetStorage } from "./storage";
+import { BrowserAssetStorage, localEntries } from "./storage";
 import { browserErrorMessage } from "./errors";
 import { publishCompletedCharacter } from "./characterCompletion";
 import { runWithGeneratedModelInfo } from "../../../chat/src/mastra/tools/modelInfo";
+import { browserTaskDriverIds } from "./taskDrivers";
 export interface LocalJob { task: GenerationTask; descriptor: CloudOperation; started: boolean; receipts: string[]; nextAt: number; done?: boolean; publicationChecked?: boolean }
 export const localJobPath = (id: string) => `.jobs/${id}.json`;
 export function browserContext(storage: BrowserAssetStorage, ownJob?: LocalJob): CloudContext {
-  return { workspace: "browser", pending: [], polling: true, activeTaskIds: async () => new Set((await navigator.locks.query()).held?.filter(lock => lock.name?.startsWith("chatspace:job:")).map(lock => lock.name!.slice("chatspace:job:".length))),
+  return { workspace: "browser", pending: [], polling: true, activeTaskIds: async () => {
+      const held = (await navigator.locks.query()).held?.flatMap(lock => lock.name ? [lock.name] : []) ?? [];
+      const jobs = (await localEntries(".jobs/")).flatMap(entry => {
+        if (typeof entry.value !== "string") return [];
+        try {
+          const job = JSON.parse(entry.value) as LocalJob;
+          if (typeof job?.task?.id === "string" && typeof job.nextAt === "number") return [job];
+        } catch { /* 单个损坏调度不能影响其它任务的健康状态。 */ }
+        return [];
+      });
+      return browserTaskDriverIds(jobs, held);
+    },
     enqueue: async (task, descriptor) => {
       const job: LocalJob = { task, descriptor, started: false, receipts: [], nextAt: Date.now() };
       await storage.writeText(localJobPath(task.id), JSON.stringify(job));
