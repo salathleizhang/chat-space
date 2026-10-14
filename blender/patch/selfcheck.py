@@ -47,11 +47,11 @@ def check_operator(path: str) -> dict:
     """
     parts = path.split(".")
     if len(parts) != 2:
-        return {"operator": path, "ok": False, "error": "路径必须是 <category>.<name>"}
+        return {"operator": path, "ok": False, "error": "path must be <category>.<name>"}
     group = getattr(bpy.ops, parts[0], None)
     op = getattr(group, parts[1], None) if group is not None else None
     if op is None:
-        return {"operator": path, "ok": False, "error": "operator 不存在"}
+        return {"operator": path, "ok": False, "error": "operator does not exist"}
     try:
         rna = op.get_rna_type()
     except Exception as exc:  # noqa: BLE001
@@ -109,11 +109,11 @@ def main() -> int:
     print(f"{MARKER} " + json.dumps(report, ensure_ascii=False, indent=2))
 
     if failed:
-        print(f"{MARKER}_FAIL 缺少必需的 operator：{[i['operator'] for i in failed]}", file=sys.stderr)
+        print(f"{MARKER}_FAIL missing required operators: {[i['operator'] for i in failed]}", file=sys.stderr)
         return 1
     if not report["addons"]["mcpModules"]:
         print(
-            f"{MARKER}_FAIL 没有任何 MCP 插件被启用（已启用 {report['addons']['enabledCount']} 个）",
+            f"{MARKER}_FAIL no MCP add-on is enabled ({report['addons']['enabledCount']} enabled)",
             file=sys.stderr,
         )
         return 1

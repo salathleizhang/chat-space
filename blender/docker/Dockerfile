@@ -52,7 +52,7 @@ USER root
 # 运行用户必须真的存在。**不要**用 `|| true` 把失败吞掉 —— 用户不存在时后面每一步
 # 都会以奇怪的姿势失败（权限、找不到 HOME），而那正是这个补丁要消灭的静默失败。
 RUN id "${RUNTIME_USER}" >/dev/null 2>&1 || { \
-      echo "基座里没有用户 ${RUNTIME_USER}。先跑 docker run --rm <image> id 核对，再改 ARG。" >&2; \
+      echo "the base image has no user ${RUNTIME_USER}. Run docker run --rm <image> id to check, then change the ARG." >&2; \
       exit 1; \
     }
 
@@ -118,7 +118,7 @@ RUN set -eux; \
     ok=0; \
     for i in 1 2 3 4 5; do \
       if /opt/mcp/bin/pip install --no-cache-dir --timeout 60 mcp-for-blender; then ok=1; break; fi; \
-      echo "pip install 失败（第 $i 次），重试…" >&2; sleep 5; \
+      echo "pip install failed (attempt $i), retrying…" >&2; sleep 5; \
     done; \
     [ "$ok" = 1 ]; \
     ln -sf /opt/mcp/bin/mcp-for-blender /usr/local/bin/mcp-for-blender; \

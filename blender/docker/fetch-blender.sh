@@ -47,15 +47,15 @@ file_size() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
 if [[ -f "$TARGET" ]]; then
   SIZE=$(file_size "$TARGET")
   if [[ "$SIZE" -gt 300000000 ]] && tar -tJf "$TARGET" >/dev/null 2>&1; then
-    echo "[fetch-blender] 已存在且完整（$((SIZE / 1024 / 1024)) MB）：$TARGET"
+    echo "[fetch-blender] already present and complete ($((SIZE / 1024 / 1024)) MB): $TARGET"
     exit 0
   fi
-  echo "[fetch-blender] 已有文件不完整（$((SIZE / 1024 / 1024)) MB），继续续传…"
+  echo "[fetch-blender] the existing file is incomplete ($((SIZE / 1024 / 1024)) MB), resuming the transfer…"
 fi
 
 for URL in "${SOURCES[@]}"; do
   HOST=$(echo "$URL" | awk -F/ '{print $3}')
-  echo "[fetch-blender] 尝试 $HOST"
+  echo "[fetch-blender] trying $HOST"
   # `--retry-all-errors` + `-C -`：源站偶发截断时接着下，不必从头再来。
   if curl -fL --retry 10 --retry-delay 3 --retry-all-errors --connect-timeout 15 \
           --max-time 3600 -C - -o "$TARGET" "$URL"; then
@@ -63,15 +63,15 @@ for URL in "${SOURCES[@]}"; do
     # `tar -tJf` 会真去解压流，能抓出截断与损坏；坏文件进镜像的代价是构建后期才炸。
     if tar -tJf "$TARGET" >/dev/null 2>&1; then
       SIZE=$(file_size "$TARGET")
-      echo "[fetch-blender] 完成并通过完整性校验：$((SIZE / 1024 / 1024)) MB → $TARGET"
+      echo "[fetch-blender] done and passed the integrity check: $((SIZE / 1024 / 1024)) MB → $TARGET"
       exit 0
     fi
-    echo "[fetch-blender] $HOST 下到的文件校验不过（截断或损坏），换下一个源重试" >&2
+    echo "[fetch-blender] the file downloaded from $HOST failed the integrity check (truncated or corrupt); trying the next source" >&2
     rm -f "$TARGET"
   else
-    echo "[fetch-blender] $HOST 失败，换下一个源" >&2
+    echo "[fetch-blender] $HOST failed, trying the next source" >&2
   fi
 done
 
-echo "[fetch-blender] 所有源都失败了。手动下载后放到：$TARGET" >&2
+echo "[fetch-blender] every source failed. Download it manually and put it at: $TARGET" >&2
 exit 1

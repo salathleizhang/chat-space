@@ -48,7 +48,7 @@ bl_info = {
     "version": (0, 1, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar(N) > ChatSpace",
-    "description": "让 ChatSpace 的 agent 小步驱动 Blender，并在视口里实时看到每一步",
+    "description": "Let the ChatSpace agent drive Blender in small steps and watch every step live in the viewport",
     "category": "Interface",
 }
 
@@ -225,13 +225,14 @@ def _submit(op_name, params, timeout):
     if not bpy.app.timers.is_registered(_pump):
         # timers.register 必须在主线程调用；socket 线程只负责入队。
         # 正常情况下 addon 注册时泵已经跑起来了，这里是兜底。
-        raise OpError("主线程任务泵没有运行（插件可能被禁用了）")
+        raise OpError("the main-thread job pump is not running (the add-on may be disabled)")
     job = _Job(op_name, params)
     _JOB_QUEUE.put(job)
     if not job.done.wait(timeout):
         raise OpError(
-            f"op `{op_name}` 超过 {timeout:.0f}s 仍未完成；"
-            "Blender 可能仍在执行（画面会保持冻结直到它跑完）——请把工作拆成更小的步"
+            f"op `{op_name}` did not finish within {timeout:.0f}s; "
+            "Blender may still be running it (the viewport stays frozen until it finishes)"
+            " — split the work into smaller steps"
         )
     if job.error:
         if job.error["kind"] == "op_error":
@@ -244,14 +245,15 @@ def _execute(op_name, params):
     if op_name == "run_python":
         if not _allow_run_python():
             raise OpError(
-                "run_python 被禁用。这是刻意的：LLM 写 bpy 的失败是静默的，"
-                "产品路径只走类型化 op。确实需要时在插件偏好里打开 allow_run_python。"
+                "run_python is disabled. This is deliberate: LLM-written bpy fails silently, "
+                "so the product path only uses typed ops. If you really need it, enable "
+                "allow_run_python in the add-on preferences."
             )
         return _run_python(params)
     fn = _OPS.get(op_name)
     if fn is None:
         raise OpError(
-            f"未知 op `{op_name}`；可用：{', '.join(sorted(_OPS))}"
+            f"unknown op `{op_name}`; available: {', '.join(sorted(_OPS))}"
         )
     return fn(params or {})
 
@@ -296,32 +298,32 @@ def _mesh_from_bmesh(name, build):
 
 def _obj(name):
     if not name:
-        raise OpError("必须给 name")
+        raise OpError("name is required")
     obj = bpy.data.objects.get(name)
     if obj is None:
-        known = ", ".join(sorted(o.name for o in bpy.data.objects)) or "（场景为空）"
-        raise OpError(f"找不到对象 `{name}`；当前场景有：{known}")
+        known = ", ".join(sorted(o.name for o in bpy.data.objects)) or "(scene is empty)"
+        raise OpError(f"object `{name}` not found; the current scene has: {known}")
     return obj
 
 
 def _mesh_obj(name):
     obj = _obj(name)
     if obj.type != "MESH":
-        raise OpError(f"`{name}` 是 {obj.type}，不是 MESH")
+        raise OpError(f"`{name}` is {obj.type}, not MESH")
     return obj
 
 
-def _vec(value, default=None, field="参数"):
+def _vec(value, default=None, field="parameter"):
     if value is None:
         if default is None:
-            raise OpError(f"{field} 不能为空")
+            raise OpError(f"{field} must not be empty")
         return Vector(default)
     if not isinstance(value, (list, tuple)) or len(value) != 3:
-        raise OpError(f"{field} 必须是 [x, y, z]，收到 {value!r}")
+        raise OpError(f"{field} must be [x, y, z], got {value!r}")
     try:
         return Vector((float(value[0]), float(value[1]), float(value[2])))
     except (TypeError, ValueError) as exc:
-        raise OpError(f"{field} 必须是三个数字：{value!r}") from exc
+        raise OpError(f"{field} must be three numbers: {value!r}") from exc
 
 
 def _bounds(objects=None):
@@ -452,17 +454,17 @@ def _frame_view(radius_scale=2.6):
     return count
 
 
-@op("frame_all", mutates=False, summary="把视口对准整个场景（人看得到的关键）")
+@op("frame_all", mutates=False, summary="Frame the viewport on the whole scene (the key to letting a human see it)")
 def op_frame_all(params):
     count = _frame_view(float(params.get("radius_scale", 2.6)))
-    return {"framed": count, "note": "没有 3D 视口（后台模式）" if count == 0 else ""}
+    return {"framed": count, "note": "no 3D viewport (background mode)" if count == 0 else ""}
 
 
-@op("set_view", mutates=False, summary="切换视口机位：top/front/right/user/…")
+@op("set_view", mutates=False, summary="Switch the viewport camera: top/front/right/user/…")
 def op_set_view(params):
     name = str(params.get("view", "user")).lower()
     if name not in _VIEW_PRESETS:
-        raise OpError(f"view 必须是 {', '.join(_VIEW_PRESETS)}；收到 {name!r}")
+        raise OpError(f"view must be one of {', '.join(_VIEW_PRESETS)}; got {name!r}")
     (rx, ry, rz), perspective = _VIEW_PRESETS[name]
     quat = Euler((rx, ry, rz), "XYZ").to_quaternion()
     count = 0
@@ -481,7 +483,7 @@ def op_set_view(params):
 # ---------------------------------------------------------------------------
 
 
-@op("ping", mutates=False, summary="存活检查，回 Blender 版本与场景概况")
+@op("ping", mutates=False, summary="Liveness check; returns the Blender version and a scene overview")
 def op_ping(params):
     return {
         "blender": _blender_version(),
@@ -492,12 +494,12 @@ def op_ping(params):
     }
 
 
-@op("scene_info", mutates=False, summary="引擎事实：对象清单、面数、包围盒、退化项")
+@op("scene_info", mutates=False, summary="Engine facts: object list, face counts, bounding box, degenerate items")
 def op_scene_info(params):
     return _stats()
 
 
-@op("reset", mutates=True, summary="清空场景（回到空白起点）")
+@op("reset", mutates=True, summary="Clear the scene (back to a blank starting point)")
 def op_reset(params):
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -512,7 +514,7 @@ def op_reset(params):
     return _stats()
 
 
-@op("delete", mutates=True, summary="删除一个对象")
+@op("delete", mutates=True, summary="Delete one object")
 def op_delete(params):
     bpy.data.objects.remove(_obj(str(params.get("name", ""))), do_unlink=True)
     return _stats()
@@ -547,7 +549,7 @@ def _apply_and_return(obj, note=""):
     return {"object": entry, "stats": stats, "note": note}
 
 
-@op("box", summary="立方体（尺寸按各轴全长）")
+@op("box", summary="Cube (size is the full length along each axis)")
 def op_box(params):
     size = _vec(params.get("size"), default=(1.0, 1.0, 1.0), field="size")
     name = str(params.get("name") or "Box")
@@ -563,7 +565,7 @@ def op_box(params):
     return _apply_and_return(obj)
 
 
-@op("cylinder", summary="圆柱/圆锥（radius_top 与 radius_bottom 相等即圆柱）")
+@op("cylinder", summary="Cylinder/cone (equal radius_top and radius_bottom gives a cylinder)")
 def op_cylinder(params):
     r_bottom = float(params.get("radius_bottom", params.get("radius", 0.5)))
     r_top = float(params.get("radius_top", r_bottom))
@@ -584,7 +586,7 @@ def op_cylinder(params):
     return _apply_and_return(obj)
 
 
-@op("sphere", summary="UV 球")
+@op("sphere", summary="UV sphere")
 def op_sphere(params):
     radius = float(params.get("radius", 0.5))
     u = max(3, int(params.get("segments", 32)))
@@ -604,7 +606,7 @@ def op_sphere(params):
     return _apply_and_return(obj)
 
 
-@op("torus", summary="圆环（垫圈、把手、环形件）")
+@op("torus", summary="Torus (washers, handles, ring-shaped parts)")
 def op_torus(params):
     major = float(params.get("major_radius", 0.5))
     minor = float(params.get("minor_radius", 0.15))
@@ -639,24 +641,26 @@ def op_torus(params):
     return _apply_and_return(obj)
 
 
-@op("extrude_profile", summary="把 XY 平面上的闭合轮廓挤出成体（硬表面主力）")
+@op("extrude_profile", summary="Extrude a closed profile on the XY plane into a solid (the workhorse for hard surfaces)")
 def op_extrude_profile(params):
-    """`points` 是 [[x,y], …] 的闭合轮廓（会自动闭合，不需要重复首点）。
+    """`points` is a closed profile of [[x,y], …] (it is closed automatically; no need to repeat
+    the first point).
 
-    带孔的形状**不要**在这里塞多轮廓：先挤出实体，再用 `boolean` 挖。
-    这是刻意的——布尔是单一职责的 op，失败原因可枚举；多轮廓三角化失败则是黑箱。
+    For shapes with holes, do **not** stuff multiple profiles in here: first extrude the solid,
+    then cut with `boolean`. This is deliberate — boolean is a single-responsibility op with
+    enumerable failure reasons, while multi-profile triangulation failure is a black box.
     """
     raw = params.get("points")
     if not isinstance(raw, list) or len(raw) < 3:
-        raise OpError("points 至少要有 3 个 [x, y] 点")
+        raise OpError("points needs at least 3 [x, y] points")
     points = []
     for item in raw:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
-            raise OpError(f"每个点必须是 [x, y]，收到 {item!r}")
+            raise OpError(f"every point must be [x, y], got {item!r}")
         points.append((float(item[0]), float(item[1])))
     height = float(params.get("height", 1.0))
     if height == 0.0:
-        raise OpError("height 不能为 0（那会得到一个零体积的壳）")
+        raise OpError("height must not be 0 (that would give a zero-volume shell)")
     name = str(params.get("name") or "Profile")
 
     def build(bm):
@@ -665,7 +669,7 @@ def op_extrude_profile(params):
             face = bm.faces.new(verts)
         except ValueError as exc:
             raise OpError(
-                f"轮廓无法构成一个面（点重复、自交或共线）：{exc}"
+                f"the profile cannot form a face (duplicate, self-intersecting or collinear points): {exc}"
             ) from exc
         result = bmesh.ops.extrude_face_region(bm, geom=[face])
         new_verts = [e for e in result["geom"] if isinstance(e, bmesh.types.BMVert)]
@@ -683,7 +687,7 @@ def op_extrude_profile(params):
 # ---------------------------------------------------------------------------
 
 
-@op("transform", summary="设置对象的位移/旋转（度）/缩放")
+@op("transform", summary="Set an object's location/rotation (degrees)/scale")
 def op_transform(params):
     obj = _mesh_obj(str(params.get("name", "")))
     if "location" in params and params["location"] is not None:
@@ -696,7 +700,7 @@ def op_transform(params):
     if "scale" in params and params["scale"] is not None:
         obj.scale = _vec(params["scale"], field="scale")
     bpy.context.view_layer.update()
-    return _apply_and_return(obj, note="变换生效的前提是没有未应用的修改器")
+    return _apply_and_return(obj, note="the transform only takes effect if there are no unapplied modifiers")
 
 
 def _apply_modifiers(obj):
@@ -716,22 +720,22 @@ def _apply_modifiers(obj):
     return count
 
 
-@op("apply_modifiers", summary="把所有修改器烘焙进网格（导出前必须做）")
+@op("apply_modifiers", summary="Bake all modifiers into the mesh (required before export)")
 def op_apply_modifiers(params):
     obj = _mesh_obj(str(params.get("name", "")))
     count = _apply_modifiers(obj)
-    return _apply_and_return(obj, note=f"应用了 {count} 个修改器")
+    return _apply_and_return(obj, note=f"applied {count} modifiers")
 
 
-@op("boolean", summary="布尔运算：union/difference/intersect（工具对象会被消耗）")
+@op("boolean", summary="Boolean: union/difference/intersect (the tool object is consumed)")
 def op_boolean(params):
     target = _mesh_obj(str(params.get("target", "")))
     tool = _mesh_obj(str(params.get("tool", "")))
     if target is tool:
-        raise OpError("target 和 tool 不能是同一个对象")
+        raise OpError("target and tool must not be the same object")
     operation = str(params.get("operation", "difference")).upper()
     if operation not in {"UNION", "DIFFERENCE", "INTERSECT"}:
-        raise OpError("operation 必须是 union/difference/intersect")
+        raise OpError("operation must be union/difference/intersect")
     before = len(target.data.polygons)
 
     modifier = target.modifiers.new(name="cs_boolean", type="BOOLEAN")
@@ -747,23 +751,24 @@ def op_boolean(params):
     after = len(target.data.polygons)
     result = _apply_and_return(
         target,
-        note=f"{operation}：{before} → {after} 面",
+        note=f"{operation}: {before} → {after} faces",
     )
     if after == 0:
         result["warning"] = (
-            "布尔之后网格是空的 —— 两个对象多半没有真正相交，"
-            "或者 difference 把整个目标都挖掉了。请先确认两者的世界包围盒确实重叠。"
+            "the mesh is empty after the boolean — the two objects most likely do not really "
+            "intersect, or difference carved the whole target away. First confirm that their "
+            "world bounding boxes actually overlap."
         )
     return result
 
 
-@op("bevel", summary="倒角（硬表面看起来不塑料的关键）")
+@op("bevel", summary="Bevel (the key to hard surfaces not looking like plastic)")
 def op_bevel(params):
     obj = _mesh_obj(str(params.get("name", "")))
     width = float(params.get("width", 0.02))
     segments = max(1, int(params.get("segments", 2)))
     if width <= 0:
-        raise OpError("width 必须为正")
+        raise OpError("width must be positive")
     if not obj.modifiers:
         # 先应用已有的，避免修改器顺序把倒角放到布尔之前
         pass
@@ -775,15 +780,15 @@ def op_bevel(params):
     modifier.harden_normals = bool(params.get("harden_normals", False))
     before = len(obj.data.polygons)
     _apply_modifiers(obj)
-    return _apply_and_return(obj, note=f"倒角 {width}m/{segments} 段：{before} → {len(obj.data.polygons)} 面")
+    return _apply_and_return(obj, note=f"bevel {width}m/{segments} segments: {before} → {len(obj.data.polygons)} faces")
 
 
-@op("solidify", summary="加厚（把面片变成有厚度的实体）")
+@op("solidify", summary="Solidify (turn a surface patch into a solid with thickness)")
 def op_solidify(params):
     obj = _mesh_obj(str(params.get("name", "")))
     thickness = float(params.get("thickness", 0.05))
     if thickness == 0:
-        raise OpError("thickness 不能为 0")
+        raise OpError("thickness must not be 0")
     modifier = obj.modifiers.new(name="cs_solidify", type="SOLIDIFY")
     modifier.thickness = thickness
     modifier.offset = float(params.get("offset", -1.0))
@@ -791,7 +796,7 @@ def op_solidify(params):
     return _apply_and_return(obj)
 
 
-@op("mirror", summary="镜像（对称件建模）")
+@op("mirror", summary="Mirror (modeling symmetric parts)")
 def op_mirror(params):
     obj = _mesh_obj(str(params.get("name", "")))
     axes = params.get("axes", ["x"])
@@ -802,19 +807,19 @@ def op_mirror(params):
     modifier.use_axis[1] = "y" in axes
     modifier.use_axis[2] = "z" in axes
     if not any(modifier.use_axis):
-        raise OpError("axes 至少要有一个：x/y/z")
+        raise OpError("axes needs at least one of: x/y/z")
     modifier.use_clip = bool(params.get("use_clip", False))
     modifier.merge_threshold = float(params.get("merge_threshold", 0.001))
     _apply_modifiers(obj)
     return _apply_and_return(obj)
 
 
-@op("array", summary="阵列：线性（constant_offset）或环形（use_object / 绕原点）")
+@op("array", summary="Array: linear (constant_offset) or circular (use_object / around the origin)")
 def op_array(params):
     obj = _mesh_obj(str(params.get("name", "")))
     count = int(params.get("count", 2))
     if count < 1 or count > 500:
-        raise OpError("count 必须在 1..500")
+        raise OpError("count must be in 1..500")
     modifier = obj.modifiers.new(name="cs_array", type="ARRAY")
     modifier.count = count
     mode = str(params.get("mode", "linear")).lower()
@@ -837,9 +842,9 @@ def op_array(params):
         modifier.offset_object = pivot
         modifier.use_relative_offset = False
     else:
-        raise OpError("mode 必须是 linear 或 circular")
+        raise OpError("mode must be linear or circular")
     _apply_modifiers(obj)
-    result = _apply_and_return(obj, note=f"{mode} 阵列 ×{count}")
+    result = _apply_and_return(obj, note=f"{mode} array ×{count}")
     if params.get("cleanup_pivot", True) and obj.parent is not None:
         pivot = obj.parent
         world = obj.matrix_world.copy()
@@ -851,14 +856,14 @@ def op_array(params):
     return result
 
 
-@op("subdivide", summary="细分（Catmull-Clark 或简单细分）")
+@op("subdivide", summary="Subdivide (Catmull-Clark or simple subdivision)")
 def op_subdivide(params):
     obj = _mesh_obj(str(params.get("name", "")))
     levels = max(0, min(6, int(params.get("levels", 1))))
     if levels == 0:
-        raise OpError("levels 至少为 1")
+        raise OpError("levels must be at least 1")
     if len(obj.data.polygons) > 200_000:
-        raise OpError("网格已超过 20 万面，细分会爆内存；先降面或不要细分")
+        raise OpError("the mesh already has over 200,000 faces; subdividing will blow up memory — decimate first or skip the subdivision")
     modifier = obj.modifiers.new(name="cs_subsurf", type="SUBSURF")
     modifier.levels = levels
     modifier.render_levels = levels
@@ -868,7 +873,7 @@ def op_subdivide(params):
     return _apply_and_return(obj)
 
 
-@op("shade_smooth", mutates=False, summary="平滑着色")
+@op("shade_smooth", mutates=False, summary="Shade smooth")
 def op_shade_smooth(params):
     obj = _mesh_obj(str(params.get("name", "")))
     smooth = bool(params.get("smooth", True))
@@ -878,7 +883,7 @@ def op_shade_smooth(params):
     return {"name": obj.name, "smooth": smooth}
 
 
-@op("uv_smart_project", mutates=False, summary="智能 UV 展开")
+@op("uv_smart_project", mutates=False, summary="Smart UV project")
 def op_uv_smart_project(params):
     """需要 Edit Mode + operator，因此是本文件里少数必须走 context override 的 op。"""
     obj = _mesh_obj(str(params.get("name", "")))
@@ -901,14 +906,14 @@ def op_uv_smart_project(params):
             bpy.ops.object.mode_set(mode="OBJECT")
         except Exception:
             pass
-        raise OpError(f"UV 展开失败（需要 3D 视口上下文）：{type(exc).__name__}: {exc}") from exc
+        raise OpError(f"UV unwrap failed (needs a 3D viewport context): {type(exc).__name__}: {exc}") from exc
     finally:
         if previous is not None:
             view_layer.objects.active = previous
     return {
         "name": obj.name,
         "uvLayers": [layer.name for layer in obj.data.uv_layers],
-        "note": "UV 展开成功，但没有做接缝优化——形状规则时够用",
+        "note": "UV unwrap succeeded, but no seam optimization was done — good enough for regular shapes",
     }
 
 
@@ -921,7 +926,7 @@ def _assign_material(obj, spec):
     if isinstance(spec, str):
         spec = {"name": spec}
     if not isinstance(spec, dict):
-        raise OpError("material 必须是名字，或 {name, base_color, metallic, roughness} 对象")
+        raise OpError("material must be a name, or a {name, base_color, metallic, roughness} object")
     name = str(spec.get("name") or f"{obj.name}_mat")
     material = bpy.data.materials.get(name) or bpy.data.materials.new(name=name)
     material.use_nodes = True
@@ -942,7 +947,7 @@ def _assign_material(obj, spec):
     return material
 
 
-@op("set_material", summary="设置 PBR 材质（基色/金属度/粗糙度）")
+@op("set_material", summary="Set a PBR material (base color/metallic/roughness)")
 def op_set_material(params):
     obj = _mesh_obj(str(params.get("name", "")))
     material = _assign_material(obj, {
@@ -959,25 +964,25 @@ def op_set_material(params):
 # ---------------------------------------------------------------------------
 
 
-@op("import_glb", summary="导入 GLB/GLTF（把已有资产带进来改）")
+@op("import_glb", summary="Import GLB/GLTF (bring an existing asset in to modify)")
 def op_import_glb(params):
     path = str(params.get("path", ""))
     if not path or not os.path.isfile(path):
-        raise OpError(f"文件不存在：{path!r}（路径必须对 Blender 所在的机器可见）")
+        raise OpError(f"file does not exist: {path!r} (the path must be visible to the machine Blender runs on)")
     before = set(bpy.data.objects.keys())
     bpy.ops.import_scene.gltf(filepath=path)
     added = sorted(set(bpy.data.objects.keys()) - before)
     if not added:
-        raise OpError(f"导入 {path} 后没有新增任何对象 —— 文件可能是空的或格式不对")
+        raise OpError(f"importing {path} added no objects — the file may be empty or in the wrong format")
     bpy.context.view_layer.update()
     return {"imported": added, "stats": _stats()}
 
 
-@op("export_glb", summary="导出 GLB（导出前会自动应用所有修改器）")
+@op("export_glb", summary="Export GLB (all modifiers are applied automatically before export)")
 def op_export_glb(params):
     path = str(params.get("path", ""))
     if not path:
-        raise OpError("必须给 path")
+        raise OpError("path is required")
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     if params.get("apply_modifiers", True):
         for obj in list(bpy.context.scene.objects):
@@ -986,9 +991,9 @@ def op_export_glb(params):
     bpy.context.view_layer.update()
     stats = _stats()
     if stats["meshCount"] == 0:
-        raise OpError("场景里没有任何网格，导出去会是一个空文件")
+        raise OpError("there are no meshes in the scene; exporting would give an empty file")
     if stats["totalFaces"] == 0:
-        raise OpError("所有网格都是 0 面，导出会得到空模型（这通常意味着上一步静默失败了）")
+        raise OpError("every mesh has 0 faces; the export would be an empty model (this usually means the previous step failed silently)")
     bpy.ops.export_scene.gltf(
         filepath=path,
         export_format="GLB",
@@ -997,24 +1002,24 @@ def op_export_glb(params):
         export_yup=True,
     )
     if not os.path.isfile(path):
-        raise OpError(f"导出命令跑完了但文件不存在：{path}")
+        raise OpError(f"the export command finished but the file does not exist: {path}")
     size = os.path.getsize(path)
     if size < 1024:
-        raise OpError(f"导出的 GLB 只有 {size} 字节，几乎肯定是坏的")
+        raise OpError(f"the exported GLB is only {size} bytes; it is almost certainly broken")
     return {"path": path, "bytes": size, "stats": stats}
 
 
-@op("save_blend", summary="保存 .blend（参数的唯一真源，供以后改参重跑）")
+@op("save_blend", summary="Save the .blend (the single source of truth for parameters, for later re-runs with changed parameters)")
 def op_save_blend(params):
     path = str(params.get("path", ""))
     if not path:
-        raise OpError("必须给 path")
+        raise OpError("path is required")
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=path)
     return {"path": path, "bytes": os.path.getsize(path)}
 
 
-@op("screenshot", mutates=False, summary="抓一张视口图（agent 的双眼；人看的是真推流）")
+@op("screenshot", mutates=False, summary="Capture a viewport image (the agent's eyes; a human watches the real stream)")
 def op_screenshot(params):
     """走 `render.opengl` 抓当前视口。
 
@@ -1026,7 +1031,7 @@ def op_screenshot(params):
     ))
     regions = _view3d_regions()
     if not regions:
-        raise OpError("没有 3D 视口可抓（后台模式）")
+        raise OpError("no 3D viewport to capture (background mode)")
     space, _ = regions[0]
     area = next((a for a in _all_areas() if a.spaces.active is space), None)
     region = None
@@ -1037,11 +1042,12 @@ def op_screenshot(params):
             bpy.ops.render.opengl(write_still=True, filepath=path)
     except Exception as exc:  # noqa: BLE001
         raise OpError(
-            f"视口抓帧失败（{type(exc).__name__}: {exc}）。"
-            "这是 opengl 渲染对上下文敏感的老问题——需要真实 GUI 视口。"
+            f"viewport capture failed ({type(exc).__name__}: {exc}). "
+            "This is the old problem of opengl rendering being context-sensitive — it needs "
+            "a real GUI viewport."
         ) from exc
     if not os.path.isfile(path):
-        raise OpError("抓帧命令跑完了但文件不存在")
+        raise OpError("the capture command finished but the file does not exist")
     with open(path, "rb") as handle:
         data = handle.read()
     result = {"path": path, "bytes": len(data), "width": None, "height": None}
@@ -1065,7 +1071,7 @@ def _run_python(params):
     """逃生舱：默认禁用。启用后仍然回到引擎事实，避免"静默成功"。"""
     code = str(params.get("code", ""))
     if not code.strip():
-        raise OpError("code 不能为空")
+        raise OpError("code must not be empty")
     namespace = {"bpy": bpy, "bmesh": bmesh, "math": math, "Matrix": Matrix, "Vector": Vector}
     import io
     import contextlib
@@ -1076,7 +1082,7 @@ def _run_python(params):
             exec(compile(code, "<chatspace>", "exec"), namespace)
     except Exception as exc:  # noqa: BLE001
         raise OpError(
-            f"python 执行失败：{type(exc).__name__}: {exc}\n{buffer.getvalue()}"
+            f"python execution failed: {type(exc).__name__}: {exc}\n{buffer.getvalue()}"
         ) from exc
     return {"stdout": buffer.getvalue(), "stats": _stats()}
 
@@ -1116,7 +1122,7 @@ class _Handler(socketserver.StreamRequestHandler):
         try:
             request = json.loads(line.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
-            self._send({"ok": False, "error": f"请求不是合法 JSON：{exc}"})
+            self._send({"ok": False, "error": f"request is not valid JSON: {exc}"})
             return
 
         request_id = request.get("id")
@@ -1125,7 +1131,7 @@ class _Handler(socketserver.StreamRequestHandler):
 
         if _STATE["token"] and token != _STATE["token"]:
             self._send({"id": request_id, "ok": False,
-                        "error": {"kind": "auth", "message": "token 不正确"}})
+                        "error": {"kind": "auth", "message": "incorrect token"}})
             return
 
         if op_name == "catalog":
@@ -1217,8 +1223,8 @@ def start_server(host=None, port=None, token=None):
         server = _Server((host, port), _Handler)
     except OSError as exc:
         raise OpError(
-            f"无法监听 {host}:{port} —— {exc}。端口被占用时换个端口，"
-            "或者确认没有第二个 Blender 已经在跑桥接。"
+            f"cannot listen on {host}:{port} — {exc}. If the port is taken, use another port, "
+            "or make sure no second Blender is already running the bridge."
         ) from exc
     thread = threading.Thread(target=server.serve_forever, name="chatspace-bridge", daemon=True)
     thread.start()
@@ -1271,12 +1277,12 @@ def server_status():
 class CHATSPACE_OT_start_bridge(bpy.types.Operator):
     bl_idname = "chatspace.start_bridge"
     bl_label = "Start Bridge"
-    bl_description = "开始监听，让 ChatSpace 的 agent 能驱动这个 Blender"
+    bl_description = "Start listening so the ChatSpace agent can drive this Blender"
 
     def execute(self, context):
         try:
             info = start_server()
-            self.report({"INFO"}, f"ChatSpace Bridge 监听 {info['host']}:{info['port']}")
+            self.report({"INFO"}, f"ChatSpace Bridge listening on {info['host']}:{info['port']}")
         except OpError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -1286,18 +1292,18 @@ class CHATSPACE_OT_start_bridge(bpy.types.Operator):
 class CHATSPACE_OT_stop_bridge(bpy.types.Operator):
     bl_idname = "chatspace.stop_bridge"
     bl_label = "Stop Bridge"
-    bl_description = "停止监听（已经在执行的 op 不受影响）"
+    bl_description = "Stop listening (ops already running are unaffected)"
 
     def execute(self, context):
         stop_server()
-        self.report({"INFO"}, "ChatSpace Bridge 已停止")
+        self.report({"INFO"}, "ChatSpace Bridge stopped")
         return {"FINISHED"}
 
 
 class CHATSPACE_OT_frame_all(bpy.types.Operator):
     bl_idname = "chatspace.frame_all"
     bl_label = "Frame All"
-    bl_description = "把视口对准整个场景"
+    bl_description = "Frame the viewport on the whole scene"
 
     def execute(self, context):
         _frame_view()
@@ -1319,11 +1325,11 @@ class CHATSPACE_PT_bridge(bpy.types.Panel):
         box = layout.box()
         row = box.row()
         if status["running"]:
-            row.label(text=f"● 监听中  {status['host']}:{status['port']}", icon="PLAY")
+            row.label(text=f"● Listening  {status['host']}:{status['port']}", icon="PLAY")
         else:
-            row.label(text="○ 未启动", icon="PAUSE")
+            row.label(text="○ Not running", icon="PAUSE")
         if status["running"]:
-            box.label(text=f"客户端 {status['clients']} · 成功 {status['handled']} · 失败 {status['failed']}")
+            box.label(text=f"clients {status['clients']} · ok {status['handled']} · failed {status['failed']}")
 
         row = layout.row(align=True)
         if status["running"]:
@@ -1333,7 +1339,7 @@ class CHATSPACE_PT_bridge(bpy.types.Panel):
         row.operator("chatspace.frame_all", text="", icon="VIEWZOOM")
 
         box = layout.box()
-        box.label(text="最近一步", icon="INFO")
+        box.label(text="Last step", icon="INFO")
         if status["lastOp"]:
             row = box.row()
             row.label(text=("✓ " if status["lastOk"] else "✗ ") + str(status["lastOp"]))
@@ -1342,36 +1348,36 @@ class CHATSPACE_PT_bridge(bpy.types.Panel):
             if status["lastNote"]:
                 box.label(text=str(status["lastNote"])[:48])
         else:
-            box.label(text="（还没有收到任何 op）")
+            box.label(text="(no op received yet)")
 
         box = layout.box()
-        box.label(text="历史", icon="TIME")
+        box.label(text="History", icon="TIME")
         for stamp, note in reversed(list(_LOG)[-12:]):
             box.label(text=f"{stamp}  {note}"[:52])
 
         box = layout.box()
         box.label(text=f"Blender {status['blender']}", icon="BLENDER")
-        box.label(text=f"自动对准视口：{'开' if status['autoFrame'] else '关'}")
+        box.label(text=f"Auto-frame viewport: {'on' if status['autoFrame'] else 'off'}")
         if status["runPythonAllowed"]:
-            box.label(text="run_python：已开启（逃生舱）", icon="ERROR")
+            box.label(text="run_python: enabled (escape hatch)", icon="ERROR")
 
 
 class ChatSpaceBridgePreferences(bpy.types.AddonPreferences):
     bl_idname = ADDON_ID
 
     host: bpy.props.StringProperty(
-        name="监听地址", default=DEFAULT_HOST,
-        description="本地用 127.0.0.1；容器里对外暴露时改 0.0.0.0 并设置 token",
+        name="Listen address", default=DEFAULT_HOST,
+        description="Use 127.0.0.1 locally; when exposing it from a container, change it to 0.0.0.0 and set a token",
     )
-    port: bpy.props.IntProperty(name="端口", default=DEFAULT_PORT, min=1, max=65535)
+    port: bpy.props.IntProperty(name="Port", default=DEFAULT_PORT, min=1, max=65535)
     token: bpy.props.StringProperty(name="Token", default="", subtype="PASSWORD")
     auto_frame: bpy.props.BoolProperty(
-        name="每步之后自动对准视口", default=True,
-        description="人盯着屏幕时，这是「看得见」和「看不见」的区别",
+        name="Auto-frame the viewport after each step", default=True,
+        description="With a human watching the screen, this is the difference between \"visible\" and \"invisible\"",
     )
     allow_run_python: bpy.props.BoolProperty(
-        name="允许 run_python 逃生舱", default=False,
-        description="默认关闭：LLM 写 bpy 的失败是静默的。只在确实需要目录外的操作时打开",
+        name="Allow the run_python escape hatch", default=False,
+        description="Off by default: LLM-written bpy fails silently. Turn it on only when you truly need an operation outside the catalog",
     )
 
     def draw(self, context):
@@ -1382,7 +1388,7 @@ class ChatSpaceBridgePreferences(bpy.types.AddonPreferences):
         layout.prop(self, "auto_frame")
         layout.prop(self, "allow_run_python")
         if self.host not in ("127.0.0.1", "localhost") and not self.token:
-            layout.label(text="对外监听却没有 token —— 请补一个", icon="ERROR")
+            layout.label(text="Listening externally without a token — please add one", icon="ERROR")
 
 
 _CLASSES = (
@@ -1402,7 +1408,7 @@ def register():
         try:
             start_server()
         except OpError as exc:
-            print(f"[chatspace] 自动启动桥接失败：{exc}")
+            print(f"[chatspace] failed to auto-start the bridge: {exc}")
 
 
 def unregister():

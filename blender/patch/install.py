@@ -69,7 +69,7 @@ def log(step: str, message: str) -> None:
 
 
 def fail(step: str, message: str) -> "NoReturn":  # type: ignore[valid-type]
-    print(f"[{step}] 失败：{message}", file=sys.stderr, flush=True)
+    print(f"[{step}] failed: {message}", file=sys.stderr, flush=True)
     sys.exit(1)
 
 
@@ -89,7 +89,7 @@ def find_blender(explicit: str | None) -> Path:
     if explicit:
         path = Path(explicit)
         if not path.is_file():
-            fail("blender", f"BLENDER_BIN 指向的文件不存在：{path}")
+            fail("blender", f"the file BLENDER_BIN points to does not exist: {path}")
         return path
 
     if env := os.environ.get("BLENDER_BIN"):
@@ -105,9 +105,9 @@ def find_blender(explicit: str | None) -> Path:
 
     fail(
         "blender",
-        "找不到 Blender。设置 BLENDER_BIN 指向可执行文件。\n"
-        f"  macOS 常见位置：{MACOS_CANDIDATES[0]}\n"
-        f"  Linux 常见位置：{LINUX_CANDIDATES[0]}",
+        "Blender not found. Set BLENDER_BIN to point at the executable.\n"
+        f"  Common macOS location: {MACOS_CANDIDATES[0]}\n"
+        f"  Common Linux location: {LINUX_CANDIDATES[0]}",
     )
 
 
@@ -154,11 +154,11 @@ def probe(blender: Path) -> dict:
     )
     code, output = run_blender(blender, expr)
     if code != 0:
-        fail("blender", f"Blender 启动失败（退出码 {code}）：\n{output[-1500:]}")
+        fail("blender", f"Blender failed to start (exit code {code}):\n{output[-1500:]}")
     for line in output.splitlines():
         if line.startswith(f"{MARKER} "):
             return json.loads(line[len(MARKER) + 1 :])
-    fail("blender", f"没能从 Blender 拿到配置信息。原始输出：\n{output[-1500:]}")
+    fail("blender", f"could not get configuration information from Blender. Raw output:\n{output[-1500:]}")
 
 
 # ---------------------------------------------------------------------------
@@ -193,9 +193,10 @@ def install_mcp_addon(addons_dir: Path) -> None:
     if proc.returncode != 0:
         fail(
             "mcp-addon",
-            f"安装器退出码 {proc.returncode}。若提示找不到可执行文件，注意**包名与可执行文件"
-            f"同名，都是 `mcp-for-blender`**（改名前叫 `blender-mcp`，用旧名字会报"
-            f"`An executable named 'blender-mcp' is not provided`）。",
+            f"installer exited with code {proc.returncode}. If it says the executable was not "
+            f"found, note that **the package name and the executable share the same name, "
+            f"`mcp-for-blender`** (it was called `blender-mcp` before the rename; the old name "
+            f"reports `An executable named 'blender-mcp' is not provided`).",
         )
 
 
@@ -254,7 +255,7 @@ def parse_manifest(path: Path) -> list[tuple[str, list[str]]]:
         parts = line.split()
         kind, args = parts[0], parts[1:]
         if kind not in {"extension", "addon", "path"}:
-            fail("manifest", f"{path.name}:{number} 未知指令 `{kind}`（只有 extension/addon/path）")
+            fail("manifest", f"{path.name}:{number} unknown directive `{kind}` (only extension/addon/path)")
         entries.append((kind, args))
     return entries
 
@@ -262,7 +263,7 @@ def parse_manifest(path: Path) -> list[tuple[str, list[str]]]:
 def install_manifest_entry(blender: Path, kind: str, args: list[str]) -> str:
     if kind == "extension":
         if len(args) != 2:
-            fail("manifest", "extension 需要两个参数：<repo> <id>")
+            fail("manifest", "extension needs two arguments: <repo> <id>")
         repo, extension_id = args
         proc = subprocess.run(
             [str(blender), "--command", "extension", "install", repo, extension_id],
@@ -273,17 +274,17 @@ def install_manifest_entry(blender: Path, kind: str, args: list[str]) -> str:
         )
         output = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0:
-            fail("extension", f"装 {repo}/{extension_id} 失败：\n{output[-800:]}")
+            fail("extension", f"failed to install {repo}/{extension_id}:\n{output[-800:]}")
         return extension_id
 
     if kind == "path":
         if len(args) != 1:
-            fail("manifest", "path 需要一个参数：<目录或文件>")
+            fail("manifest", "path needs one argument: <directory or file>")
         source = Path(args[0])
         if not source.is_absolute():
             source = (MANIFEST.parent / source).resolve()
         if not source.exists():
-            fail("path", f"不存在：{source}")
+            fail("path", f"does not exist: {source}")
         # 放到用户插件目录；目录名即模块名。
         target_root = Path(os.environ["_CS_SCRIPTS_DIR"]) / "addons"
         target_root.mkdir(parents=True, exist_ok=True)
@@ -300,7 +301,7 @@ def install_manifest_entry(blender: Path, kind: str, args: list[str]) -> str:
     # addon：断言它已经在插件目录里，不下载
     module = args[0] if args else ""
     if not module:
-        fail("manifest", "addon 需要一个参数：<module>")
+        fail("manifest", "addon needs one argument: <module>")
     return module
 
 
@@ -390,15 +391,15 @@ def enable_and_verify(blender: Path, modules: list[str]) -> dict:
     # **永远把 Blender 的输出打出来。** 第一版没打，于是"register() 失败"只剩下我自己的
     # 一句推断，而 Blender 那边真正的 traceback 被丢掉了 —— 排查凭空多了好几轮。
     # 这类脚本的诊断信息比它自己的日志值钱得多。
-    print("--- Blender 输出（启用步骤） ---")
+    print("--- Blender output (enable step) ---")
     print(output.strip()[-3000:])
 
     if code != 0:
-        fail("enable", f"启用插件时 Blender 退出码 {code}：\n{output[-1500:]}")
+        fail("enable", f"Blender exited with code {code} while enabling the add-ons:\n{output[-1500:]}")
     for line in output.splitlines():
         if line.startswith(f"{MARKER} "):
             return json.loads(line[len(MARKER) + 1 :])
-    fail("enable", f"启用脚本没有回报结果。原始输出：\n{output[-1500:]}")
+    fail("enable", f"the enable script reported no result. Raw output:\n{output[-1500:]}")
 
 
 def write_manifest(blender: Path, info: dict, enabled: list[str], modules: list[str]) -> Path:
@@ -433,23 +434,23 @@ def write_manifest(blender: Path, info: dict, enabled: list[str], modules: list[
 
 def run_selfcheck(blender: Path) -> None:
     if not SELFCHECK.is_file():
-        log("selfcheck", "跳过（没有 selfcheck.py）")
+        log("selfcheck", "skipped (no selfcheck.py)")
         return
     code, output = run_blender(blender, f"exec(open({str(SELFCHECK)!r}).read())")
     print(output.strip()[-2500:])
     if code != 0:
-        fail("selfcheck", f"自检退出码 {code}")
+        fail("selfcheck", f"self-check exited with code {code}")
     if f"{MARKER}_SELFCHECK_OK" not in output:
-        fail("selfcheck", "自检没有输出通过标记 —— 说明它中途静默失败了")
+        fail("selfcheck", "the self-check printed no pass marker — it failed silently partway through")
 
 
 # ---------------------------------------------------------------------------
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="ChatSpace Blender 补丁安装器")
-    parser.add_argument("--blender", help="Blender 可执行文件路径（也可用 BLENDER_BIN）")
-    parser.add_argument("--skip-manifest", action="store_true", help="只装 MCP 插件，跳过 plugins.txt")
+    parser = argparse.ArgumentParser(description="ChatSpace Blender patch installer")
+    parser.add_argument("--blender", help="path to the Blender executable (BLENDER_BIN also works)")
+    parser.add_argument("--skip-manifest", action="store_true", help="install only the MCP add-on, skip plugins.txt")
     parser.add_argument("--skip-selfcheck", action="store_true")
     args = parser.parse_args()
 
@@ -460,7 +461,7 @@ def main() -> int:
 
     # 第 2 步：问配置目录（并**自己建**插件目录）。顺序不能换。
     info = probe(blender)
-    log("blender", f"版本 {info['version']} · 配置目录 {info['config']}")
+    log("blender", f"version {info['version']} · config dir {info['config']}")
     for label, value in (
         ("scripts", info.get("scripts")),
         ("addonsPaths", info.get("addonsPaths")),
@@ -478,7 +479,7 @@ def main() -> int:
     modules = ["blender_mcp"]
     if not args.skip_manifest:
         entries = parse_manifest(MANIFEST)
-        log("plugins", f"清单里 {len(entries)} 项")
+        log("plugins", f"{len(entries)} entries in the manifest")
         for kind, entry_args in entries:
             module = install_manifest_entry(blender, kind, entry_args)
             modules.append(module)
@@ -486,13 +487,13 @@ def main() -> int:
 
     # MCP 插件的模块名随版本变过，用真实存在的那个；找不到时留空让 selfcheck 去报。
     result = enable_and_verify(blender, modules)
-    log("enable", f"已启用 {len(result['enabled'])} 个插件")
-    log("discovered", f"Blender 扫到 {len(result.get('discovered', []))} 个模块")
+    log("enable", f"enabled {len(result['enabled'])} add-ons")
+    log("discovered", f"Blender discovered {len(result.get('discovered', []))} modules")
     if result["errors"]:
-        fail("enable", f"启用报错：{json.dumps(result['errors'], ensure_ascii=False)}")
+        fail("enable", f"enable errors: {json.dumps(result['errors'], ensure_ascii=False)}")
     missing = [m for m in modules if m in result["missing"] and m != "blender_mcp"]
     if missing:
-        fail("enable", f"这些插件装了但**没能启用**：{missing}（真正的原因多半在上面 Blender 的输出里）")
+        fail("enable", f"these add-ons were installed but **could not be enabled**: {missing} (the real cause is most likely in the Blender output above)")
     # MCP 插件单独判：它静默失败时最需要诊断信息，所以把"扫到没有"和"扫到但没启用"分开报。
     if "blender_mcp" in result["missing"]:
         discovered = result.get("discovered", [])
@@ -500,16 +501,17 @@ def main() -> int:
         if "blender_mcp" in discovered:
             fail(
                 "enable",
-                "`blender_mcp` 在 Blender 扫到的模块里，但启用没生效 —— 说明插件自己的 "
-                "`register()` 失败了。往上看 Blender 的输出找原因。",
+                "`blender_mcp` is among the modules Blender discovered, but enabling it did not "
+                "take effect — its own `register()` failed. Look at the Blender output above to "
+                "find the cause.",
             )
         fail(
             "enable",
-            f"`blender_mcp` **不在** Blender 扫到的 {len(discovered)} 个模块里 —— "
-            f"说明文件放错了地方，Blender 根本没看见它。\n"
-            f"  文件位置：{addons_dir}/blender_mcp.py\n"
-            f"  Blender 认的插件目录：{where}\n"
-            f"  已扫到的模块：{discovered}",
+            f"`blender_mcp` is **not** among the {len(discovered)} modules Blender discovered — "
+            f"the file was placed in the wrong location, so Blender never saw it.\n"
+            f"  File location: {addons_dir}/blender_mcp.py\n"
+            f"  Add-on directories Blender recognizes: {where}\n"
+            f"  Modules discovered: {discovered}",
         )
 
     manifest = write_manifest(blender, info, result["enabled"], modules)
@@ -518,7 +520,7 @@ def main() -> int:
     if not args.skip_selfcheck:
         run_selfcheck(blender)
 
-    log("done", "补丁安装完成")
+    log("done", "patch installation complete")
     return 0
 
 
