@@ -1,4 +1,4 @@
-import { lazy, StrictMode, Suspense } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { router } from "./app/router";
@@ -20,10 +20,10 @@ clearStaleChunkReloadFlag();
 
 clearLegacyApiKeys();
 
-const LocalStorageNotice = lazy(() => import("./browser/LocalStorageNotice").then(module => ({ default: module.LocalStorageNotice })));
-
 function AppRoot() {
-  return <><RouterProvider router={router} />{import.meta.env.VITE_BROWSER_LOCAL === "1" && <Suspense fallback={null}><LocalStorageNotice /></Suspense>}</>;
+  // 备份入口（导出/导入）不在这里：它跟着"数据只存在这个浏览器里"的说明一起搬进了
+  // 设置对话框（`widgets/SettingsDialog` 的浏览器本地版分支）。
+  return <RouterProvider router={router} />;
 }
 
 createRoot(document.getElementById("root")!).render(

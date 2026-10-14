@@ -29,9 +29,9 @@ import { useSyncExternalStore } from "react";
  *   portal 子树跟着重建。
  * - 同名槽位只登记**一个**节点：后登记的覆盖先登记的。
  */
-export type DockSlotName = "right" | "corner" | "storage";
+export type DockSlotName = "right" | "corner";
 
-const slots: Record<DockSlotName, HTMLElement | null> = { right: null, corner: null, storage: null };
+const slots: Record<DockSlotName, HTMLElement | null> = { right: null, corner: null };
 const listeners = new Set<() => void>();
 
 function setDockSlot(name: DockSlotName, node: HTMLElement | null): void {
@@ -44,8 +44,6 @@ function setDockSlot(name: DockSlotName, node: HTMLElement | null): void {
 export const dockRightSlotRef = (node: HTMLElement | null): void => setDockSlot("right", node);
 /** 屏幕右下角的 `ref`（撤销/重做的家） */
 export const dockCornerSlotRef = (node: HTMLElement | null): void => setDockSlot("corner", node);
-/** 浏览器备份提示有自己的流内行，不能悬浮遮住 Sidebar。 */
-export const dockStorageSlotRef = (node: HTMLElement | null): void => setDockSlot("storage", node);
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);

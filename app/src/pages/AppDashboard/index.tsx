@@ -16,7 +16,6 @@ import {
   type GenerationTask,
 } from "../../shared/lib/workflowClient";
 import { Button, Panel, dockCornerSlotRef, dockRightSlotRef, Tooltip } from "../../shared/ui";
-import { dockStorageSlotRef } from "../../shared/ui/dockRow";
 import { ImageGallery } from "../../widgets/ImageGallery";
 import { Inspector } from "../../widgets/Inspector";
 import { ModelList } from "../../widgets/ModelList";
@@ -669,10 +668,6 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           />
         </div>
         </div>
-        {import.meta.env.VITE_BROWSER_LOCAL === "1" && <div
-          ref={dockStorageSlotRef}
-          className="pointer-events-auto mt-2 w-[min(48rem,calc(100%-2rem))]"
-        />}
       </div>
       {/* 放在 Dashboard 而不是资产列表里：用户切到图片/任务分区时，
           新 3D 模型仍能完成缩略图渲染并回填到对话。 */}

@@ -39,14 +39,14 @@ afterEach(async () => {
 });
 
 describe("Sidebar（停靠区左端的分区菜单）", () => {
-  test("分区按钮与设置按钮按固定顺序出现，一颗不少", async () => {
+  test("设置与分隔线在最左端、四个分区跟在后面，一颗不少", async () => {
     const container = await render();
     expect(labels(container)).toEqual([
+      "Settings",
       "Asset library",
       "Images",
       "Scenes",
       "Generation tasks",
-      "Settings",
     ]);
   });
 
@@ -57,9 +57,16 @@ describe("Sidebar（停靠区左端的分区菜单）", () => {
     expect(labels(container)).not.toContain("Leave current scene");
   });
 
-  test("只剩一枚点状分隔线（首枚随那颗按钮一起删了，末枚隔开设置）", async () => {
+  test("只有一枚点状分隔线，且在齿轮右边（隔开设置与分区）", async () => {
     const container = await render();
-    expect(container.querySelectorAll('[role="separator"]').length).toBe(1);
+    const separators = [...container.querySelectorAll('[role="separator"]')];
+    expect(separators.length).toBe(1);
+    // 顺序判据：齿轮在分隔线左边，四个分区在分隔线右边（`compareDocumentPosition` 的 FOLLOWING）
+    const gear = container.querySelector('button[aria-label="Settings"]')!;
+    const [separator] = separators;
+    expect(gear.compareDocumentPosition(separator!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const firstSection = container.querySelector('button[aria-label="Asset library"]')!;
+    expect(separator!.compareDocumentPosition(firstSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   test("点分区按钮把 id 交给调用方，点击不会带来导航副作用", async () => {
