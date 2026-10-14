@@ -54,7 +54,7 @@ export class LocalFileStorage implements AssetStorage {
     const parsed = LogicalPathSchema.safeParse(logicalPath);
     if (!parsed.success) {
       throw new ChatServiceError(
-        `非法逻辑路径「${logicalPath}」：${parsed.error.issues[0]?.message}`,
+        `Invalid logical path "${logicalPath}": ${parsed.error.issues[0]?.message}`,
         400,
         "invalid_logical_path",
       );
@@ -62,7 +62,7 @@ export class LocalFileStorage implements AssetStorage {
     const abs = resolve(this.root, logicalPath);
     if (abs !== this.root && !abs.startsWith(this.root + sep)) {
       throw new ChatServiceError(
-        `逻辑路径「${logicalPath}」越出资产库根`,
+        `Logical path "${logicalPath}" escapes the asset library root`,
         400,
         "invalid_logical_path",
       );
@@ -155,7 +155,7 @@ export async function readJsonRaw(storage: AssetStorage, path: string): Promise<
     return JSON.parse(text);
   } catch {
     // 手工改坏 / 旧版遗留的半截 JSON 不应以原始 SyntaxError 冒泡，转成带路径的错误
-    throw new ChatServiceError(`「${path}」不是合法 JSON`, 500, "metadata_parse_failed");
+    throw new ChatServiceError(`"${path}" is not valid JSON`, 500, "metadata_parse_failed");
   }
 }
 
@@ -169,7 +169,7 @@ export async function readJson<T extends z.ZodType>(
   const parsed = schema.safeParse(data);
   if (!parsed.success) {
     throw new ChatServiceError(
-      `「${path}」不符合契约：${parsed.error.issues
+      `"${path}" does not match the contract: ${parsed.error.issues
         .map((i) => `${i.path.join(".")}: ${i.message}`)
         .join("; ")}`,
       500,
@@ -212,7 +212,7 @@ export async function readAsDataUri(
   const mime = MIME_BY_EXT[ext];
   if (!mime) {
     throw new ChatServiceError(
-      `不支持的文件格式「${logicalPath}」（支持 png/jpg/webp/glb/gltf/obj/fbx/stl）`,
+      `Unsupported file format "${logicalPath}" (supported: png/jpg/webp/glb/gltf/obj/fbx/stl)`,
       400,
       "unsupported_file",
     );
@@ -233,7 +233,7 @@ export function getAssetStorage(): AssetStorage {
   const scoped = storageContext.getStore();
   if (scoped) return scoped;
   if (process.env.VERCEL === "1") {
-    throw new ChatServiceError("云端工作区尚未初始化", 503, "cloud_storage_unavailable");
+    throw new ChatServiceError("The cloud workspace has not been initialized", 503, "cloud_storage_unavailable");
   }
   defaultStorage ??= new LocalFileStorage(config.library.root);
   return defaultStorage;

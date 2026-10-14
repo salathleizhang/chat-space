@@ -45,24 +45,24 @@ export function askUserQuestionFromToolResult(
 export const askUserTool = createTool({
   id: "ask-user",
   description:
-    "需要用户本人做决定时弹出可点选的问题卡片（免费）：付费操作同意、多个方案取舍、" +
-    "确认要处理的对象、不可逆或高成本的动作。调用后本轮立即结束，用户会点选卡片或直接" +
-    "输入文字，答案以下一条用户消息返回。" +
-    "填写要求：选项要具体且互斥，2~4 个为宜；推荐项标 recommended；" +
-    "付费同意必须同时给出「同意」（recommended）和「停止」（tone=danger），" +
-    "并把将调用哪个平台、要做什么写进 details 或选项 description；" +
-    "需要用户挑选多个对象时用 multiSelect=true，选项 id 用稳定的资产 slug；" +
-    "选项之外还想让用户自由描述时用 allowOther=true。" +
-    "使用边界：能从上下文或工具查到的信息不要问；单纯汇报进度不要用本工具；" +
-    "本工具必须单独占一条回复，禁止与任何其他工具在同一条回复里调用。",
+    "Show a clickable question card when the user themself needs to make a decision (free): consent to a paid operation, choosing between several options, " +
+    "confirming which objects to work on, or irreversible or high-cost actions. After the call this turn ends immediately; the user clicks an option on the card or types " +
+    "text directly, and the answer comes back as the next user message." +
+    "Filling requirements: options must be specific and mutually exclusive, 2~4 is best; mark the recommended option with recommended; " +
+    "consent to a paid operation must offer both \"Approve\" (recommended) and \"Stop\" (tone=danger), " +
+    "and write which platform will be called and what will be done into details or the option description; " +
+    "use multiSelect=true when the user needs to pick multiple objects, and use stable asset slugs as option ids; " +
+    "use allowOther=true when you also want the user to describe something freely beyond the options. " +
+    "Usage boundaries: do not ask for information you can find in the context or via tools; do not use this tool merely to report progress; " +
+    "this tool must occupy a reply of its own and must never be called in the same reply as any other tool.",
   inputSchema: AskUserQuestionDraftSchema,
   execute: async (input) => {
     const question = buildAskUserQuestion(input);
     return {
       question,
       note:
-        "问题已交给用户，本轮到此结束。不要继续调用任何工具；" +
-        "用户的选择会以下一条用户消息返回，收到后再继续原任务。",
+        "The question has been given to the user and this turn ends here. Do not call any more tools; " +
+        "the user's choice comes back as the next user message, and you continue the original task once you receive it.",
     };
   },
 });

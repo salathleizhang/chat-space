@@ -5,7 +5,7 @@ function signature(id: string, secret: string) {
   return createHmac("sha256", secret).update(id).digest("base64url");
 }
 export function workspaceIdentity(cookie: string | null, secret: string) {
-  if (secret.length < 32) throw new Error("CHATSPACE_SESSION_SECRET 至少需要 32 个字符");
+  if (secret.length < 32) throw new Error("CHATSPACE_SESSION_SECRET must be at least 32 characters");
   const raw = cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith(WORKSPACE_COOKIE + "="))?.slice(WORKSPACE_COOKIE.length + 1);
   const [id = "", mac = ""] = raw?.split(".") ?? [];
   const expected = signature(id, secret);

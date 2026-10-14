@@ -64,7 +64,7 @@ test("a configured cloud instance rejects a different project before tool execut
     process.env.BLENDER_LIVE_INSTANCE_NAME = "sandbox-test";
     process.env.BLENDER_CONTROL_TOKEN = "Test_Control_Token_1234567890123456";
     process.env.BLENDER_CLOUD_PROJECT = "p-one";
-    expect(() => assertBlenderProject("p-two")).toThrow("另一个工程");
+    expect(() => assertBlenderProject("p-two")).toThrow("another project");
     expect(() => assertBlenderProject("p-one")).not.toThrow();
   } finally {
     keys.forEach((key, index) => { if (before[index] === undefined) delete process.env[key]; else process.env[key] = before[index]; });

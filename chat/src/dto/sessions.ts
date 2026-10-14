@@ -6,7 +6,7 @@ import { LogicalPathSchema, ProjectPlanSchema, SlugSchema } from "./library";
 
 export const SessionIdSchema = z
   .string()
-  .regex(/^[a-z0-9][a-z0-9-]*$/i, "会话 id 只能是字母数字与连字符");
+  .regex(/^[a-z0-9][a-z0-9-]*$/i, "session id may only contain letters, digits, and hyphens");
 
 export const SessionMessageSchema = z.object({
   id: z.string(),

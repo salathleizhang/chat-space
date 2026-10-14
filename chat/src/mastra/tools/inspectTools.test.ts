@@ -54,7 +54,7 @@ describe("saveInspectionSheet", () => {
         inspectionId: "ok-id",
         bytes: new Uint8Array(0),
       }),
-    ).rejects.toThrow(/为空/);
+    ).rejects.toThrow(/content is empty/);
   });
 });
 
@@ -83,7 +83,7 @@ describe("saveSceneInspectionSheet", () => {
         inspectionId: "empty",
         bytes: new Uint8Array(0),
       }),
-    ).rejects.toThrow(/为空/);
+    ).rejects.toThrow(/content is empty/);
   });
 });
 
@@ -108,7 +108,7 @@ describe("inspect 工具", () => {
       inspectTool.execute!({ target: "scene" } as never, {
         requestContext: buildRequestContext({ projectSlug: "empty-scene" }),
       } as never),
-    ).rejects.toThrow(/还没有可渲染/);
+    ).rejects.toThrow(/no renderable models or scene content/);
   });
 
   /**
@@ -139,7 +139,7 @@ describe("inspect 工具", () => {
       inspectTool.execute!({ target: "closeup", assetSlug: "no-model" } as never, {
         requestContext: buildRequestContext({ projectSlug: "inspect-demo" }),
       } as never),
-    ).rejects.toThrow(/没有模型文件/);
+    ).rejects.toThrow(/has no model file/);
   });
 
   test("贴近检查：有模型时返回 closeup 请求，且提示词不让它重复换角度", async () => {
@@ -215,8 +215,8 @@ describe("toAgentMessages（多模态映射）", () => {
       {
         type: "text",
         text:
-          "【本条消息明确选中的资产】休闲椅(chair)、边桌(table)。" +
-          "这些资产是本条指令的主要目标；“它 / 这个模型 / 这些模型”等指代优先落到这里。",
+          "[Assets explicitly selected in this message] 休闲椅(chair), 边桌(table). " +
+          "These assets are the primary targets of this instruction; references such as \"it / this model / these models\" resolve here first.",
       },
       { type: "text", text: "把它们放大" },
     ]);
@@ -233,7 +233,7 @@ describe("toAgentMessages（多模态映射）", () => {
       },
     ]);
     expect(JSON.stringify(result[0]!.content)).toContain(
-      "已删除或不存在的资产(gone-model)",
+      "deleted or missing asset(gone-model)",
     );
   });
 

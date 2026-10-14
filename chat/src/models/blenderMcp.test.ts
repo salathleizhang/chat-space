@@ -164,7 +164,7 @@ describe("BlenderMcpClient 端到端（假 server，无 Blender）", () => {
 
   test("白名单外的工具在 spawn 之前就被拒，且进程不会被拉起来", async () => {
     client = fakeClient();
-    await expect(client.call("generate_tripo_model")).rejects.toThrow(/白名单/);
+    await expect(client.call("generate_tripo_model")).rejects.toThrow(/allowlist/);
     // 关键：拒绝发生在启动之前 —— 不能让一个"只是想调 Tripo"的调用把 Blender 拉起来
     expect(client.running).toBe(false);
   });
@@ -173,14 +173,14 @@ describe("BlenderMcpClient 端到端（假 server，无 Blender）", () => {
     client = fakeClient({ callTimeoutMs: 800 });
     await expect(
       client.call("execute_blender_code", { code: "hang" }),
-    ).rejects.toThrow(/拆成更小的步/);
+    ).rejects.toThrow(/smaller steps/);
   });
 
   test("进程在调用中途退出 → 在飞的调用被拒（而不是永远挂着）", async () => {
     client = fakeClient({ callTimeoutMs: 10_000 });
     await expect(
       client.call("execute_blender_code", { code: "exit" }),
-    ).rejects.toThrow(/退出|写请求失败/);
+    ).rejects.toThrow(/exited|write the request/);
   });
 
   test("并发调用被串行化：两个都成功且各自拿到自己的结果", async () => {

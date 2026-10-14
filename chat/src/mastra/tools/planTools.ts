@@ -47,7 +47,7 @@ function conflict(message: string): never {
 
 function createSteps(input: z.output<typeof PlanInputSchema>) {
   return input.steps.map((step) => {
-    if (!step.content) conflict(`步骤 ${step.id} 缺少 content`);
+    if (!step.content) conflict(`Step ${step.id} is missing content`);
     return PlanStepSchema.parse({
       id: step.id,
       content: step.content,
@@ -74,23 +74,23 @@ export async function writePlan(
 
   if (current && input.mode === "update") {
     if (input.title && input.title !== current.title) {
-      conflict("普通进度更新不能改计划标题；确需改结构请使用 mode=replan 并填写 reason");
+      conflict("A normal progress update cannot change the plan title; if you really need to change the structure, use mode=replan and provide reason");
     }
     const patches = new Map(input.steps.map((step) => [step.id, step]));
     for (const patch of patches.values()) {
       const existing = current.steps.find((step) => step.id === patch.id);
       if (!existing) {
-        conflict(`计划中不存在步骤 ${patch.id}；确需新增步骤请使用 mode=replan 并填写 reason`);
+        conflict(`Step ${patch.id} does not exist in the plan; if you really need to add a step, use mode=replan and provide reason`);
       }
       if (patch.content && patch.content !== existing.content) {
-        conflict(`普通进度更新不能改写步骤 ${patch.id} 的内容；确需改结构请使用 mode=replan`);
+        conflict(`A normal progress update cannot rewrite the content of step ${patch.id}; if you really need to change the structure, use mode=replan`);
       }
       if (
         existing.status === "completed" &&
         patch.status &&
         patch.status !== "completed"
       ) {
-        conflict(`已完成步骤 ${patch.id} 不能回退；确需推翻请显式重新规划`);
+        conflict(`Completed step ${patch.id} cannot be reverted; if you really need to overturn it, replan explicitly`);
       }
     }
     const steps = current.steps.map((step) => {
@@ -98,7 +98,7 @@ export async function writePlan(
       return status ? { ...step, status } : step;
     });
     if (steps.filter((step) => step.status === "in_progress").length > 1) {
-      conflict("同一计划最多只能有一个进行中步骤");
+      conflict("A plan can have at most one in-progress step");
     }
     const plan = ProjectPlanSchema.parse({
       ...current,
@@ -110,7 +110,7 @@ export async function writePlan(
   }
 
   if (current && input.mode === "replan" && !input.reason) {
-    conflict("重新规划必须填写 reason，说明为什么改变原计划");
+    conflict("Replanning requires a reason explaining why the original plan is being changed");
   }
   const plan: ProjectPlan = {
     schemaVersion: 1,
@@ -121,7 +121,7 @@ export async function writePlan(
     updatedAt: new Date().toISOString(),
   };
   if (plan.steps.filter((step) => step.status === "in_progress").length > 1) {
-    conflict("同一计划最多只能有一个进行中步骤");
+    conflict("A plan can have at most one in-progress step");
   }
   await writeJson(storage, path, ProjectPlanSchema, plan);
   return plan;
@@ -132,7 +132,7 @@ export async function writePlan(
 export const updatePlanTool = createTool({
   id: "update-plan",
   description:
-    "维护当前项目的执行计划：首次调用传 title 与完整步骤创建计划；之后默认 mode=update，只传已有稳定 id 与新 status，不要传 title，也不要改写步骤 content——普通进度更新只推进度。只有用户改变目标或事实证明原路线不可行时才用 mode=replan，并填写 reason 与完整新步骤。计划不会被自动执行，执行仍由你逐步调用其他工具完成",
+    "Maintain the current project's execution plan: the first call passes title and the complete list of steps to create the plan; afterwards the default mode=update passes only existing stable ids with their new status — do not pass title and do not rewrite a step's content, because a normal progress update only advances status. Use mode=replan only when the user changes the goal or the facts show the original route is not viable, and provide reason along with the complete new step list. The plan is never executed automatically; carrying it out is still up to you, step by step, by calling other tools",
   inputSchema: PlanInputSchema,
   execute: async (input, context) => {
     const plan = await writePlan(getAssetStorage(), requireCurrentProject(context), input);

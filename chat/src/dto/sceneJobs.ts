@@ -118,6 +118,6 @@ export const SceneSpecRevisionInputSchema = z.object({
   reason: z.string().min(1),
 }).refine(
   (value) => value.addObjects.length + value.removeSlugs.length + value.updateObjects.length > 0,
-  { message: "至少需要新增、删除或修改一个场景对象" },
+  { message: "At least one scene object must be added, removed, or modified" },
 );
 export type SceneSpecRevisionInput = z.input<typeof SceneSpecRevisionInputSchema>;

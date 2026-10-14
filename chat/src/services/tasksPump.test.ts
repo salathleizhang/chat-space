@@ -154,7 +154,7 @@ describe("定时器停摆时，读任务列表就是外部时钟", () => {
     const tasks = await listTasks(projectSlug);
     const stale = tasks.find((item) => item.id === taskId);
     expect(stale?.status).toBe("failed");
-    expect(stale?.error).toContain("自动按侧写续跑");
+    expect(stale?.error).toContain("resumed automatically from the sidecar");
     const resumed = tasks.find((item) => item.workflowId === "resume");
     expect(resumed?.resumeSidecar).toBe(
       `projects/${projectSlug}/tasks/${taskId}/work/${sidecarName}`,

@@ -190,7 +190,7 @@ export async function repairProjectAssets(
 export const repairAssetsTool = createTool({
   id: "repair-assets",
   description:
-    "按请求侧写补齐当前项目里缺失的本地文件（修复不产生新索引）。返回 resumable 的侧写必须先用 resume-generation 接续（供应商侧可能已完成，重新提交等于重复付费），unrecoverable 的才需要走原 workflow 重生成",
+    "Backfill local files missing from the current project using the request sidecars (repair creates no new index). Sidecars returned in resumable must first be continued with resume-generation (the provider side may already be done, so resubmitting means paying twice); only the unrecoverable ones need the original workflow to regenerate",
   inputSchema: z.object({
     assetSlug: SlugSchema.optional(),
   }),

@@ -56,7 +56,7 @@ async function pollUntilDone(
   errorPrefix: string,
 ): Promise<SkyboxRequestBody> {
   const timeoutError = () =>
-    new ChatServiceError(`${errorPrefix}超时`, 504, "blockadelabs_timeout");
+    new ChatServiceError(`${errorPrefix} timed out`, 504, "blockadelabs_timeout");
 
   return pollProviderTask<SkyboxRequestBody>({
     label: errorPrefix,
@@ -80,7 +80,7 @@ async function pollUntilDone(
       );
       if (!response.ok) {
         throw new ChatServiceError(
-          `${errorPrefix}轮询失败（${response.status}）`,
+          `${errorPrefix} poll failed (${response.status})`,
           502,
           "blockadelabs_poll_failed",
         );
@@ -94,13 +94,13 @@ async function pollUntilDone(
       if (!isTerminal(body.status)) return undefined;
       if (body.status !== "complete") {
         return new ChatServiceError(
-          `${errorPrefix}失败：${body.error_message ?? body.status}`,
+          `${errorPrefix} failed: ${body.error_message ?? body.status}`,
           502,
           "blockadelabs_generation_failed",
         );
       }
       return new ChatServiceError(
-        `${errorPrefix}完成但没有 file_url`,
+        `${errorPrefix} finished without a file_url`,
         502,
         "blockadelabs_bad_response",
       );
@@ -129,12 +129,12 @@ export async function submitSkybox(
       }),
     },
     API_REQUEST_TIMEOUT_MS,
-    "Blockade Labs 提交",
+    "Blockade Labs submission",
   );
   const submitBody = (await submitResponse.json().catch(() => ({}))) as SkyboxRequestBody;
   if (!submitResponse.ok) {
     throw new ChatServiceError(
-      `Blockade Labs 提交失败（${submitResponse.status}）`,
+      `Blockade Labs submission failed (${submitResponse.status})`,
       502,
       "blockadelabs_submit_failed",
     );
@@ -143,7 +143,7 @@ export async function submitSkybox(
   const obfuscatedId = submitBody.obfuscated_id;
   if (id === undefined || !obfuscatedId) {
     throw new ChatServiceError(
-      "Blockade Labs 响应缺少 id/obfuscated_id",
+      "Blockade Labs response is missing id/obfuscated_id",
       502,
       "blockadelabs_bad_response",
     );
@@ -165,7 +165,7 @@ export async function pollSkyboxGenerate(
     `${ENDPOINT}/imagine/requests/${requestId}`,
     options.apiKey,
     options,
-    "Blockade Labs 生成",
+    "Blockade Labs generation",
   );
   return { fileUrl: result.file_url! };
 }
@@ -185,12 +185,12 @@ export async function submitSkyboxExport(
       body: JSON.stringify({ skybox_id: obfuscatedId, type_id: EXPORT_TYPE_HDR }),
     },
     API_REQUEST_TIMEOUT_MS,
-    "Blockade Labs 导出提交",
+    "Blockade Labs export submission",
   );
   const submitBody = (await submitResponse.json().catch(() => ({}))) as SkyboxRequestBody;
   if (!submitResponse.ok) {
     throw new ChatServiceError(
-      `Blockade Labs 导出提交失败（${submitResponse.status}）`,
+      `Blockade Labs export submission failed (${submitResponse.status})`,
       502,
       "blockadelabs_export_submit_failed",
     );
@@ -198,7 +198,7 @@ export async function submitSkyboxExport(
   const exportId = submitBody.id !== undefined ? String(submitBody.id) : submitBody.obfuscated_id;
   if (!exportId) {
     throw new ChatServiceError(
-      "Blockade Labs 导出响应缺少 id",
+      "Blockade Labs export response is missing id",
       502,
       "blockadelabs_bad_response",
     );
@@ -217,7 +217,7 @@ export async function pollSkyboxExport(
     `${ENDPOINT}/skybox/export/${exportId}`,
     options.apiKey,
     options,
-    "Blockade Labs 导出",
+    "Blockade Labs export",
   );
   return { fileUrl: result.file_url! };
 }

@@ -14,7 +14,7 @@ async function request(path: string, body?: unknown): Promise<any> {
     const response = await fetch(new URL(`/api/blender/${path}`, origin), { credentials: "same-origin", signal,
       ...(body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
     const data = await response.json() as { error?: unknown };
-    if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Blender 云服务暂时不可用");
+    if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Blender cloud service is temporarily unavailable");
     return data;
   }, 25_000);
 }
@@ -24,27 +24,27 @@ async function project(context: unknown): Promise<string> {
 export const BlenderBatchInput = z.object({ items: z.array(z.object({ label: z.string().min(1).max(128), prompt: z.string().min(1).max(20_000) })).min(1).max(100), concurrency: z.number().int().min(1).max(DEFAULT_BLENDER_LIMITS.owner).default(DEFAULT_BLENDER_CONCURRENCY) });
 export const startBlenderBatchTool = createTool({
   id: "start-blender-batch",
-  description: `用户要求使用定制 Blender 建模时，提交独立建模项给云端执行。每工作区同时运行最多${DEFAULT_BLENDER_LIMITS.owner}个Blender，全局最多${DEFAULT_BLENDER_LIMITS.global}个，其余排队；用户未指定并发时使用默认${DEFAULT_BLENDER_CONCURRENCY}，用户指定并行数量时按剩余额度设置concurrency，最多${DEFAULT_BLENDER_LIMITS.owner}。每项包含完整要求；任务在网页关闭后仍继续。此工具立即返回batchId和sessionId，不等建模完成、不重复提交确认进度。每个实例8核32GiB，最长60分钟，算力/模型/存储按用量收费。仅在用户已要求建模的范围内提交。不能读取浏览器当前选择的Blender替代这些会话。`,
+  description: `When the user asks to use custom Blender for modeling, submit standalone modeling items for cloud execution. Each workspace runs at most ${DEFAULT_BLENDER_LIMITS.owner} Blender instances at a time, and globally at most ${DEFAULT_BLENDER_LIMITS.global}, with the rest queued; when the user does not specify concurrency, the default ${DEFAULT_BLENDER_CONCURRENCY} is used, and when the user specifies a parallel count, set concurrency according to the remaining quota, at most ${DEFAULT_BLENDER_LIMITS.owner}. Each item contains the complete requirements; tasks continue after the web page is closed. This tool returns batchId and sessionId immediately, and does not wait for modeling to complete or resubmit to confirm progress. Each instance has 8 cores and 32 GiB, for at most 60 minutes; compute/model/storage are billed by usage. Only submit within the scope the user has already asked to model. It cannot read the Blender currently selected in the browser to replace these sessions.`,
   inputSchema: BlenderBatchInput,
   execute: async (input, context) => {
     const slug = await project(context), storage = getAssetStorage();
     const callId = (context as { toolCallId?: string }).toolCallId;
-    if (!callId) throw new Error("缺少持久调用身份，未提交计费任务");
+    if (!callId) throw new Error("Missing durable call identity; no billable task was submitted");
     const path = `projects/${slug}/blender-submissions/${createHash("sha256").update(callId).digest("hex")}.json`;
     const body = { id: randomUUID(), project: slug, concurrency: input.concurrency, items: input.items.map((item, i) => ({ ...item, id: `item-${i}` })) };
     await storage.createExclusive(path, JSON.stringify(body));
     const acceptedInput = JSON.parse(await storage.readText(path));
-    if (JSON.stringify({ ...acceptedInput, id: "" }) !== JSON.stringify({ ...body, id: "" })) throw new Error("相同调用身份不能改变建模要求");
+    if (JSON.stringify({ ...acceptedInput, id: "" }) !== JSON.stringify({ ...body, id: "" })) throw new Error("The same call identity cannot change the modeling requirements");
     const result = await request("batches", acceptedInput);
-    return { batchId: result.batchId, items: result.sessions.map((s: { id: string; itemId: string; state: string }) => ({ sessionId: s.id, itemId: s.itemId, state: s.state })), note: "已提交，云端会继续执行。可打开小窗观看。后续用blender-sessions查询，用blender-session-action管理或导入产物，不要求用户点击操作按钮。" };
+    return { batchId: result.batchId, items: result.sessions.map((s: { id: string; itemId: string; state: string }) => ({ sessionId: s.id, itemId: s.itemId, state: s.state })), note: "Submitted; the cloud will continue executing. You can open the small window to watch. Use blender-sessions to query afterward, and blender-session-action to manage or import artifacts; do not ask the user to click action buttons." };
   },
 });
 export const blenderBatchStatusTool = createTool({
-  id: "blender-batch-status", description: "查询已提交Blender批次的每项状态、待回答问题和会话。只查询，不重新建模或付费。batchId必须来自提交结果。",
+  id: "blender-batch-status", description: "Query the per-item status, pending questions, and sessions of a submitted Blender batch. Query only; it does not re-model or charge. batchId must come from a submission result.",
   inputSchema: z.object({ batchId: z.string().uuid() }),
   execute: async (input, context) => {
     const slug = await project(context), data = await request(`batches/${input.batchId}`);
-    if (data.items.some((item: { session: { project: string } }) => item.session.project !== slug)) throw new Error("批次属于其他项目");
+    if (data.items.some((item: { session: { project: string } }) => item.session.project !== slug)) throw new Error("The batch belongs to another project");
     return { items: data.items.map((item: any) => ({ sessionId: item.session.id, state: item.session.state, label: item.job?.label, jobState: item.job?.state, question: item.job?.error, steps: item.job?.step })) };
   },
 });
@@ -55,20 +55,20 @@ export function setBlenderExportImporter(importer: ExportImporter | undefined) {
 
 async function durableAction(context: unknown, slug: string, body: unknown): Promise<any> {
   const callId = (context as { toolCallId?: string }).toolCallId;
-  if (!callId) throw new Error("缺少持久调用身份，未提交计费或修改请求");
+  if (!callId) throw new Error("Missing durable call identity; no billable or modification request was submitted");
   const storage = getAssetStorage();
   const path = `projects/${slug}/blender-actions/${createHash("sha256").update(callId).digest("hex")}.json`;
   await storage.createExclusive(path, JSON.stringify(body));
   const accepted = JSON.parse(await storage.readText(path));
   if (JSON.stringify({ ...accepted, requestId: "", key: "" }) !== JSON.stringify({ ...body as object, requestId: "", key: "" })) {
-    throw new Error("相同调用身份不能改变 Blender 操作");
+    throw new Error("The same call identity cannot change the Blender operation");
   }
   return accepted;
 }
 
 export const blenderSessionsTool = createTool({
   id: "blender-sessions",
-  description: "查询当前项目的所有云端 Blender 会话、状态、待回答问题和运行额度，供继续工程、暂停、查询产物使用。只查询，不启动沙盒或重做任务。只能使用返回的sessionId，不能编造其他项目身份。",
+  description: "Query all cloud Blender sessions of the current project, their status, pending questions, and running quota, for continuing work, pausing, and querying artifacts. Query only; it does not start a sandbox or redo tasks. Only use the returned sessionId; do not fabricate identities of other projects.",
   inputSchema: z.object({}).strict(),
   execute: async (_input, context) => {
     const slug = await project(context), data = await request("sessions");
@@ -80,38 +80,38 @@ export const blenderSessionsTool = createTool({
 export const BlenderSessionActionInput = z.object({
   action: z.enum(["status", "import", "pause", "cancel", "resume", "retry", "export", "answer", "operation-status"]),
   sessionId: z.string().uuid(),
-  message: z.string().min(1).max(20_000).optional().describe("仅 answer 使用，来自用户补充的信息"),
-  discardUnknown: z.boolean().default(false).describe("仅 answer 使用；用户明确同意退回检查点才可为 true"),
-  operationId: z.string().uuid().optional().describe("仅 operation-status 使用，来自 export 返回结果"),
+  message: z.string().min(1).max(20_000).optional().describe("Used only by answer; information supplied by the user"),
+  discardUnknown: z.boolean().default(false).describe("Used only by answer; can be true only when the user explicitly agrees to roll back to the checkpoint"),
+  operationId: z.string().uuid().optional().describe("Used only by operation-status; comes from the result returned by export"),
 }).strict().superRefine((input, ctx) => {
-  if ((input.action === "answer") !== Boolean(input.message)) ctx.addIssue({ code: "custom", path: ["message"], message: "answer 必须提供用户信息，其他操作不接受 message" });
-  if ((input.action === "operation-status") !== Boolean(input.operationId)) ctx.addIssue({ code: "custom", path: ["operationId"], message: "operation-status 必须提供操作身份，其他操作不接受 operationId" });
-  if (input.discardUnknown && input.action !== "answer") ctx.addIssue({ code: "custom", path: ["discardUnknown"], message: "仅 answer 接受检查点退回授权" });
+  if ((input.action === "answer") !== Boolean(input.message)) ctx.addIssue({ code: "custom", path: ["message"], message: "answer must provide user information; other operations do not accept message" });
+  if ((input.action === "operation-status") !== Boolean(input.operationId)) ctx.addIssue({ code: "custom", path: ["operationId"], message: "operation-status must provide an operation identity; other operations do not accept operationId" });
+  if (input.discardUnknown && input.action !== "answer") ctx.addIssue({ code: "custom", path: ["discardUnknown"], message: "Only answer accepts checkpoint rollback authorization" });
 });
 export const blenderSessionActionTool = createTool({
   id: "blender-session-action",
-  description: "管理当前项目已存在的云端Blender会话。status查询会话及已导出产物；import把产物校验后加入当前模型库，重复调用不会重复导入；pause保存手动工程并暂停；cancel终止当前批量任务并保存，后续重做须用户明确要求且会重新计费；resume继续已保存的手动工程；answer把用户补充信息交给暂停的批量任务继续；retry仅重做指定失败项，会重新计费，仅在用户要求重做时使用；export导出手动会话的当前场景，立即返回operationId，可用operation-status查询。批量任务自动导出和保存暂停，不需手动export。不要让用户找界面按钮；需要信息就在聊天里询问。执行结果不明时绝不自动重做或设置discardUnknown=true，只有用户明确同意退回检查点才能使用该选项。恢复只启动已有工程，不创建替代会话。",
+  description: "Manage existing cloud Blender sessions of the current project. status queries the session and already-exported artifacts; import validates artifacts and adds them to the current model library, and repeated calls do not import twice; pause saves the manual project and pauses; cancel terminates the current batch task and saves, and any later redo requires an explicit user request and is billed again; resume continues a saved manual project; answer hands user-supplied information to a paused batch task to continue; retry redoes only the specified failed items and is billed again, and is used only when the user asks to redo; export exports the current scene of a manual session and immediately returns operationId, which can be queried with operation-status. Batch tasks export and save-pause automatically, so no manual export is needed. Do not make the user look for UI buttons; ask for information in the chat. When the execution result is unclear, never automatically redo or set discardUnknown=true; that option can be used only when the user explicitly agrees to roll back to the checkpoint. Resume only starts an existing project and does not create a replacement session.",
   inputSchema: BlenderSessionActionInput,
   execute: async (input, context) => {
     const slug = await project(context), data = await request(`sessions/${input.sessionId}`), session = data.session;
-    if (session?.project !== slug || session?.id !== input.sessionId) throw new Error("Blender 会话属于其他项目");
+    if (session?.project !== slug || session?.id !== input.sessionId) throw new Error("The Blender session belongs to another project");
     if (input.action === "status") return { session, ...await request(`sessions/${input.sessionId}/exports`) };
     if (input.action === "operation-status") {
       const result = await request(`operations/${input.operationId}`);
-      if (result.operation?.sessionId !== input.sessionId) throw new Error("操作属于其他 Blender 会话");
+      if (result.operation?.sessionId !== input.sessionId) throw new Error("The operation belongs to another Blender session");
       return result;
     }
     if (input.action === "import") {
-      if (!exportImporter) throw new Error("当前运行环境不支持浏览器模型导入");
+      if (!exportImporter) throw new Error("The current runtime environment does not support browser model import");
       return { sessionId: input.sessionId, imported: await exportImporter(slug, input.sessionId) };
     }
     if (input.action === "pause" || input.action === "cancel") {
-      if (input.action === "pause" && session.batchId) throw new Error("pause 只暂停手动工程；仅用户要求终止批量任务时才使用 cancel");
+      if (input.action === "pause" && session.batchId) throw new Error("pause only pauses manual projects; use cancel only when the user asks to terminate a batch task");
       if (session.stopReason || ["paused", "expired"].includes(session.state)) return { session };
       return request(`sessions/${input.sessionId}/end`, { reason: input.action === "cancel" ? "cancelled" : "ended" });
     }
     if (input.action === "resume") {
-      if (session.batchId) throw new Error("批量任务需按状态使用 answer 或 retry，不能直接恢复运行器");
+      if (session.batchId) throw new Error("Batch tasks must use answer or retry according to their state; the runner cannot be resumed directly");
       if (!["paused", "expired"].includes(session.state)) return { session };
       return request(`sessions/${input.sessionId}/resume`, {});
     }
@@ -120,7 +120,7 @@ export const blenderSessionActionTool = createTool({
       const body = await durableAction(context, slug, { action: input.action, sessionId: input.sessionId, requestId: randomUUID() });
       return request(`sessions/${input.sessionId}/retry`, { requestId: body.requestId });
     }
-    if (session.batchId) throw new Error("批量任务由运行器自动导出，不能插入手动场景命令");
+    if (session.batchId) throw new Error("Batch tasks are exported automatically by the runner; manual scene commands cannot be inserted");
     const body = await durableAction(context, slug, { action: "export", sessionId: input.sessionId, epoch: session.epoch, key: randomUUID(), tool: "export_scene", arguments: {} });
     return request(`sessions/${input.sessionId}/operations`, { epoch: body.epoch, key: body.key, tool: body.tool, arguments: body.arguments });
   },

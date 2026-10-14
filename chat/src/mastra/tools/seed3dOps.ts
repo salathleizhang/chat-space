@@ -87,7 +87,7 @@ export async function resolveSingleImage(
     explicit,
     boundCandidates,
     ...(sessionStartedAt !== undefined ? { sessionStartedAt } : {}),
-    operation: "3D 生成",
+    operation: "3D generation",
   });
 }
 export async function runSeed3dImageTo3d(
@@ -196,7 +196,7 @@ export async function downloadSeed3dOutputs(
     target.sidecar.outputs.push({ path, providerUrl: url });
   }
   if (files.length === 0) {
-    throw new ChatServiceError("Seed3D 结果中没有可下载文件", 502, "seed3d_no_files");
+    throw new ChatServiceError("No downloadable files in the Seed3D result", 502, "seed3d_no_files");
   }
   return files;
 }
@@ -216,7 +216,7 @@ export function startSeed3d3dBatch(
   },
 ) {
   return objects.map((object) =>
-    startCustomTask("3d", projectSlug, `3D 生成（Seed3D 直连）：${object.name}`, (task) =>
+    startCustomTask("3d", projectSlug, `3D generation (Seed3D): ${object.name}`, (task) =>
       runAndPublishGeneratedModel(
         getAssetStorage(), projectSlug, task.id, object, task.setPhase,
         // 结果带上真实面数与"是不是高模"：生成完那一轮 Agent 才有依据问用户要不要减面

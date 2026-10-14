@@ -188,8 +188,8 @@ export function replyLanguageDirective(code: string): string {
   return (
     `[Reply language] The user is writing in ${name}. Write your entire reply in ${name} — ` +
     `prose, plan titles and steps, ask-user card text and new asset names. ` +
-    `Do not switch to Chinese just because the internal project context, plan text or tool ` +
-    `output is written in Chinese.`
+    `Do not switch to another language just because the internal project context, plan text or tool ` +
+    `output is written in English.`
   );
 }
 

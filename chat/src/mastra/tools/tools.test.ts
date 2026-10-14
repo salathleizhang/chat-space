@@ -88,7 +88,7 @@ describe("projectTools", () => {
 
   test("重复创建同 slug 报 409", () => {
     expect(createProject(storage, { name: "Demo", slug: "demo" })).rejects.toThrow(
-      "已存在",
+      "already exists",
     );
   });
 
@@ -272,23 +272,23 @@ describe("saveAssetThumbnail", () => {
     const base = { projectSlug: "demo", assetSlug: "chair", bytes: PNG_BYTES };
     await expect(
       saveAssetThumbnail(storage, { ...base, sourceFile: "../../escape.glb" }),
-    ).rejects.toThrow(/不合法/);
+    ).rejects.toThrow(/Invalid thumbnail source output name/);
     await expect(
       saveAssetThumbnail(storage, { ...base, sourceFile: "3-chair.png" }),
-    ).rejects.toThrow(/不合法/);
+    ).rejects.toThrow(/Invalid thumbnail source output name/);
     await expect(
       saveAssetThumbnail(storage, { ...base, sourceFile: "chair.glb" }),
-    ).rejects.toThrow(/不合法/);
+    ).rejects.toThrow(/Invalid thumbnail source output name/);
     await expect(
       saveAssetThumbnail(storage, {
         ...base,
         sourceFile: "3-chair.glb",
         bytes: new Uint8Array(0),
       }),
-    ).rejects.toThrow(/为空/);
+    ).rejects.toThrow(/content is empty/);
     await expect(
       saveAssetThumbnail(storage, { ...base, sourceFile: "9-missing.glb" }),
-    ).rejects.toThrow(/不存在/);
+    ).rejects.toThrow(/does not exist/);
   });
 });
 
@@ -342,7 +342,7 @@ describe("runLibraryImageEdit", () => {
         { volcengineApiKey: "bad" },
         { fetchFn: makeFakeFetch({ failSubmit: true }) },
       ),
-    ).rejects.toThrow("图片生成失败");
+    ).rejects.toThrow("Image generation failed");
 
     const sidecar = await readJson(
       storage,
@@ -350,7 +350,7 @@ describe("runLibraryImageEdit", () => {
       RequestSidecarSchema,
     );
     expect(sidecar.status).toBe("failed");
-    expect(sidecar.error).toContain("图片生成失败");
+    expect(sidecar.error).toContain("Image generation failed");
   });
 });
 
@@ -468,7 +468,7 @@ describe("writePlan", () => {
         title: "换一个说法",
         steps: [{ id: "batch-3d", status: "in_progress" }],
       }),
-    ).rejects.toThrow("不能改计划标题");
+    ).rejects.toThrow("cannot change the plan title");
 
     const state = await getProjectState(storage, "demo");
     expect(state.plan?.title).toBe("一图成场景");
@@ -480,7 +480,7 @@ describe("writePlan", () => {
       writePlan(storage, "demo", {
         steps: [{ id: "batch-3d", content: "换一种说法", status: "completed" }],
       }),
-    ).rejects.toThrow("不能改写步骤");
+    ).rejects.toThrow("cannot rewrite the content of step");
 
     const replanned = await writePlan(storage, "demo", {
       mode: "replan",
@@ -501,13 +501,13 @@ describe("writePlan", () => {
       writePlan(storage, "demo", {
         steps: [{ id: "cad", status: "in_progress" }],
       }),
-    ).rejects.toThrow("不能回退");
+    ).rejects.toThrow("cannot be reverted");
   });
 
   test("项目不存在时报 404", () => {
     expect(
       writePlan(storage, "nope", { steps: [{ id: "a", content: "x" }] }),
-    ).rejects.toThrow("不存在");
+    ).rejects.toThrow("does not exist");
   });
 });
 
@@ -561,9 +561,9 @@ describe("deleteAsset", () => {
   });
 
   test("资产不存在报 404，项目不存在报 404", async () => {
-    await expect(deleteAsset(storage, "demo", "nope")).rejects.toThrow("不存在");
+    await expect(deleteAsset(storage, "demo", "nope")).rejects.toThrow("does not exist");
     await expect(deleteAsset(storage, "no-such-project", "chair")).rejects.toThrow(
-      "不存在",
+      "does not exist",
     );
   });
 
@@ -671,10 +671,10 @@ describe("activateEnvironmentAsset", () => {
   test("拒绝不存在的资产和 kind 不匹配", async () => {
     await expect(
       activateEnvironmentAsset(storage, "demo", "world", "missing"),
-    ).rejects.toThrow("不存在");
+    ).rejects.toThrow("does not exist");
     await expect(
       activateEnvironmentAsset(storage, "demo", "world", "blue-sky"),
-    ).rejects.toThrow("不是世界资产");
+    ).rejects.toThrow("is not a world asset");
   });
 });
 
@@ -793,7 +793,7 @@ describe("writeSceneTransforms", () => {
 
   test("项目不存在报 404", async () => {
     await expect(writeSceneTransforms(storage, "no-such-project", {})).rejects.toThrow(
-      "不存在",
+      "does not exist",
     );
   });
 });
@@ -1025,6 +1025,6 @@ describe("scene.json 版本与 revision", () => {
     );
 
     await expect(getProjectState(storage, "scene-future")).rejects.toThrow(/scene-future/);
-    await expect(getProjectState(storage, "scene-future")).rejects.toThrow(/高于当前支持的/);
+    await expect(getProjectState(storage, "scene-future")).rejects.toThrow(/higher than the supported/);
   });
 });

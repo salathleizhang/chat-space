@@ -97,7 +97,7 @@ export async function downloadBytesWithRetry(
   const requestTimeoutMs = options.requestTimeoutMs ?? DOWNLOAD_REQUEST_TIMEOUT_MS;
   const maxAttempts = Math.max(1, options.maxAttempts ?? DOWNLOAD_MAX_ATTEMPTS);
   const backoffBaseMs = options.backoffBaseMs ?? 1_000;
-  const label = options.label ?? "产物下载";
+  const label = options.label ?? "Artifact download";
 
   let received: Uint8Array = new Uint8Array(0);
   let lastError: unknown;
@@ -118,7 +118,7 @@ export async function downloadBytesWithRetry(
         // 手上的字节已经不少于服务端的：丢掉重来，不用可疑的半截内容拼。
         received = new Uint8Array(0);
         throw new ChatServiceError(
-          `${label}区间已失效，改为全量重下：${url}`,
+          `${label} range is no longer valid; restarting from scratch: ${url}`,
           502,
           "download_retryable",
         );
@@ -127,7 +127,7 @@ export async function downloadBytesWithRetry(
         const retryable =
           response.status >= 500 || response.status === 408 || response.status === 429;
         throw new ChatServiceError(
-          `${label}失败（${response.status}）：${url}`,
+          `${label} failed (${response.status}): ${url}`,
           502,
           retryable ? "download_retryable" : "download_failed",
         );
@@ -138,13 +138,13 @@ export async function downloadBytesWithRetry(
       received = bytes;
       if (error) {
         throw new ChatServiceError(
-          `${label}传输中断（已收到 ${received.byteLength} 字节，将续传）：${toErrorMessage(error)}`,
+          `${label} transfer interrupted (received ${received.byteLength} bytes; will resume): ${toErrorMessage(error)}`,
           502,
           "download_retryable",
         );
       }
       if (received.byteLength === 0) {
-        throw new ChatServiceError(`${label}得到空文件：${url}`, 502, "download_empty");
+        throw new ChatServiceError(`${label} returned an empty file: ${url}`, 502, "download_empty");
       }
       return received;
     } catch (error) {
@@ -158,8 +158,8 @@ export async function downloadBytesWithRetry(
   }
 
   throw new ChatServiceError(
-    `${label}失败（已尝试 ${attempts} 次）：${url}；最后一次错误：${toErrorMessage(lastError)}。` +
-      "已经落盘的其他产物不受影响，可用 repair-assets 只补缺失文件。",
+    `${label} failed after ${attempts} attempt(s): ${url}; last error: ${toErrorMessage(lastError)}. ` +
+      "Other artifacts already written to disk are unaffected; use repair-assets to fetch only the missing files.",
     502,
     "download_failed",
   );

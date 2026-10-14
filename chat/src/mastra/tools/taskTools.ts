@@ -65,7 +65,7 @@ async function assertReferenceUsableForAsset(
     boundCandidates,
     explicitMustBeFresh: true,
     ...(sessionStartedAt !== undefined ? { sessionStartedAt } : {}),
-    operation: "3D 生成",
+    operation: "3D generation",
   };
   try {
     await resolveSessionReferenceImage(storage, projectSlug, options);
@@ -99,7 +99,7 @@ export function resolveWorldSourceImage(input: {
   if (sourceMode === "text-only") return null;
   if (!input.sourceImage || legacyOmitted) {
     throw new ChatServiceError(
-      "sourceMode=explicit-path 时必须提供真实的 sourceImage 逻辑路径",
+      "sourceMode=explicit-path requires a real sourceImage logical path",
       400,
       "world_source_image_missing",
     );
@@ -123,7 +123,7 @@ export const Batch3dOptionsSchema = z.object({
 export const start3dBatchTool = createTool({
   id: "start-3d-batch",
   description:
-    "为当前项目的对象并行生成 3D 模型。可选火山方舟 Seed3D（默认）、Hyper3D Gen-2、数美 Hi3D 2.0，或 Tripo3D；付费启动前须经用户同意。用户在下拉框选定具体 3D 模型时，渠道与模型 ID 由服务端按该选择钉住，provider 参数会被忽略。Tripo 的 tripoGenerationMode=auto 会对带视角标记的参考图自动使用多视角生成，也可指定 single/multiview。Hi3D 使用 Seedream 生成或编辑的参考图 URL。返回任务 id，用 list-generation-tasks 跟进；任务的 result 里带 modelInfo（实测三角面数与 highPoly），高模完成后要按提示用 ask-user 问一次要不要降面。",
+    "Generate 3D models in parallel for the objects of the current project. Options are Volcano Engine Ark Seed3D (default), Hyper3D Gen-2, ShuMei Hi3D 2.0, or Tripo3D; get the user's consent before starting a paid operation. When the user has selected a specific 3D model in the dropdown, the server pins the channel and model ID to that choice and the provider parameter is ignored. Tripo's tripoGenerationMode=auto automatically uses multiview generation for reference images tagged with views; single/multiview can also be specified explicitly. Hi3D uses the URL of a reference image generated or edited by Seedream. Returns task ids; follow up with list-generation-tasks. A task's result carries modelInfo (measured triangle count and highPoly) — once a high-poly model is done, ask the user once with ask-user whether to decimate, as prompted.",
   inputSchema: Batch3dOptionsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
@@ -147,7 +147,7 @@ export const start3dBatchTool = createTool({
       const tripo3dApiKey = requireContextString(
         context,
         "tripo3dApiKey",
-        "本机 chat/.env 未配置 TRIPO_KEY",
+        "TRIPO_KEY is not configured in the local chat/.env",
       );
       const tasks = startTripo3dBatch(projectSlug, objects, {
         tripo3dApiKey,
@@ -161,7 +161,7 @@ export const start3dBatchTool = createTool({
       const apiKey = requireContextString(
         context,
         "volcengineApiKey",
-        "本机 chat/.env 未配置 VOLC_KEY",
+        "VOLC_KEY is not configured in the local chat/.env",
       );
       const tasks = startArk3dBatch(provider, projectSlug, objects, {
         apiKey,
@@ -176,7 +176,7 @@ export const start3dBatchTool = createTool({
     const seed3dApiKey = requireContextString(
       context,
       "seed3dApiKey",
-      "本机 chat/.env 未配置 VOLC_KEY",
+      "VOLC_KEY is not configured in the local chat/.env",
     );
     const tasks = startSeed3d3dBatch(projectSlug, objects, {
       seed3dApiKey,
@@ -201,7 +201,7 @@ async function assertLatestSourceUsable(
   try {
     await resolveSessionReferenceImage(storage, projectSlug, {
       ...(sessionStartedAt !== undefined ? { sessionStartedAt } : {}),
-      operation: "世界生成（sourceMode=latest）",
+      operation: "World generation (sourceMode=latest)",
     });
   } catch (error) {
     if (error instanceof ReferenceReuseConsentError) throw error;
@@ -212,7 +212,7 @@ async function assertLatestSourceUsable(
 export const startWorldTaskTool = createTool({
   id: "start-world-task",
   description:
-    "为当前项目启动 World Labs 场景生成任务（付费操作——启动前须经用户同意）。mode=direct 直接生成世界，不需要图片分析；mode=empty-environment 根据已确认的场景分析去除物体。用 sourceMode 明确选择图片来源：latest 使用最新源图，text-only 不使用图片，explicit-path 使用 sourceImage 指定的逻辑路径。sourceMode 仅为兼容旧调用而允许省略，新调用必须传。",
+    "Start a World Labs scene generation task for the current project (paid operation — get the user's consent before starting). mode=direct generates the world directly and needs no image analysis; mode=empty-environment removes objects according to the confirmed scene analysis. Use sourceMode to choose the image source explicitly: latest uses the newest source image, text-only uses no image, and explicit-path uses the logical path given in sourceImage. sourceMode may only be omitted for compatibility with old calls; new calls must pass it.",
   inputSchema: z.object({
     mode: z.enum(["direct", "empty-environment"]),
     sourceMode: z.enum(["latest", "text-only", "explicit-path"]).optional(),
@@ -225,7 +225,7 @@ export const startWorldTaskTool = createTool({
     const worldLabsApiKey = requireContextString(
       context,
       "worldLabsApiKey",
-      "本机 chat/.env 未配置 WORLDLABS_KEY",
+      "WORLDLABS_KEY is not configured in the local chat/.env",
     );
     const sourceImage = resolveWorldSourceImage(input);
     /*
@@ -246,9 +246,9 @@ export const startWorldTaskTool = createTool({
 export const listGenerationTasksTool = createTool({
   id: "list-generation-tasks",
   description:
-    "查看当前项目的生成任务状态（running / succeeded / failed）与产物路径。" +
-    "任务带 `stall` 表示它 running 但长时间没有进展：`pumpActive=true` 说明本机时钟仍在照看它" +
-    "（继续等即可，不要重复提交），`pumpActive=false` 才需要先 resume-generation（凭侧写续跑、不重复付费）再考虑重试",
+    "Check the generation task statuses (running / succeeded / failed) and output paths of the current project." +
+    "A task carrying `stall` is running but has made no progress for a long time: `pumpActive=true` means the local clock is still watching it" +
+    " (just keep waiting, do not resubmit), while `pumpActive=false` means you should first resume-generation (continue from the sidecar without paying again) before considering a retry",
   inputSchema: z.object({}),
   execute: async (_input, context) => ({
     tasks: (await listTasks(requireCurrentProject(context))).map(

@@ -36,11 +36,11 @@ libraryRoutes.get("/export", async (c) => {
   const source = c.req.query("source");
   const format = ExportFormatSchema.parse(c.req.query("format"));
   if (!source) {
-    throw new ChatServiceError("缺少 source 参数", 400, "missing_source");
+    throw new ChatServiceError("Missing source parameter", 400, "missing_source");
   }
   const storage = getAssetStorage();
   if (!(await storage.exists(source))) {
-    return c.json({ error: { code: "not_found", message: `文件不存在：${source}` } }, 404);
+    return c.json({ error: { code: "not_found", message: `File not found: ${source}` } }, 404);
   }
   const result = await convertModel(storage, source, format);
   return new Response(storage.readStream ? new Blob([result.bytes.buffer.slice(0) as ArrayBuffer]).stream() : result.bytes.buffer.slice(0) as ArrayBuffer, {
@@ -66,7 +66,7 @@ libraryRoutes.post("/export-batch", async (c) => {
   for (const source of req.sources) {
     try {
       if (!(await storage.exists(source))) {
-        skipped.push(`${source}：文件不存在`);
+        skipped.push(`${source}: file not found`);
         continue;
       }
       converted.push(await convertModel(storage, source, req.format));
@@ -77,7 +77,7 @@ libraryRoutes.post("/export-batch", async (c) => {
 
   if (converted.length === 0) {
     throw new ChatServiceError(
-      `批量导出全部失败：${skipped.join("；")}`,
+      `Batch export failed for every file: ${skipped.join("; ")}`,
       422,
       "export_batch_all_failed",
     );
@@ -106,7 +106,7 @@ libraryRoutes.post("/export-batch", async (c) => {
     zip.file(name, file.bytes);
   }
   if (skipped.length > 0) {
-    zip.file("跳过说明.txt", skipped.join("\n"));
+    zip.file("skipped.txt", skipped.join("\n"));
   }
 
   const zipBytes = await zip.generateAsync({ type: "uint8array" });
@@ -126,7 +126,7 @@ libraryRoutes.get("/*", async (c) => {
   const storage = getAssetStorage();
   if (!(await storage.exists(logicalPath))) {
     return c.json(
-      { error: { code: "not_found", message: `文件不存在：${logicalPath}` } },
+      { error: { code: "not_found", message: `File not found: ${logicalPath}` } },
       404,
     );
   }

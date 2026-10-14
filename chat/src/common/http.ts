@@ -28,7 +28,7 @@ export const DOWNLOAD_MAX_ATTEMPTS = 4;
 /** 统一的单次请求超时错误（可重试；与任务级 deadline 的区别见 Deadline 注释） */
 export function requestTimeoutError(label: string, timeoutMs: number): ChatServiceError {
   return new ChatServiceError(
-    `${label}请求超时（${Math.round(timeoutMs / 1000)} 秒无响应），已中止`,
+    `${label} request timed out (no response for ${Math.round(timeoutMs / 1000)} seconds); aborted`,
     504,
     "request_timeout",
   );

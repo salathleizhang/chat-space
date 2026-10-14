@@ -69,7 +69,7 @@ export async function runScenePlacement(
   const spec = await readSceneSpec(storage, projectSlug);
   if (!spec) {
     throw new ChatServiceError(
-      "当前项目还没有已确认的完整场景，无法按参考图摆放",
+      "The current project has no confirmed full scene yet, so it cannot be placed from the reference image",
       409,
       "scene_spec_missing",
     );

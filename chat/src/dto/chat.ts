@@ -40,7 +40,7 @@ export const AskUserAnswerSchema = z
     数量对不上就会把用户的选择说错，而这属于会误导后续付费决策的错误。
   */
   .refine((answer) => answer.labels.length === answer.optionIds.length, {
-    message: "labels 必须与 optionIds 一一对应",
+    message: "labels must correspond one-to-one with optionIds",
     path: ["labels"],
   });
 export type AskUserAnswer = z.infer<typeof AskUserAnswerSchema>;
@@ -62,7 +62,7 @@ export const AskUserOptionSchema = z.object({
     .string()
     .min(1)
     .max(64)
-    .regex(/^[a-z0-9][a-z0-9_-]*$/i, "选项 id 只能是字母数字、-、_"),
+    .regex(/^[a-z0-9][a-z0-9_-]*$/i, "option id may only contain letters, digits, - and _"),
   /** 按钮文字，例如「同意」「停止」 */
   label: z.string().min(1).max(40),
   /** 第二行说明，例如将调用哪个平台、大概做什么 */
@@ -96,7 +96,7 @@ export type AskUserQuestion = z.infer<typeof AskUserQuestionSchema>;
 
 /** 本机服务注入固定 LLM 配置；客户端字段会在解析前覆盖。 */
 export const LlmConfigSchema = z.object({
-  apiKey: z.string().min(1, "本机 chat/.env 未配置 VOLC_KEY"),
+  apiKey: z.string().min(1, "VOLC_KEY is not configured in the local chat/.env"),
   provider: z.enum(LLM_PROVIDER_IDS).optional(),
   baseUrl: z.url().optional(),
   model: z.string().min(1).optional(),

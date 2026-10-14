@@ -33,14 +33,14 @@ const UploadInspectionSchema = z.object({
   inspectionId: z.string().min(1),
   /** base64 编码的 PNG 检查图（不含 data: 前缀） */
   ...uploadFields,
-}).refine(hasUpload, "必须提供文件数据或本地文件引用");
+}).refine(hasUpload, "Either file data or a local file reference is required");
 
 const UploadThumbnailSchema = z.object({
   /** 缩略图渲染自哪个模型产物（basename，如 `3-chair.glb`） */
   sourceFile: z.string().min(1),
   /** base64 编码的 PNG 缩略图（不含 data: 前缀） */
   ...uploadFields,
-}).refine(hasUpload, "必须提供文件数据或本地文件引用");
+}).refine(hasUpload, "Either file data or a local file reference is required");
 
 const CreateProjectSchema = z.object({
   name: z.string().min(1),
@@ -51,7 +51,7 @@ const UploadSourceSchema = z.object({
   fileName: z.string().min(1),
   /** base64 编码的文件内容（不含 data: 前缀） */
   ...uploadFields,
-}).refine(hasUpload, "必须提供文件数据或本地文件引用");
+}).refine(hasUpload, "Either file data or a local file reference is required");
 
 const SOURCE_EXT_RE = /\.(png|jpe?g|webp)$/i;
 
@@ -120,7 +120,7 @@ projectRoutes.post("/:slug/sources", async (c) => {
   const extMatch = SOURCE_EXT_RE.exec(req.fileName);
   if (!extMatch) {
     return c.json(
-      { error: { code: "unsupported_image", message: "只支持 png/jpg/webp 源图" } },
+      { error: { code: "unsupported_image", message: "Only png/jpg/webp source images are supported" } },
       400,
     );
   }
@@ -142,13 +142,13 @@ projectRoutes.post("/:slug/sources", async (c) => {
 const ModelAuxFileSchema = z.object({
   fileName: z.string().min(1),
   ...uploadFields,
-}).refine(hasUpload, "必须提供文件数据或本地文件引用");
+}).refine(hasUpload, "Either file data or a local file reference is required");
 
 const UploadModelSchema = z.object({
   fileName: z.string().min(1),
   ...uploadFields,
   auxFiles: z.array(ModelAuxFileSchema).optional(),
-}).refine(hasUpload, "必须提供文件数据或本地文件引用");
+}).refine(hasUpload, "Either file data or a local file reference is required");
 
 /** 本地模型导入：拖入视口/点击导入按钮，每次导入建一个全新资产 */
 projectRoutes.post("/:slug/models", async (c) => {

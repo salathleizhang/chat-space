@@ -226,9 +226,9 @@ export function taskIdsFromToolResult(result: unknown): string[] | undefined {
  */
 export function planContextText(plan: ProjectPlan): string {
   return [
-    `当前会话执行计划：${plan.title ? `「${plan.title}」` : "（无标题）"}，v${plan.revision}。` +
-      "继续执行时 update-plan 只传已有步骤 id 与新 status：计划标题、步骤 id 和步骤内容都保持不变；" +
-      "只有用户改变目标或事实证明原路线不可行时，才用 mode=replan 并填写 reason。",
+    `Current session plan: ${plan.title ? `"${plan.title}"` : "(untitled)"}, v${plan.revision}.` +
+      "When continuing, pass only the existing step ids and the new status to update-plan: the plan title, step ids and step content all stay unchanged; " +
+      "only when the user changes the goal or the evidence proves the original route infeasible, use mode=replan and fill in reason.",
     ...plan.steps.map((step) => `- [${step.status}] ${step.id}: ${step.content}`),
   ].join("\n");
 }
@@ -251,11 +251,11 @@ export function planFromToolResult(
  */
 export function answerContextText(answer: AskUserAnswer): string {
   const chosen =
-    answer.labels.length > 0 ? answer.labels.join("、") : "（未选择预设选项）";
+    answer.labels.length > 0 ? answer.labels.join(", ") : "(no preset option selected)";
   return [
-    `【对提问的回答】问题：「${answer.question}」（${answer.questionId}）`,
-    `用户选择：${chosen}`,
-    ...(answer.text ? [`用户补充：${answer.text}`] : []),
+    `[Answer to question] Question: "${answer.question}" (${answer.questionId})`,
+    `User selection: ${chosen}`,
+    ...(answer.text ? [`User note: ${answer.text}`] : []),
   ].join("\n");
 }
 
@@ -295,14 +295,14 @@ export async function toAgentMessages(
       const targets = attachedSlugs
         .map((slug) => {
           const name = assetNamesBySlug.get(slug);
-          return name ? `${name}(${slug})` : `已删除或不存在的资产(${slug})`;
+          return name ? `${name}(${slug})` : `deleted or missing asset(${slug})`;
         })
-        .join("、");
+        .join(", ");
       parts.push({
         type: "text",
         text:
-          `【本条消息明确选中的资产】${targets}。` +
-          "这些资产是本条指令的主要目标；“它 / 这个模型 / 这些模型”等指代优先落到这里。",
+          `[Assets explicitly selected in this message] ${targets}. ` +
+          "These assets are the primary targets of this instruction; references such as \"it / this model / these models\" resolve here first.",
       });
     }
     for (const part of message.content) {
@@ -453,29 +453,29 @@ export async function* streamChat(
   const projectContext: AgentMessage = {
     role: "system",
     content: [
-      `当前项目：${state.project.name}（${state.project.slug}）。`,
-      "本次对话与所有工具已经由服务端锁定到当前项目；不要创建、切换或枚举其他项目。",
-      `源图：${state.sources.length > 0 ? state.sources.join("、") : "无"}。`,
-      `资产（按创建时间新→旧排列）：${
+      `Current project: ${state.project.name} (${state.project.slug}).`,
+      "This conversation and all tools are already locked to the current project by the server; do not create, switch to, or enumerate other projects.",
+      `Source images: ${state.sources.length > 0 ? state.sources.join(", ") : "none"}.`,
+      `Assets (sorted newest to oldest by creation time): ${
         state.assets.length > 0
           ? [...state.assets]
               .sort((a, b) =>
                 (b.identity?.createdAt ?? "").localeCompare(a.identity?.createdAt ?? ""),
               )
               .map((asset) => `${asset.identity?.name ?? asset.slug}(${asset.slug})`)
-              .join("、")
-          : "无"
-      }。`,
-      `待生成对象（尚未成为正式资产，只列**本会话**登记的目标）：${
+              .join(", ")
+          : "none"
+      }.`,
+      `Pending generation targets (not yet formal assets; only targets registered in **this session** are listed): ${
         pendingTargets.length > 0
           ? pendingTargets
               .map(
                 (target) =>
-                  `${target.name}(${target.slug}，参考图${target.sourceImages?.length ?? 0}张)`,
+                  `${target.name}(${target.slug}, reference images: ${target.sourceImages?.length ?? 0})`,
               )
-              .join("、")
-          : "无"
-      }。`,
+              .join(", ")
+          : "none"
+      }.`,
       /*
         参考图的复用纪律必须写在这里：项目 source/ 目录里可能还留着上一轮会话生成的
         参考图，Agent 在资产名录里看不到它们的"归属"，只看到"有张图"。旧措辞是
@@ -484,41 +484,41 @@ export async function* streamChat(
         要复用先问。
       */
       pendingTargets.length > 0
-        ? "这些是本次会话刚确认的目标：可以直接用同一 slug 调 start-3d-batch；" +
-          "它们的参考图就是本轮的产物，不必重新生成。"
-        : "本次会话还没有登记过生成目标。",
-      "**参考图不许跨会话自动复用**：项目 source/ 里可能还留着更早会话生成的参考图，" +
-        "它们不是本轮产物。要拿其中任何一张去生成/编辑，必须先用 ask-user 卡片向用户" +
-        "确认（写清是哪张图、为什么合适、以及接下来要做的付费操作），得到同意后再把该" +
-        "路径显式传给工具；用户没同意就不要用。新对象请用 generate-reference-images" +
-        "重新生成参考图，不要拿旧图顶替。服务端也会拦：靠兜底（没有显式传图）取到旧图时" +
-        "会直接报错并把可选清单给你。",
+        ? "These are the targets just confirmed in this session: you can call start-3d-batch with the same slug directly; " +
+          "their reference images are the output of this round, so there is no need to regenerate them."
+        : "No generation targets have been registered in this session yet.",
+      "**Reference images must not be reused automatically across sessions**: the project's source/ directory may still hold reference images generated by earlier sessions, " +
+        "and they are not the output of this round. To use any of them for generation/editing, you must first ask the user " +
+        "with an ask-user card (stating which image it is, why it fits, and which paid operation comes next); after approval, pass that " +
+        "path to the tool explicitly; do not use it without the user's consent. For a new object, use generate-reference-images " +
+        "to regenerate the reference image; do not substitute an old image. The server also blocks this: when the fallback (no image passed explicitly) picks up an old image, " +
+        "it errors out directly and hands you the list of available choices.",
       ...(currentPlan ? [planContextText(currentPlan)] : []),
-      "若用户消息带有“本条消息明确选中的资产”，它们是该条指令的主要目标，代词优先指向它们；" +
-        "未带资产附件时，再根据完整资产名录和对话判断，无法唯一确定才向用户确认。",
+      "If a user message carries \"assets explicitly selected in this message\", they are the primary targets of that instruction and pronouns refer to them first; " +
+        "when there is no asset attachment, judge from the complete asset list and the conversation, and only ask the user when you cannot determine it uniquely.",
       ...(conversationImages.length > 0
         ? [
-            `本场对话里用户附带的图片（按出现顺序）：${conversationImages.join("、")}。` +
-              "用户说「我发你的那张图」时指的就是这里面的图；要指定其中一张就把**上面这个" +
-              "完整路径**原样传给工具，不要自己拼 `source/` 前缀或裸文件名，也不要传字符串 " +
-              '"null"。本条消息没带图也照样能用这张（attach-source-image 会自己取）。',
+            `Images the user attached in this conversation (in order of appearance): ${conversationImages.join(", ")}. ` +
+              "When the user says \"the image I sent you\", they mean one of the images here; to designate one of them, pass the **full path " +
+              "above** to the tool verbatim, do not build the `source/` prefix or a bare file name yourself, and do not pass the string " +
+              '"null". Even if this message carries no image, you can still use this one (attach-source-image fetches it itself).',
           ]
         : []),
       ...(threeDSelection
         ? [
-            `用户在界面上显式选择了 3D 生成模型：${threeDSelection.label}（模型 ID ` +
-              `${threeDSelection.model}，渠道 ${threeDSelection.provider}）。start-3d-batch 的渠道与模型 ` +
-              "ID 由服务端按这个选择钉住，你不需要在 provider 参数上另作选择；向用户说明付费计划时按这个模型报。" +
+            `The user explicitly selected a 3D generation model in the UI: ${threeDSelection.label} (model ID ` +
+              `${threeDSelection.model}, channel ${threeDSelection.provider}). The channel and model ` +
+              "ID of start-3d-batch are pinned by the server to this selection, so you do not need to make a separate choice in the provider parameter; when explaining the paid plan to the user, report it for this model." +
               (threeDSelection.provider === "seed3d-direct"
                 ? ""
-                : "注意 SceneJob 的单物体模型当前固定用 Seed3D，与这个选择无关，涉及完整场景时要先说明。"),
+                : "Note that the single-object model of SceneJob is currently fixed to Seed3D, independent of this selection; when a full scene is involved, explain this first."),
           ]
         : []),
       ...(request.imageGenerateModel
         ? [
-            `用户在界面上显式选择了图片生成模型：${request.imageGenerateModel}。调用 ` +
-              "generate-reference-images 的 mode=generate 时，model 参数优先使用这个选择；" +
-              "mode=edit 也使用这个选择。",
+            `The user explicitly selected an image generation model in the UI: ${request.imageGenerateModel}. When calling ` +
+              "generate-reference-images with mode=generate, the model parameter takes precedence as this selection; " +
+              "mode=edit also uses this selection.",
           ]
         : []),
     ].join("\n"),
@@ -612,7 +612,7 @@ export async function* streamChat(
       }
     } else if (chunk.type === "error") {
       throw new ChatServiceError(
-        `上游 LLM 调用失败：${toErrorMessage(chunk.payload.error)}`,
+        `Upstream LLM call failed: ${toErrorMessage(chunk.payload.error)}`,
         502,
         "upstream_llm_error",
       );

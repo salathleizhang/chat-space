@@ -69,7 +69,7 @@ describe("JSON 契约读写", () => {
     await storage.writeText("projects/bad/project.json", '{"slug":"bad"}');
     expect(
       readJson(storage, "projects/bad/project.json", ProjectSchema),
-    ).rejects.toThrow("不符合契约");
+    ).rejects.toThrow("does not match the contract");
   });
 
   test("请求侧写拒绝密钥类字段（BYOK 纪律）", () => {

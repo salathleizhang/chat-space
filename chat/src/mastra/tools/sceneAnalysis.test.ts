@@ -144,7 +144,7 @@ describe("analyze-scene", () => {
   test("当前场景没有模型时明确拒绝", () => {
     expect(
       runAnalyzeCurrentScene("empty-scene", {}, { apiKey: "sk-test" }),
-    ).rejects.toThrow("没有可分析的模型资产");
+    ).rejects.toThrow("has no model assets to analyze");
   });
 
   /**

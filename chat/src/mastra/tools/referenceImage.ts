@@ -190,7 +190,7 @@ async function bindReferenceImages(
   }
 
   if (!createTarget) {
-    throw new ChatServiceError(`确认对象「${slug}」不存在`, 404, "candidate_not_found");
+    throw new ChatServiceError(`Confirmed object "${slug}" does not exist`, 404, "candidate_not_found");
   }
   await mutateCandidates(storage, projectSlug, (candidates) => ({
     ...candidates,
@@ -225,7 +225,7 @@ async function assertReferenceTargetWritable(
   const identity = await readJson(storage, identityPath, AssetIdentitySchema);
   if (identity.kind !== "model") {
     throw new ChatServiceError(
-      `目标「${assetSlug}」已被 ${identity.kind} 资产占用，请换一个 assetSlug`,
+      `Target "${assetSlug}" is already occupied by a ${identity.kind} asset; choose a different assetSlug`,
       409,
       "asset_slug_conflict",
     );
@@ -348,7 +348,7 @@ export async function runReferenceImageGeneration(
       options,
     );
     if (refs.length === 0) {
-      throw new ChatServiceError("生成结果中没有图片", 502, "imagegen_no_images");
+      throw new ChatServiceError("The generation result contains no image", 502, "imagegen_no_images");
     }
 
     const images: string[] = [];
@@ -438,7 +438,7 @@ export async function runReferenceImageMultiview(
   const owner = await readReferenceOwner(storage, params.projectSlug, params.assetSlug);
   if (!owner) {
     throw new ChatServiceError(
-      `资产或确认对象「${params.assetSlug}」不存在，无法生成多角度参考图`,
+      `Asset or confirmed object "${params.assetSlug}" does not exist; cannot generate multi-view reference images`,
       404,
       "asset_not_found",
     );
@@ -458,7 +458,7 @@ export async function runReferenceImageMultiview(
   }
   if (!sourceImage) {
     throw new ChatServiceError(
-      `资产「${params.assetSlug}」还没有参考图，请先用 generate-reference-images 生成`,
+      `Asset "${params.assetSlug}" has no reference image yet; generate one first with generate-reference-images`,
       409,
       "reference_image_missing",
     );
@@ -516,7 +516,7 @@ export async function runReferenceImageMultiview(
       const url = output[outputKey];
       if (typeof url !== "string" || !url) {
         throw new ChatServiceError(
-          `Tripo 多角度结果缺少 ${outputKey}`,
+          `The Tripo multi-view result is missing ${outputKey}`,
           502,
           "tripo_multiview_incomplete",
         );
@@ -623,14 +623,14 @@ export async function runReferenceImageEdit(
   if (candidateInputs.length === 0) {
     if (!owner) {
       throw new ChatServiceError(
-        `资产或确认对象「${params.assetSlug}」不存在，且本条消息没有附带图片，` +
-          "无法编辑参考图",
+        `Asset or confirmed object "${params.assetSlug}" does not exist, and this message has no attached image, ` +
+          "so the reference image cannot be edited",
         404,
         "asset_not_found",
       );
     }
     throw new ChatServiceError(
-      `资产「${params.assetSlug}」还没有参考图，请先用 generate-reference-images 生成`,
+      `Asset "${params.assetSlug}" has no reference image yet; generate one first with generate-reference-images`,
       409,
       "reference_image_missing",
     );
@@ -642,7 +642,7 @@ export async function runReferenceImageEdit(
   }
   if (existingImages.length === 0) {
     throw new ChatServiceError(
-      `输入图片不存在：${candidateInputs.join("、")}`,
+      `Input image does not exist: ${candidateInputs.join(", ")}`,
       404,
       "input_image_missing",
     );
@@ -697,7 +697,7 @@ export async function runReferenceImageEdit(
     );
     const ref = refs[0];
     if (!ref) {
-      throw new ChatServiceError("图片编辑结果中没有图片", 502, "imageedit_no_images");
+      throw new ChatServiceError("The image edit result contains no image", 502, "imageedit_no_images");
     }
 
     let imagePath: string;
@@ -710,7 +710,7 @@ export async function runReferenceImageEdit(
       await storage.writeBytes(imagePath, new Uint8Array(Buffer.from(ref.dataBase64, "base64")));
       sidecar.outputs = [{ path: imagePath }];
     } else {
-      throw new ChatServiceError("图片编辑结果中没有图片", 502, "imageedit_no_images");
+      throw new ChatServiceError("The image edit result contains no image", 502, "imageedit_no_images");
     }
 
     /*
@@ -837,10 +837,10 @@ export const GenerateReferenceImagesToolSchema = z.object({
  * 才有下一步），确认请求留给那张 ask-user 卡片。
  */
 const REFERENCE_REVIEW_NOTE =
-  "参考图已落盘，工作台会把它们贴进对话，并随后自动把你拉起来继续。现在结束这一轮：" +
-  "不要在同一条回复里调用 start-3d-batch；也不要用正文要用户「回复继续」「告诉我方向对不对」" +
-  "这类需要他打字才能往下走的话——下一轮用 ask-user 把图交给用户确认，" +
-  "用户同意后再启动 3D 生成。";
+  "The reference images have been written to disk; the workbench will paste them into the conversation and then automatically wake you up to continue. End this turn now: " +
+  "do not call start-3d-batch in the same reply; and do not use the message body to ask the user to \"reply to continue\" or \"tell me whether the direction is right\"" +
+  " — anything that requires them to type before progress can continue. In the next turn, use ask-user to hand the images to the user for confirmation, " +
+  "and start the 3D generation only after the user agrees.";
 
 /** 各模式归一成 images 数组，方便 SSE 统一展示新图片。 */
 export async function runGenerateReferenceImages(
@@ -880,7 +880,7 @@ export async function runGenerateReferenceImages(
   if (input.mode === "multiview") {
     if (!keys.tripo3dApiKey) {
       throw new ChatServiceError(
-        "本机 chat/.env 未配置 TRIPO_KEY",
+        "TRIPO_KEY is not configured in the local chat/.env",
         409,
         "provider_key_missing",
       );
@@ -906,7 +906,7 @@ export async function runGenerateReferenceImages(
 export const generateReferenceImagesTool = createTool({
   id: "generate-reference-images",
   description:
-    "统一参考图生成入口（付费操作——调用前须经用户同意）。mode=generate 是文生单物体参考图，需要 prompt；要继续生成 3D 时传 assetSlug，可附 assetName/assetIntent。mode=edit 是图生图：既编辑目标已有的参考图，也能把用户上传的场景照隔离成新的单物体参考图（此时 assetSlug 给新对象的 slug，sourceImage 省略则用本条消息附带的那张图；目标不存在会一并登记）。mode=multiview 使用 Tripo 把目标已有的一张干净参考图扩展为前/左/后/右四视图。mode=plate 仅为旧调用兼容；新的独立底板请求使用 generate-clean-plate，完整场景用 start-scene-job。**两种情况下不要用本工具**：① 用户上传的图本身就是干净的单物体照片；② **用户明确说了不要生成参考图、或要求直接用他给的那张图**——后者是他的决定不是技术选择，改用免费的 attach-source-image 登记原图，把风险（构图、背景、机位、背面信息）写进 ask-user 卡片让他拍板，不要替他换成先生成一张。",
+    "Unified entry point for reference image generation (paid operation — get the user's consent before calling). mode=generate is text-to-single-object reference image generation and requires prompt; to continue on to 3D generation pass assetSlug, optionally with assetName/assetIntent. mode=edit is image-to-image: it both edits a target's existing reference image and can isolate a user-uploaded scene photo into a new single-object reference image (in that case give assetSlug as the new object's slug, and if sourceImage is omitted the image attached to this message is used; a nonexistent target is registered as well). mode=multiview uses Tripo to expand a target's existing clean reference image into front/left/back/right four views. mode=plate exists only for backward compatibility with old calls; new standalone plate requests should use generate-clean-plate, and a full scene should use start-scene-job. **Do not use this tool in two cases**: ① the image the user uploaded is itself a clean single-object photo; ② **the user explicitly said not to generate a reference image, or asked to use the image they gave directly** — the latter is their decision, not a technical choice; instead use the free attach-source-image to register the original image, and write the risks (composition, background, camera angle, back-side information) into an ask-user card for them to decide, and do not substitute generating one first.",
   inputSchema: GenerateReferenceImagesToolSchema,
   execute: async (input, context) =>
     runGenerateReferenceImages(
@@ -987,14 +987,14 @@ export interface AttachSourceImageResult {
 
 /** 绑定成功后的下一步：与参考图那条一样，先取付费同意，不要顺手接着调 3D。 */
 const ATTACH_NOTE =
-  "已把这张用户上传的原图登记为参考图：没有调用任何供应商、没有产生费用。" +
-  "下一步用**同一 assetSlug** 调 start-3d-batch；启动前按纪律用 ask-user 取得付费同意，" +
-  "并在卡片里写明将直接使用用户上传的原图（不再生成新参考图）。";
+  "The user-uploaded original image has been registered as the reference image: no provider was called and no cost was incurred. " +
+  "Next, call start-3d-batch with **the same assetSlug**; before starting, follow the discipline and get paid-operation consent with ask-user, " +
+  "and state in the card that the user-uploaded original image will be used directly (no new reference image will be generated).";
 
 /** 没有 assetSlug 时绑定无处可挂——必须说清后果，否则 Agent 会以为已经就绪。 */
 const ATTACH_UNBOUND_NOTE =
-  "这张图可用，但没有绑定到任何生成目标：start-3d-batch 找不到它。" +
-  "请带上 assetSlug（建议同时给 assetName/assetIntent）再调一次本工具。";
+  "This image is usable, but it is not bound to any generation target: start-3d-batch cannot find it. " +
+  "Call this tool again with assetSlug (giving assetName/assetIntent as well is recommended).";
 
 /**
  * 解析"要绑定哪张图"。
@@ -1020,16 +1020,16 @@ export async function resolveAttachImage(
     const candidates = currentImages.length > 0 ? currentImages : conversationImages;
     if (candidates.length === 0) {
       throw new ChatServiceError(
-        "这场对话里还没有用户附带的图片，无法把原图当作参考图；" +
-          "请让用户重新发送图片，或用 generate-reference-images 生成一张",
+        "There are no user-attached images in this conversation yet, so the original image cannot be used as a reference image; " +
+          "ask the user to resend the image, or generate one with generate-reference-images",
         400,
         "input_image_missing",
       );
     }
     if (candidates.length > 1) {
       throw new ChatServiceError(
-        `这场对话里用户附带了 ${candidates.length} 张图片，请用 image 参数指名要用哪一张：` +
-          `${candidates.join("、")}`,
+        `The user attached ${candidates.length} images in this conversation; use the image parameter to name which one to use: ` +
+          `${candidates.join(", ")}`,
         400,
         "input_image_ambiguous",
       );
@@ -1044,12 +1044,12 @@ export async function resolveAttachImage(
   */
   const pathHint =
     conversationImages.length > 0
-      ? `。这场对话里的图片是：${conversationImages.join("、")}`
+      ? `. The images in this conversation are: ${conversationImages.join(", ")}`
       : "";
   const sourceDir = projectSourceDir(projectSlug);
   if (!explicit.startsWith(`${sourceDir}/`)) {
     throw new ChatServiceError(
-      `只能绑定本项目 source/ 目录里的源图：${explicit}${pathHint}`,
+      `You can only bind a source image from this project's source/ directory: ${explicit}${pathHint}`,
       400,
       "not_a_project_source",
     );
@@ -1064,15 +1064,15 @@ export async function resolveAttachImage(
   const found = references.find((reference) => reference.path === explicit);
   if (!found) {
     throw new ChatServiceError(
-      `参考图不存在：${explicit}。请原样使用用户上传图片的完整逻辑路径${pathHint}`,
+      `Reference image does not exist: ${explicit}. Use the full logical path of the user-uploaded image exactly as given${pathHint}`,
       404,
       "input_image_missing",
     );
   }
   if (found.generatedAt) {
     throw new ChatServiceError(
-      `attach-source-image 只能绑定用户上传的原图，而这张是 AI 生成/编辑的产物（${found.generatedAt}）：` +
-        `${explicit}。要复用它请把目标资产的 assetSlug 交给 start-3d-batch，走那条既有的复用路径。`,
+      `attach-source-image can only bind user-uploaded original images, but this one is an AI-generated/edited product (${found.generatedAt}): ` +
+        `${explicit}. To reuse it, pass the target asset's assetSlug to start-3d-batch and follow that existing reuse path.`,
       409,
       "attach_requires_user_original",
     );
@@ -1126,15 +1126,15 @@ export async function runAttachSourceImage(
 export const attachSourceImageTool = createTool({
   id: "attach-source-image",
   description:
-    "把**用户上传的原图**直接登记为 3D 生成的参考图——免费、本地、不调用任何供应商，**不需要用户同意**。" +
-    "用在「把这个/这张照片做成 3D 模型」这类请求上，并且这场对话里用户发过图片时：图已经是用户给的输入，" +
-    "不要再花钱生成一张参考图。**用户明确说了不要生成参考图、或要求直接用他给的那张图时，本工具是他的决定的唯一正确落点——照做，不要改换成先生成一张。**" +
-    "**image 参数直接省略**：服务端自己取（本条消息附带的图，本条没带就取整场对话里唯一的那张）。" +
-    "用户先发图、再补一句「就用我发你的那张」时同样省略 image，**不要**传字符串 \"null\"，也**不要**自己拼 `source/` 前缀或裸文件名——路径猜错只会浪费一轮。" +
-    "只接受用户上传的原图；AI 生成或编辑出来的参考图会被拒绝（那些走 start-3d-batch 的既有复用路径）。" +
-    "只有传了 assetSlug 才会登记成待生成目标、start-3d-batch 才认得出它；目标已是资产就直接用它的 slug，建议同时给 assetName 与 assetIntent。" +
-    "本工具不产生费用，但调用之后的 3D 生成仍然要先用 ask-user 取得付费同意，并把「直接使用你上传的原图」和它的风险写进卡片让用户拍板。" +
-    "**注意**：用户界面里选的是数美 Hi3D 时这条通路不成立（它只吃 Seedream 产物的公网 URL），要先改用 mode=edit/generate。",
+    "Register the **user-uploaded original image** directly as the reference image for 3D generation — free, local, calls no provider, and **does not need user consent**. " +
+    "Use it for requests like \"make this/that photo into a 3D model\" when the user has sent an image in this conversation: the image is already input the user gave, " +
+    "so do not spend money generating another reference image. **When the user explicitly says not to generate a reference image, or asks to use the image they gave directly, this tool is the only correct landing point for their decision — do it, and do not switch to generating one first.**" +
+    "**Omit the image parameter entirely**: the server picks it itself (the image attached to this message; if this message has none, the single one in the whole conversation). " +
+    "When the user sends an image first and then adds \"just use the one I sent you\", likewise omit image; do **not** pass the string \"null\", and do **not** build a `source/` prefix or a bare filename yourself — guessing the path wrong only wastes a turn. " +
+    "Only user-uploaded original images are accepted; AI-generated or AI-edited reference images are rejected (those go through start-3d-batch's existing reuse path). " +
+    "Only when assetSlug is passed is it registered as a pending generation target, so that start-3d-batch can recognize it; if the target is already an asset, just use its slug, and give assetName and assetIntent at the same time if possible. " +
+    "This tool incurs no cost, but the 3D generation after calling it still requires paid-operation consent via ask-user first, and \"using the original image you uploaded directly\" plus its risks must be written into the card for the user to decide. " +
+    "**Note**: when the image model selected in the user interface is ShuMei Hi3D, this path does not work (it only accepts the public URL of a Seedream product), so switch to mode=edit/generate first.",
   inputSchema: AttachSourceImageParamsSchema.omit({ projectSlug: true }),
   execute: async (input, context) =>
     runAttachSourceImage(

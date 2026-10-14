@@ -32,7 +32,7 @@ test("project mismatch rejects mutations and import before any action", async ()
   const methods: string[] = [], importer = mock(async () => 1);
   setBlenderExportImporter(importer);
   globalThis.fetch = mock(async (_input, init) => { methods.push(init?.method ?? "GET"); return Response.json({ session: { ...session, project: "other" } }); }) as unknown as typeof fetch;
-  for (const action of ["resume", "pause", "retry", "export", "import"]) await expect(call({ action, sessionId: id })).rejects.toThrow("其他项目");
+  for (const action of ["resume", "pause", "retry", "export", "import"]) await expect(call({ action, sessionId: id })).rejects.toThrow("another project");
   expect(methods.every(method => method === "GET")).toBe(true); expect(importer).not.toHaveBeenCalled();
 });
 
@@ -45,7 +45,7 @@ test("retry keeps the original request identity after a lost response, without a
   }) as unknown as typeof fetch;
   await expect(call({ action: "retry", sessionId: id })).rejects.toThrow("lost response"); expect(bodies.length).toBe(1);
   await call({ action: "retry", sessionId: id }); expect(bodies[1]).toBe(bodies[0]);
-  await expect(call({ action: "retry", sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" })).rejects.toThrow("其他项目");
+  await expect(call({ action: "retry", sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" })).rejects.toThrow("another project");
 });
 
 test("AI import uses the verified browser importer with the authoritative project", async () => {
@@ -60,8 +60,8 @@ test("resume is no-op when already running and rejects bypassing batch supervisi
   globalThis.fetch = mock(async (_input, init) => { if (init?.method) posts.push(String(init.body)); return Response.json({ session: value }); }) as unknown as typeof fetch;
   await call({ action: "resume", sessionId: id }); expect(posts).toEqual([]);
   value = { ...value, state: "paused", batchId: "batch" };
-  await expect(call({ action: "resume", sessionId: id })).rejects.toThrow("answer 或 retry");
-  await expect(call({ action: "export", sessionId: id })).rejects.toThrow("自动导出"); expect(posts).toEqual([]);
+  await expect(call({ action: "resume", sessionId: id })).rejects.toThrow("answer or retry");
+  await expect(call({ action: "export", sessionId: id })).rejects.toThrow("exported automatically"); expect(posts).toEqual([]);
 });
 
 test("session discovery filters other projects and operation lookup binds the session", async () => {
@@ -70,7 +70,7 @@ test("session discovery filters other projects and operation lookup binds the se
     : String(input).includes("/operations/") ? Response.json({ operation: { sessionId: "other" } }) : Response.json({ session })) as unknown as typeof fetch;
   const result = await withAssetStorage(storage, () => blenderSessionsTool.execute!({} as never, context));
   expect((result as { sessions: { sessionId: string }[] }).sessions.map((s: { sessionId: string }) => s.sessionId)).toEqual([id]);
-  await expect(call({ action: "operation-status", sessionId: id, operationId: id })).rejects.toThrow("其他 Blender 会话");
+  await expect(call({ action: "operation-status", sessionId: id, operationId: id })).rejects.toThrow("another Blender session");
 });
 
 
@@ -80,7 +80,7 @@ test("manual export replay preserves its key and epoch and changed intent is rej
     bodies.push(String(init.body)); return Response.json({ operation: { id, sessionId: id } }); }) as unknown as typeof fetch;
   await call({ action: "export", sessionId: id }, ctx); await call({ action: "export", sessionId: id }, ctx);
   expect(bodies[1]).toBe(bodies[0]); expect(JSON.parse(bodies[0]!).epoch).toBe(1);
-  await expect(call({ action: "retry", sessionId: id }, ctx)).rejects.toThrow("不能改变"); expect(bodies.length).toBe(2);
+  await expect(call({ action: "retry", sessionId: id }, ctx)).rejects.toThrow("cannot change"); expect(bodies.length).toBe(2);
 });
 
 test("answer keeps checkpoint discard disabled unless explicitly supplied", async () => {

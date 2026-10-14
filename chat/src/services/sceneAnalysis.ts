@@ -85,15 +85,15 @@ const llmSceneAnalyzer: CurrentSceneAnalyzer = async ({
     {
       type: "text",
       text:
-        `分析当前 3D 场景。\n空间数据：${JSON.stringify(serializable)}\n` +
-        `用户补充要求：${instructions ?? "无"}`,
+        `Analyze the current 3D scene.\nSpatial data: ${JSON.stringify(serializable)}\n` +
+        `Additional user requirements: ${instructions ?? "none"}`,
     },
   ];
   for (const asset of snapshot.assets) {
     if (!asset.thumbnailDataUri) continue;
     content.push({
       type: "text",
-      text: `${asset.label} 缩略图，对应资产 ${asset.name}（${asset.slug}）`,
+      text: `${asset.label} thumbnail, corresponding to asset ${asset.name} (${asset.slug})`,
     });
     content.push({ type: "image", image: asset.thumbnailDataUri });
   }

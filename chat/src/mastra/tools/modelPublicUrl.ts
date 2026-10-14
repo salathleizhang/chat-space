@@ -81,8 +81,8 @@ export async function resolveModelPublicUrl(
 
   throw new ChatServiceError(
     modelPath
-      ? `资产「${assetSlug}」的模型没有可用公网 URL（本地导入或供应商链接缺失）：请先使用带有可访问链接的模型`
-      : `资产「${assetSlug}」目录下没有模型文件，请先生成 3D 模型`,
+      ? `The model for asset "${assetSlug}" has no accessible public URL (local import or provider link missing): use a model with an accessible link first`
+      : `Asset "${assetSlug}" has no model file in its directory; generate a 3D model first`,
     409,
     "public_model_url_unavailable",
   );

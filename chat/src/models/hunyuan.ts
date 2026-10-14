@@ -32,7 +32,7 @@ function splitKey(apiKey: string): { secretId: string; secretKey: string } {
   const sep = apiKey.indexOf(":");
   if (sep <= 0 || sep === apiKey.length - 1) {
     throw new ChatServiceError(
-      "混元 API key 格式应为「SecretId:SecretKey」（腾讯云访问密钥两段用冒号拼接）",
+      "The Hunyuan API key must be formatted as \"SecretId:SecretKey\" (join the two halves of a Tencent Cloud access key with a colon)",
       400,
       "invalid_hunyuan_key",
     );
@@ -101,7 +101,7 @@ export async function callHunyuanAction(
       body,
     },
     requestTimeoutMs,
-    `混元 ${action}`,
+    `Hunyuan ${action}`,
   );
   const json = await readBodyWithTimeout(
     () =>
@@ -109,13 +109,13 @@ export async function callHunyuanAction(
         Response?: Record<string, unknown> & { Error?: { Code?: string; Message?: string } };
       }>,
     requestTimeoutMs,
-    `混元 ${action}`,
+    `Hunyuan ${action}`,
   );
   const result = json.Response ?? {};
   if (!response.ok || result.Error) {
     const error = result.Error;
     throw new ChatServiceError(
-      `混元 ${action} 失败：${error?.Code ?? response.status} ${error?.Message ?? ""}`.trim(),
+      `Hunyuan ${action} failed: ${error?.Code ?? response.status} ${error?.Message ?? ""}`.trim(),
       502,
       "hunyuan_request_failed",
     );
@@ -133,13 +133,13 @@ export async function waitForHunyuanJob(
 ): Promise<Record<string, unknown>> {
   const timeoutError = () =>
     new ChatServiceError(
-      `混元任务超时（JobId=${jobId}，可凭侧写续查）`,
+      `Hunyuan task timed out (JobId=${jobId}; resume the poll from the sidecar)`,
       504,
       "hunyuan_timeout",
     );
 
   return pollProviderTask<Record<string, unknown>>({
-    label: `混元 ${queryAction}`,
+    label: `Hunyuan ${queryAction}`,
     timeoutMs: options.timeoutMs ?? 15 * 60_000,
     requestTimeoutMs: options.requestTimeoutMs ?? API_REQUEST_TIMEOUT_MS,
     pollIntervalMs: options.pollIntervalMs ?? 10_000,
@@ -153,7 +153,7 @@ export async function waitForHunyuanJob(
       const status = String(result.Status ?? "").toUpperCase();
       if (!TERMINAL_FAIL.has(status)) return undefined;
       return new ChatServiceError(
-        `混元任务失败：${result.ErrorMessage ?? status}`,
+        `Hunyuan task failed: ${result.ErrorMessage ?? status}`,
         502,
         "hunyuan_task_failed",
       );

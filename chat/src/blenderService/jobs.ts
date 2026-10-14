@@ -71,7 +71,7 @@ export class BlenderJobs {
         throw new BlenderConflict("Unknown scene operation requires explicit checkpoint rollback");
       const resumed = this.store.resume(id, owner);
       const messages = JSON.parse(job.messages);
-      messages.push({ role: "user", content: message + (discardUnknown ? "\n已明确退回最近已保存工程；不要重放结果未知的旧脚本。重新检查真实场景。" : "") });
+      messages.push({ role: "user", content: message + (discardUnknown ? "\nThe project has explicitly been rolled back to the most recently saved state; do not replay old scripts whose results are unknown. Re-inspect the real scene." : "") });
       job.messages = JSON.stringify(messages); job.state = "queued"; job.error = null; job.pendingOperation = null;
       this.save(job); return resumed;
     }).immediate();

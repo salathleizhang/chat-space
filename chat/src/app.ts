@@ -19,7 +19,7 @@ export function createApp(): Hono {
     const origin = c.req.header("Origin");
     const sameOriginCloud = process.env.VERCEL === "1" && origin === new URL(c.req.url).origin;
     if (origin && !sameOriginCloud && !config.cors.isAllowedOrigin(origin)) {
-      return c.json({ error: { message: "不允许此网页访问本机 ChatSpace 服务" } }, 403);
+      return c.json({ error: { message: "This web page is not allowed to access the local ChatSpace service" } }, 403);
     }
     await next();
   });

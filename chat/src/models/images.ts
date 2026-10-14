@@ -31,7 +31,7 @@ const IMAGE_CHANNEL_KEYS = {
 } as const;
 
 const IMAGE_CHANNEL_LABELS: Record<ImageChannel, string> = {
-  volcengine: "火山方舟",
+  volcengine: "Volcano Engine Ark",
   google: "Google AI",
   openai: "OpenAI",
   openrouter: "OpenRouter",
@@ -54,7 +54,7 @@ function selectImageChannel<Entry>(
     if (!entry) {
       if (preferred) {
         throw new ChatServiceError(
-          `模型「${modelLabel}」不支持经 ${IMAGE_CHANNEL_LABELS[channel]} 调用（可选：${Object.keys(channels).join("、")}）`,
+          `Model "${modelLabel}" cannot be called via ${IMAGE_CHANNEL_LABELS[channel]} (available: ${Object.keys(channels).join(", ")})`,
           400,
           "channel_unsupported",
         );
@@ -65,16 +65,16 @@ function selectImageChannel<Entry>(
     if (apiKey) return { channel, entry, apiKey };
     if (preferred) {
       throw new ChatServiceError(
-        `缺少 ${IMAGE_CHANNEL_LABELS[channel]} API key，请在设置中填写`,
+        `Missing ${IMAGE_CHANNEL_LABELS[channel]} API key; please fill it in in Settings`,
         401,
         `missing_${IMAGE_CHANNEL_KEYS[channel]}`,
       );
     }
   }
   throw new ChatServiceError(
-    `模型「${modelLabel}」支持的渠道（${Object.keys(channels)
+    `None of the channels supported by model "${modelLabel}" (${Object.keys(channels)
       .map((c) => IMAGE_CHANNEL_LABELS[c as ImageChannel])
-      .join("、")}）都没有配置 API key，请在设置中填写任意一家`,
+      .join(", ")}) has an API key configured; please fill in any one of them in Settings`,
     401,
     "missing_imagegen_key",
   );
@@ -86,7 +86,7 @@ const DATA_URI_RE = /^data:([^;]+);base64,(.*)$/s;
 function parseDataUri(dataUri: string): { mimeType: string; base64: string } {
   const match = DATA_URI_RE.exec(dataUri);
   if (!match) {
-    throw new ChatServiceError("输入图不是有效的 data URI", 400, "invalid_data_uri");
+    throw new ChatServiceError("The input image is not a valid data URI", 400, "invalid_data_uri");
   }
   return { mimeType: match[1]!, base64: match[2]! };
 }
@@ -152,7 +152,7 @@ async function jsonOrThrow(
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new ChatServiceError(
-      `${what}失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
+      `${what} failed (${response.status}): ${JSON.stringify(body).slice(0, 300)}`,
       502,
       code,
     );
@@ -221,9 +221,9 @@ export async function generateImagesOpenAICompat(
       body: JSON.stringify(requestBody),
     },
     IMAGE_REQUEST_TIMEOUT_MS,
-    "图片生成",
+    "Image generation",
   );
-  const body = await jsonOrThrow(response, "图片生成", "imagegen_failed");
+  const body = await jsonOrThrow(response, "Image generation", "imagegen_failed");
   const data = (body.data ?? []) as Record<string, unknown>[];
   const images = data
     .map((item) => ({
@@ -241,8 +241,8 @@ export async function generateImagesOpenAICompat(
       | undefined;
     throw new ChatServiceError(
       itemError
-        ? `图片生成失败（${itemError.code ?? "unknown"}）：${itemError.message ?? ""}`
-        : "图片生成响应中没有图片",
+        ? `Image generation failed (${itemError.code ?? "unknown"}): ${itemError.message ?? ""}`
+        : "No image in the image generation response",
       502,
       "imagegen_no_images",
     );
@@ -277,9 +277,9 @@ export async function generateImageGoogle(
       }),
     },
     IMAGE_REQUEST_TIMEOUT_MS,
-    "Gemini 图片生成",
+    "Gemini image generation",
   );
-  const body = await jsonOrThrow(response, "Gemini 图片生成", "imagegen_failed");
+  const body = await jsonOrThrow(response, "Gemini image generation", "imagegen_failed");
   const candidates = body.candidates as
     | { content?: { parts?: Record<string, unknown>[] } }[]
     | undefined;
@@ -300,7 +300,7 @@ export async function generateImageGoogle(
       }
     }
   }
-  throw new ChatServiceError("Gemini 响应中没有图片", 502, "imagegen_no_images");
+  throw new ChatServiceError("No image in the Gemini response", 502, "imagegen_no_images");
 }
 
 /** OpenRouter：chat completions + modalities，图片以 data URL 返回（一次一张） */
@@ -327,9 +327,9 @@ export async function generateImageOpenRouter(
       }),
     },
     IMAGE_REQUEST_TIMEOUT_MS,
-    "OpenRouter 图片生成",
+    "OpenRouter image generation",
   );
-  const body = await jsonOrThrow(response, "OpenRouter 图片生成", "imagegen_failed");
+  const body = await jsonOrThrow(response, "OpenRouter image generation", "imagegen_failed");
   const choices = body.choices as
     | { message?: { images?: { image_url?: { url?: string } }[] } }[]
     | undefined;
@@ -342,7 +342,7 @@ export async function generateImageOpenRouter(
     }
     return { url };
   }
-  throw new ChatServiceError("OpenRouter 响应中没有图片", 502, "imagegen_no_images");
+  throw new ChatServiceError("No image in the OpenRouter response", 502, "imagegen_no_images");
 }
 
 /**
@@ -526,9 +526,9 @@ async function editImageGoogle(
       body: JSON.stringify({ contents: [{ parts }] }),
     },
     IMAGE_REQUEST_TIMEOUT_MS,
-    "Gemini 图片编辑",
+    "Gemini image editing",
   );
-  const body = await jsonOrThrow(response, "Gemini 图片编辑", "imageedit_failed");
+  const body = await jsonOrThrow(response, "Gemini image editing", "imageedit_failed");
   const candidates = body.candidates as
     | { content?: { parts?: Record<string, unknown>[] } }[]
     | undefined;
@@ -549,7 +549,7 @@ async function editImageGoogle(
       }
     }
   }
-  throw new ChatServiceError("Gemini 响应中没有图片", 502, "imageedit_no_images");
+  throw new ChatServiceError("No image in the Gemini response", 502, "imageedit_no_images");
 }
 
 /** OpenRouter chat completions：message content 里文本 part + 每张输入图一个 image_url part */
@@ -579,9 +579,9 @@ async function editImageOpenRouter(
       }),
     },
     IMAGE_REQUEST_TIMEOUT_MS,
-    "OpenRouter 图片编辑",
+    "OpenRouter image editing",
   );
-  const body = await jsonOrThrow(response, "OpenRouter 图片编辑", "imageedit_failed");
+  const body = await jsonOrThrow(response, "OpenRouter image editing", "imageedit_failed");
   const choices = body.choices as
     | { message?: { images?: { image_url?: { url?: string } }[] } }[]
     | undefined;
@@ -592,7 +592,7 @@ async function editImageOpenRouter(
     if (dataUri) return { dataBase64: dataUri[2]!, mimeType: dataUri[1]! };
     return { url };
   }
-  throw new ChatServiceError("OpenRouter 响应中没有图片", 502, "imageedit_no_images");
+  throw new ChatServiceError("No image in the OpenRouter response", 502, "imageedit_no_images");
 }
 
 interface ImageEditDispatchOptions {
@@ -632,7 +632,7 @@ export async function runImageEdit(
     return { refs: [await editImageOpenRouter(entry.model, input, callOptions)] };
   }
   throw new ChatServiceError(
-    `图片编辑暂不支持渠道「${channel}」`,
+    `Image editing does not support channel "${channel}" yet`,
     400,
     "imageedit_channel_unsupported",
   );

@@ -209,12 +209,12 @@ describe("runProjectWorldGeneration", () => {
       storage,
       { projectSlug: "empty-world", mode: "empty-environment" },
       { apiKey: "wlt-key", fetchFn: makeFakeFetch() },
-    )).rejects.toThrow("还没有场景分析");
+    )).rejects.toThrow("has no scene analysis yet");
     await expect(runProjectWorldGeneration(
       storage,
       { projectSlug: "empty-world", mode: "direct", sourceImage: null },
       { apiKey: "wlt-key", fetchFn: makeFakeFetch() },
-    )).rejects.toThrow("需要源图或文字 prompt");
+    )).rejects.toThrow("requires a source image or a text prompt");
   });
 
   test("阶段回调按 generating → downloading 推进：进度可见，不再长时间停在 queued", async () => {
@@ -353,7 +353,7 @@ describe("卡死看门狗", () => {
       const listed = (await listTasks("stalled")).find((entry) => entry.id === task.id);
       expect(listed?.status).toBe("failed");
       expect(listed?.phase).toBe("failed");
-      expect(listed?.error).toContain("没有任何进展");
+      expect(listed?.error).toContain("made no progress");
       // 续跑提示必须留在错误里：否则用户会直接点重试，为同一个模型重复付费
       expect(listed?.error).toContain("resume-generation");
       // 落盘的失败状态要能被下一次读取看到

@@ -24,11 +24,11 @@ export async function submitArk3dTask(
   options: Ark3dSubmitOptions,
 ): Promise<string> {
   if (input.images.length === 0) {
-    throw new ChatServiceError("缺少 3D 参考图", 400, "reference_image_missing");
+    throw new ChatServiceError("Missing 3D reference image", 400, "reference_image_missing");
   }
   if (input.requirePublicImageUrl && input.images.some((image) => !/^https:\/\//i.test(image))) {
     throw new ChatServiceError(
-      "火山数美 Hi3D 需要公网图片 URL；请先用 Seedream 生成或编辑参考图",
+      "Volcano Engine Hi3D from ShuMei needs a publicly reachable image URL; generate or edit a reference image with Seedream first",
       409,
       "hi3d_public_image_required",
     );
@@ -51,19 +51,19 @@ export async function submitArk3dTask(
       }),
     },
     API_REQUEST_TIMEOUT_MS,
-    `${input.label ?? "火山 3D"} 任务提交`,
+    `${input.label ?? "Volcano Engine 3D"} task submit`,
   );
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new ChatServiceError(
-      `${input.label ?? "火山 3D"} 任务提交失败（${response.status}）：${JSON.stringify(body).slice(0, 300)}`,
+      `${input.label ?? "Volcano Engine 3D"} task submit failed (${response.status}): ${JSON.stringify(body).slice(0, 300)}`,
       502,
       "ark3d_submit_failed",
     );
   }
   if (typeof body.id !== "string" || !body.id) {
     throw new ChatServiceError(
-      `${input.label ?? "火山 3D"} 任务响应缺少 id`,
+      `${input.label ?? "Volcano Engine 3D"} task response is missing the id`,
       502,
       "ark3d_submit_failed",
     );

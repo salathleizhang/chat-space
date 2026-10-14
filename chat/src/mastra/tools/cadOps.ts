@@ -58,7 +58,7 @@ export async function compileScadToStl(
       const timer = setTimeout(() => {
         reject(
           new ChatServiceError(
-            `OpenSCAD 编译超过 ${Math.round(timeoutMs / 1000)}s 被中止：请降低 $fn 或简化布尔结构后重试`,
+            `OpenSCAD compilation exceeded ${Math.round(timeoutMs / 1000)}s and was aborted: lower $fn or simplify the boolean structure and try again`,
             504,
             "cad_compile_timeout",
           ),
@@ -72,7 +72,7 @@ export async function compileScadToStl(
         clearTimeout(timer);
         reject(
           new ChatServiceError(
-            `OpenSCAD 编译线程异常：${event.message ?? "unknown"}`,
+            `OpenSCAD compile thread error: ${event.message ?? "unknown"}`,
             500,
             "cad_worker_error",
           ),
@@ -83,7 +83,7 @@ export async function compileScadToStl(
     if (!response.ok) {
       if (response.log.some((line) => /top level object is empty/i.test(line))) {
         throw new ChatServiceError(
-          "编译产出几何为空：布尔运算可能减掉了全部实体，检查各部件位置与尺寸",
+          "Compilation produced empty geometry: a boolean operation may have subtracted every solid; check the position and size of each part",
           422,
           "cad_empty_geometry",
         );
@@ -92,7 +92,7 @@ export async function compileScadToStl(
         .filter((line) => /ERROR|WARNING|Can't/i.test(line))
         .slice(-8);
       throw new ChatServiceError(
-        `OpenSCAD 编译失败：${detail.length ? detail.join("\n") : response.error}`,
+        `OpenSCAD compilation failed: ${detail.length ? detail.join("\n") : response.error}`,
         422,
         "cad_compile_failed",
       );
@@ -115,12 +115,12 @@ export interface CadGeometryStats {
 /** 二进制 STL → 非索引三角形顶点坐标（毫米） */
 export function parseBinaryStl(bytes: Uint8Array): Float32Array {
   if (bytes.length < 84) {
-    throw new ChatServiceError("STL 文件不完整（不足 84 字节头）", 500, "cad_bad_stl");
+    throw new ChatServiceError("STL file is incomplete (less than the 84-byte header)", 500, "cad_bad_stl");
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const triangles = view.getUint32(80, true);
   if (bytes.length < 84 + triangles * 50) {
-    throw new ChatServiceError("STL 三角形数据被截断", 500, "cad_bad_stl");
+    throw new ChatServiceError("STL triangle data is truncated", 500, "cad_bad_stl");
   }
   const positions = new Float32Array(triangles * 9);
   for (let t = 0; t < triangles; t++) {
@@ -325,7 +325,7 @@ export async function runCadGeneration(
     const positionsMm = parseBinaryStl(stl);
     if (positionsMm.length === 0) {
       throw new ChatServiceError(
-        "编译成功但几何为空：布尔运算可能减掉了全部实体，检查各部件位置与尺寸",
+        "Compilation succeeded but the geometry is empty: a boolean operation may have subtracted every solid; check the position and size of each part",
         422,
         "cad_empty_geometry",
       );
@@ -347,7 +347,7 @@ export async function runCadGeneration(
       {
         slug: params.assetSlug,
         name: params.name ?? params.assetSlug,
-        intent: params.intent ?? `CAD 硬表面参数化建模：${params.name ?? params.assetSlug}`,
+        intent: params.intent ?? `CAD hard-surface parametric modeling: ${params.name ?? params.assetSlug}`,
         sourceImages: [],
       },
       { files: [glbPath] },
@@ -393,7 +393,7 @@ export async function readLatestCadSource(
     }
   }
   throw new ChatServiceError(
-    `资产「${assetSlug}」没有 CAD 生成记录（只有 build-cad-model 产出的资产才能读回源码）`,
+    `Asset "${assetSlug}" has no CAD generation record (only assets produced by build-cad-model can have their source read back)`,
     404,
     "cad_source_not_found",
   );
@@ -404,7 +404,7 @@ export async function readLatestCadSource(
 export const buildCadModelTool = createTool({
   id: "build-cad-model",
   description:
-    "CAD 硬表面参数化建模（免费本地编译，不需要任何供应商 key）：传入完整 OpenSCAD 源码，服务端用 OpenSCAD-WASM 编译成 GLB 与 .scad 源码落盘。适合支架、外壳、法兰、齿轮等规则几何体；有机形态请走 start-3d-batch。传已有 assetSlug 即为该资产追加新一代（改参重生成），不覆盖旧产物。返回三角数/毫米包围盒/体积等几何统计，务必对照尺寸意图核对后再向用户汇报",
+    "CAD hard-surface parametric modeling (free local compilation, no provider key needed): pass complete OpenSCAD source and the server compiles it with OpenSCAD-WASM, persisting both a GLB and the .scad source. Suited to regular geometry such as brackets, enclosures, flanges, and gears; use start-3d-batch for organic shapes. Passing an existing assetSlug appends a new generation to that asset (re-generating with changed parameters) and does not overwrite older outputs. Returns geometric statistics such as triangle count / millimeter bounding box / volume — always check them against the size intent before reporting to the user",
   inputSchema: z.object({
     assetSlug: SlugSchema,
     name: z.string().min(1).optional(),
@@ -423,7 +423,7 @@ export const buildCadModelTool = createTool({
 export const getCadSourceTool = createTool({
   id: "get-cad-source",
   description:
-    "读回 CAD 资产最新一代的 OpenSCAD 源码（免费）：用户要改尺寸/参数时先读回源码，修改后用 build-cad-model 整份重新提交。失败代也会返回，便于修正语法后重编",
+    "Read back the latest generation of a CAD asset's OpenSCAD source (free): when the user wants to change dimensions/parameters, read the source back first, edit it, then resubmit the whole thing with build-cad-model. Failed generations are returned too, so you can fix the syntax and recompile",
   inputSchema: z.object({ assetSlug: SlugSchema }),
   execute: async (input, context) => {
     return readLatestCadSource(

@@ -259,7 +259,7 @@ describe("planNodeInvalidation 纯函数", () => {
       const error = captureChatServiceError(() => planNodeInvalidation(nodes, [id]));
       expect(error.status).toBe(404);
       expect(error.code).toBe("scene_node_not_found");
-      expect(error.message).toBe(`场景节点不存在或已废弃：${id}`);
+      expect(error.message).toBe(`Scene node does not exist or is obsolete: ${id}`);
     }
   });
 

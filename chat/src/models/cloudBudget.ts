@@ -6,7 +6,7 @@ import { onTaskPumpTick } from "../common/taskPump";
 export async function cloudBudget<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
   const controller = new AbortController();
   const deadline = Date.now() + timeoutMs;
-  const error = () => new ChatServiceError("云端 Blender 请求超时，执行结果未知；先检查场景再决定是否重试", 504, "blender_cloud_timeout");
+  const error = () => new ChatServiceError("The cloud Blender request timed out and the outcome is unknown; check the scene before deciding whether to retry", 504, "blender_cloud_timeout");
   let rejectTick!: (error: Error) => void;
   const expired = new Promise<never>((_, reject) => { rejectTick = reject; });
   const expire = () => { controller.abort(); const e = error(); rejectTick(e); return e; };

@@ -62,7 +62,7 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
       notices: Object.fromEntries(sessions.flatMap(s => { const value = store.effect(s.id, s.epoch, "budget-wait"); return value ? [[s.id, value]] : []; })) });
   });
   app.post("/v1/sessions", async c => {
-    if (!settings.pauseEnabled) return c.json({ error: "暂停/恢复权限尚未验收，未分配计费资源" }, 503);
+    if (!settings.pauseEnabled) return c.json({ error: "Pause/resume access has not been accepted yet; no billable resources were allocated" }, 503);
     const input = SessionInput.parse(await c.req.json());
     const session = store.create(c.get("owner"), input.project, settings.build, input.budgetMinutes * 60_000, input.requestId, "interactive");
     scheduler.tick(); return c.json({ session }, 202);
