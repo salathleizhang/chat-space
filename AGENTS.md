@@ -22,6 +22,8 @@ bun run check                        # typecheck + test + build
 
 `bun run check | tail` 会吞掉退出码——管道的 `$?` 是 `tail` 的。要判成败必须 `set -o pipefail` 或读 `${PIPESTATUS[0]}`。
 
+**`bun test` 静默死掉（退出码 133 / SIGTRAP、一行输出都没有）先怀疑"DOM 节点进了断言"。** 实测（2026-10-04）：一条写错的 `expect(mic.parentElement).toBe(send.parentElement)` 让整个测试进程 SIGTRAP，56 字节输出；同一条断言在别处则是 **89.8 MB** 的节点图 dump。原因是 bun 的失败格式化会顺着 happy-dom 节点的环一路打印。**已修**：preload 给 `Node.prototype` 挂了 `nodejs.util.inspect.custom`，节点现在打印成一行 `<div#dock.a.b.c> "正文"`（`app/src/test-dom-inspect.ts`，`toJSON` / `Bun.inspect.custom` / `toStringTag` 三个都**不管用**，别乱换）。判据由 `app/src/test-dom-inspect.test.ts` 起子进程跑夹具守（那个 `.test.tsx` 平时是 skip，只有带 `CHATSPACE_DOM_DIFF_FIXTURE=1` 才真跑、且**必须失败**）。
+
 单测（`bun test` + happy-dom）**不能证明 WebGPU 可运行**。真实 GPU 行为只能在真实浏览器里验证，见第五节。
 
 **check 在过载机器上会假失败。** 实测（2026-10-01）：一次 `bun run check` 在机器被顶到高负载时耗了 **2909 s** 并以退出码 1 结束（报 `app test: Exited with code 1`）；同一份代码单跑 `bun test` 是 **459 pass / 0 fail**，负载回落到 3.5 后重跑 `bun run check` 退出码 0。所以**看到 check 失败先 `uptime`**：负载高时先重跑一次再判代码有问题，别急着改代码。
