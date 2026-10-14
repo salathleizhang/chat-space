@@ -24,7 +24,7 @@ function pointer(node: Element, type: string, x: number, y: number) {
 test("two desktops stay mounted independently when one window closes", async () => {
   const container = await render(); const b = container.querySelector('iframe[title="B"]');
   expect(container.querySelectorAll("iframe").length).toBe(2);
-  await click(container.querySelector('[aria-label="Blender A"] [aria-label="关闭此 Blender 窗口"]')!);
+  await click(container.querySelector('[aria-label="Blender A"] [aria-label="Close this Blender window"]')!);
   expect(container.querySelector('iframe[title="A"]')).toBeNull(); expect(container.querySelector('iframe[title="B"]')).toBe(b);
 });
 
@@ -48,10 +48,10 @@ test("closing and reopening a window reuses its vacancy without colliding with t
 test("maximizing fills the viewport and restores geometry without replacing the desktop", async () => {
   const container = await render(); const frame = container.querySelector('[aria-label="Blender A"]') as HTMLElement;
   const iframe = frame.querySelector("iframe"), before = { width: frame.style.width, height: frame.style.height, left: frame.style.left };
-  await click(frame.querySelector('[aria-label="最大化 Blender 窗口"]')!);
+  await click(frame.querySelector('[aria-label="Maximize Blender window"]')!);
   expect(frame.style.width).toBe("100vw"); expect(frame.style.height).toBe("100vh"); expect(frame.style.left).toBe("0px");
   expect(frame.querySelector("iframe")).toBe(iframe);
-  await click(frame.querySelector('[aria-label="还原 Blender 窗口"]')!);
+  await click(frame.querySelector('[aria-label="Restore Blender window"]')!);
   expect(frame.style.width).toBe(before.width); expect(frame.style.height).toBe(before.height); expect(frame.style.left).toBe(before.left);
   expect(frame.querySelector("iframe")).toBe(iframe);
 });
@@ -65,7 +65,7 @@ test("drag and resize preserve both iframe nodes; blur cancels the gesture", asy
   expect(parseFloat(frame.style.left)).toBe(Math.min(window.innerWidth - 100, before.left + 30)); expect(parseFloat(frame.style.top)).toBe(Math.min(window.innerHeight - 48, before.top + 20));
   window.dispatchEvent(new Event("blur"));
   await act(async () => pointer(header, "pointermove", 180, 180)); expect(parseFloat(frame.style.left)).toBe(Math.min(window.innerWidth - 100, before.left + 30));
-  const resize = frame.querySelector('[aria-label="调整 Blender 窗口大小"]') as HTMLElement; resize.setPointerCapture = mock(() => {});
+  const resize = frame.querySelector('[aria-label="Resize Blender window"]') as HTMLElement; resize.setPointerCapture = mock(() => {});
   const width = parseFloat(frame.style.width);
   await act(async () => { pointer(resize, "pointerdown", 400, 300); pointer(resize, "pointermove", 340, 250); pointer(resize, "pointerup", 340, 250); });
   expect(parseFloat(frame.style.width)).toBe(Math.max(320, width - 60));

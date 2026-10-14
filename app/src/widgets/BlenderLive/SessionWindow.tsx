@@ -15,16 +15,16 @@ export function BlenderSessionWindow({ session, job, notice, index, onClose }: {
     const controller = new AbortController();
     void blenderService<{ url: string }>(`sessions/${session.id}/desktop`, {}, controller.signal).then(data => {
       if (!controller.signal.aborted) { setGrant({ id: session.id, epoch: session.epoch, url: data.url, checkpoint: session.checkpoint }); setError(undefined); }
-    }).catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "连接画面失败"); });
+    }).catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Failed to connect the view"); });
     return () => controller.abort();
   }, [session.id, session.epoch, session.state, session.stopReason, grant?.epoch]);
   const title = job?.label ?? `Blender ${session.id.slice(0, 6)}`;
-  return <BlenderFloatingWindow title={title} status={job?.state === "waiting-user" ? "等待回答" : sessionLabels[session.state]} index={index} onClose={onClose}>
+  return <BlenderFloatingWindow title={title} status={job?.state === "waiting-user" ? "Waiting for an answer" : sessionLabels[session.state]} index={index} onClose={onClose}>
     {grant ? <BlenderDesktopView session={session} initial={grant} /> : <div className="flex min-h-0 flex-1 items-center justify-center bg-black text-xs text-white/70" role="status">
-      {session.state === "ready" ? "正在连接 Blender…" : ["paused", "expired"].includes(session.state) ? "工程已保存，等待继续任务。" : sessionLabels[session.state]}
+      {session.state === "ready" ? "Connecting to Blender…" : ["paused", "expired"].includes(session.state) ? "The project is saved; waiting to continue the task." : sessionLabels[session.state]}
     </div>}
-    {notice && <p role="status" className="absolute inset-x-3 top-2 rounded-lg bg-black/90 p-2 text-xs text-white">今日运行额度不足，正在等待额度恢复。</p>}
-    {job?.state === "waiting-user" && <p role="status" className="absolute inset-x-3 top-2 rounded-lg bg-black/90 p-2 text-xs text-white">任务需要补充信息，请在聊天中告诉 AI。</p>}
+    {notice && <p role="status" className="absolute inset-x-3 top-2 rounded-lg bg-black/90 p-2 text-xs text-white">The daily runtime quota is exhausted; waiting for it to recover.</p>}
+    {job?.state === "waiting-user" && <p role="status" className="absolute inset-x-3 top-2 rounded-lg bg-black/90 p-2 text-xs text-white">The task needs more information; tell the AI in chat.</p>}
     {error && <p role="alert" className="absolute inset-x-3 top-2 rounded-lg bg-black/90 p-2 text-xs text-white">{error}</p>}
   </BlenderFloatingWindow>;
 }

@@ -23,7 +23,7 @@ test("autosave fences the iframe then automatically obtains a fresh desktop gran
   const { container, update } = await render(request);
   expect(container.querySelector("iframe")?.getAttribute("src")).toBe(initial.url);
   await update({ ...session, state: "saving" });
-  expect(container.querySelector("iframe")).toBeNull(); expect(container.textContent).toContain("正在保存工程");
+  expect(container.querySelector("iframe")).toBeNull(); expect(container.textContent).toContain("Saving the project");
   expect(request).toHaveBeenCalledTimes(0);
   await update({ ...session, checkpoint: "checkpoint-a" });
   expect(request).toHaveBeenCalledTimes(1);
@@ -37,7 +37,7 @@ test("checkpoint identity reconnects even when the display poll missed the savin
   const request = mock(() => pending.promise);
   const { container, update } = await render(request);
   await update({ ...session, checkpoint: "checkpoint-a" });
-  expect(container.querySelector("iframe")).toBeNull(); expect(container.textContent).toContain("正在重新连接");
+  expect(container.querySelector("iframe")).toBeNull(); expect(container.textContent).toContain("Reconnecting to the Blender view");
   expect(request).toHaveBeenCalledTimes(1);
   await act(async () => pending.resolve({ url: "https://desktop.example/fresh" }));
   expect(container.querySelector("iframe")?.getAttribute("src")).toBe("https://desktop.example/fresh");

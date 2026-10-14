@@ -198,7 +198,7 @@ export const PLAYCANVAS_SLOTS: Readonly<Record<string, EngineSlotBinding>> = {
 
 /** 该引擎**不支持**的规范通道 → 原因。显式列出，避免"忘了映射"与"引擎没有"混为一谈。 */
 export const PLAYCANVAS_UNSUPPORTED: Readonly<Record<string, string>> = {
-  bumpMap: "PlayCanvas 没有 bump map（只有 normalMap）",
+  bumpMap: "PlayCanvas has no bump map (only normalMap)",
 };
 
 /**

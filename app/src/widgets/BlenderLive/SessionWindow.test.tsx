@@ -26,7 +26,7 @@ test("each open session automatically gets its own stream, close never stops a s
   expect(requests).toEqual(["/api/blender/sessions/session-a/desktop", "/api/blender/sessions/session-b/desktop"]);
   const b = container.querySelector('[aria-label="Blender sessio"]'); expect(b).not.toBeNull();
   const streams = [...container.querySelectorAll("iframe")]; expect(streams.length).toBe(2); expect(streams[0]!.src).not.toBe(streams[1]!.src);
-  await act(async () => (container.querySelector('[aria-label="关闭此 Blender 窗口"]') as HTMLElement).click()); expect(close).toHaveBeenCalledTimes(1);
+  await act(async () => (container.querySelector('[aria-label="Close this Blender window"]') as HTMLElement).click()); expect(close).toHaveBeenCalledTimes(1);
   await update([{ ...session, id: "session-b", updatedAt: 2 }]);
   expect(container.querySelector("iframe")).toBe(streams[1]!); expect(requests.length).toBe(2); expect(requests.some(path => path.endsWith("/end"))).toBe(false);
 });
@@ -47,7 +47,7 @@ test("watching and a saved pause expose no business controls or mutations", asyn
   expect(container.querySelector('[aria-label="Blender 操作"]')).toBeNull();
   expect(container.querySelectorAll("button").length).toBe(3);
   await update([{ ...session, state: "paused", stopReason: "ended", checkpoint: "saved" }]);
-  expect(container.textContent).toContain("工程已保存，等待继续任务。");
+  expect(container.textContent).toContain("The project is saved; waiting to continue the task.");
   expect(container.querySelectorAll("button").length).toBe(3);
   expect(requests).toEqual(["/api/blender/sessions/session-a/desktop"]);
 });

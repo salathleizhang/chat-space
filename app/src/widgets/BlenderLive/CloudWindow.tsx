@@ -26,19 +26,19 @@ export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: 
     const controller = new AbortController();
     void fetch("/api/capabilities", { signal: controller.signal }).then(r => r.json()).then(data => {
       if (!controller.signal.aborted) setEnabled(data.blenderCloud === true);
-    }).catch(() => { if (!controller.signal.aborted) setError("暂时无法连接 Blender 云服务"); });
+    }).catch(() => { if (!controller.signal.aborted) setError("Cannot reach the Blender cloud service right now"); });
     return () => controller.abort();
   }, [projectSlug]);
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    const failed = () => { if (!controller.signal.aborted) setError("暂时无法连接 Blender 云服务"); };
+    const failed = () => { if (!controller.signal.aborted) setError("Cannot reach the Blender cloud service right now"); };
     void refresh(controller.signal, true).catch(failed);
     // New AI sessions appear automatically; polling never reopens a dismissed viewer.
     const timer = setInterval(() => { void refresh(controller.signal).catch(failed); }, 5_000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [projectSlug, enabled, openRequest]);
-  const message = error ?? (enabled === false ? "暂时无法使用云端 Blender。" : loaded && sessions.length === 0 ? "还没有 Blender 任务，在聊天中告诉 AI 你想制作什么。" : undefined);
+  const message = error ?? (enabled === false ? "Cloud Blender is temporarily unavailable." : loaded && sessions.length === 0 ? "No Blender tasks yet; tell the AI in chat what you want to make." : undefined);
   return createPortal(<>
     {message && <Panel role={error ? "alert" : "status"} className="fixed right-4 bottom-20 z-[10000] w-[22rem] max-w-[95vw] p-4 text-sm text-ink">{message}</Panel>}
     {opened.map(({ id, slot }) => {

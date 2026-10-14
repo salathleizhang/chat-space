@@ -76,19 +76,19 @@ export function BlenderFloatingWindow({ title, status, index, onClose, children 
         onDoubleClick={e => { if (!(e.target as HTMLElement).closest("button") && !fullscreen) setMaximized(v => !v); }}>
         {status && <div className="pointer-events-none absolute top-3 left-3.5"><Badge>{status}</Badge></div>}
         <span className="pointer-events-none max-w-[45%] truncate text-sm font-medium text-ink-strong">{title}</span>
-        <Button variant="ghost" size="sm" shape="square" icon={XIcon} aria-label="关闭此 Blender 窗口" title="关闭画面，后台任务继续运行" onClick={onClose} className="absolute top-3 right-3.5" />
+        <Button variant="ghost" size="sm" shape="square" icon={XIcon} aria-label="Close this Blender window" title="Close the view; background tasks keep running" onClick={onClose} className="absolute top-3 right-3.5" />
       </div>
       {error && <p role="alert" className="px-3 text-xs">{error}</p>}
       <div className="relative flex min-h-0 flex-1 flex-col">
         {children}
         <div className="absolute right-3.5 bottom-3 z-20 flex gap-1">
-          <Button variant="ghost" size="sm" shape="square" icon={CornersOutIcon} aria-label={fullscreen ? "退出 Blender 全屏" : "Blender 全屏"}
-            onClick={() => { setError(undefined); void (fullscreen ? document.exitFullscreen() : host.current!.requestFullscreen()).catch(() => setError("浏览器未进入全屏，请使用展开按钮。")); }} />
+          <Button variant="ghost" size="sm" shape="square" icon={CornersOutIcon} aria-label={fullscreen ? "Exit Blender fullscreen" : "Blender fullscreen"}
+            onClick={() => { setError(undefined); void (fullscreen ? document.exitFullscreen() : host.current!.requestFullscreen()).catch(() => setError("The browser did not enter fullscreen; use the expand button.")); }} />
           <Button variant="ghost" size="sm" shape="square" icon={maximized ? ArrowsInIcon : ArrowsOutIcon}
-            aria-label={maximized ? "还原 Blender 窗口" : "最大化 Blender 窗口"} title={maximized ? "还原小窗" : "展开到整个工作区"}
+            aria-label={maximized ? "Restore Blender window" : "Maximize Blender window"} title={maximized ? "Restore small window" : "Expand to the whole workbench"}
             disabled={fullscreen} onClick={() => { focus(); setMaximized(v => !v); }} />
         </div>
-        {!maximized && !fullscreen && <div role="separator" aria-label="调整 Blender 窗口大小" className="absolute right-0 bottom-14 z-20 h-6 w-3 touch-none cursor-nwse-resize text-center text-xs text-ink-faint"
+        {!maximized && !fullscreen && <div role="separator" aria-label="Resize Blender window" className="absolute right-0 bottom-14 z-20 h-6 w-3 touch-none cursor-nwse-resize text-center text-xs text-ink-faint"
           onPointerDown={e => start(e, "resize")} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}><span aria-hidden="true">⋮</span></div>}
       </div>
   </Panel>;

@@ -8,7 +8,7 @@ export function openLocalDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => request.result.createObjectStore("files", { keyPath: "path" });
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => { database = undefined; reject(request.error); };
-    request.onblocked = () => reject(new Error("请关闭旧的 ChatSpace 标签页后重试"));
+    request.onblocked = () => reject(new Error("Close the old ChatSpace tab and try again"));
   });
   return database;
 }
@@ -42,7 +42,7 @@ export async function commitLocal(entries: LocalEntry[], remove: string[] = []):
     for (const path of remove) store.delete(path);
     for (const entry of entries) store.put(entry);
     tx.oncomplete = () => resolve();
-    tx.onabort = () => reject(new Error(tx.error?.name === "QuotaExceededError" ? "本地存储空间不足，请先导出项目备份或清理空间" : tx.error?.message ?? "本地保存失败"));
+    tx.onabort = () => reject(new Error(tx.error?.name === "QuotaExceededError" ? "Not enough local storage; export a project backup or free up space first" : tx.error?.message ?? "Local save failed"));
     tx.onerror = () => {}; // onabort is authoritative; never report saved before commit.
   });
 }
@@ -53,17 +53,17 @@ export class BrowserAssetStorage {
   }
   async readText(path: string) {
     const entry = await localEntry(LogicalPathSchema.parse(path));
-    if (!entry) throw new Error(`本地文件不存在：${path}`);
+    if (!entry) throw new Error(`Local file not found: ${path}`);
     return typeof entry.value === "string" ? entry.value : entry.value.text();
   }
   async readBytes(path: string): Promise<Uint8Array> {
     const entry = await localEntry(LogicalPathSchema.parse(path));
-    if (!entry) throw new Error(`本地文件不存在：${path}`);
+    if (!entry) throw new Error(`Local file not found: ${path}`);
     return typeof entry.value === "string" ? new TextEncoder().encode(entry.value) : new Uint8Array(await entry.value.arrayBuffer());
   }
   async readStream(path: string): Promise<ReadableStream<Uint8Array>> {
     const entry = await localEntry(LogicalPathSchema.parse(path));
-    if (!entry) throw new Error(`本地文件不存在：${path}`);
+    if (!entry) throw new Error(`Local file not found: ${path}`);
     return (typeof entry.value === "string" ? new Blob([entry.value]) : entry.value).stream();
   }
   writeText(path: string, value: string) { return commitLocal([{ path, value, updatedAt: Date.now() }]); }
@@ -81,7 +81,7 @@ export class BrowserAssetStorage {
   async move(source: string, target: string) {
     const files = [...await localEntries(source + "/")];
     const own = await localEntry(source); if (own) files.push(own);
-    if (!files.length) throw new Error(`本地文件不存在：${source}`);
+    if (!files.length) throw new Error(`Local file not found: ${source}`);
     await commitLocal(files.map(entry => ({ ...entry, path: target + entry.path.slice(source.length) })), files.map(entry => entry.path));
   }
 }

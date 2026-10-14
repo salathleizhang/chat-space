@@ -491,14 +491,14 @@ function ProjectDashboard({ projectSlug }: { projectSlug: string }) {
           </h1>
           {/* 文案随状态变，与 ViewportChrome 那套工具栏按钮同一约定（探针也按 aria-label 找）。 */}
           <Tooltip
-            content={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "显示所有 Blender 窗口" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+            content={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "Show all Blender windows" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
             side="bottom"
           >
             <Button
               variant={import.meta.env.VITE_BROWSER_LOCAL !== "1" && blenderLive ? "primary" : "ghost"}
               shape="square"
               size="sm"
-              aria-label={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "显示所有 Blender 窗口" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
+              aria-label={import.meta.env.VITE_BROWSER_LOCAL === "1" ? "Show all Blender windows" : blenderLive ? "Hide Blender live view" : "Show Blender live view"}
               aria-pressed={import.meta.env.VITE_BROWSER_LOCAL === "1" ? undefined : blenderLive}
               onClick={() => { if (import.meta.env.VITE_BROWSER_LOCAL === "1") setBlenderOpenRequest(value => value + 1); else setBlenderLive(value => !value); }}
             >

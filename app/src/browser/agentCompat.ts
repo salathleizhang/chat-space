@@ -22,7 +22,7 @@ export class Agent {
     const response = await fetch(this.options.model.url.replace(/\/$/, "") + "/chat/completions", { method: "POST", signal,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.options.model.apiKey}` },
       body: JSON.stringify({ model: this.options.model.modelId, messages: messagesForApi(messages), stream, ...(tools.length ? { tools } : {}), ...extra }) });
-    if (!response.ok) throw new Error(`AI 请求失败（${response.status}）：${(await response.text()).slice(0, 350)}`);
+    if (!response.ok) throw new Error(`AI request failed (${response.status}): ${(await response.text()).slice(0, 350)}`);
     return response;
   }
   private async *run(input: Message[], options: { abortSignal?: AbortSignal; requestContext: unknown }): AsyncGenerator<any> {
@@ -30,7 +30,7 @@ export class Agent {
     for (let step = 0; step < 12; step++) {
       if (options.abortSignal?.aborted) return;
       const response = await this.call(messages, true, options.abortSignal);
-      if (!response.body) throw new Error("AI 返回空响应");
+      if (!response.body) throw new Error("AI returned an empty response");
       let text = "", buffer = "";
       const calls = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -77,6 +77,6 @@ export class Agent {
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       }
     }
-    throw new Error("本轮工具调用达到上限，请继续对话");
+    throw new Error("Tool-call limit reached for this turn; continue the conversation");
   }
 }

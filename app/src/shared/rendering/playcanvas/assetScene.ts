@@ -32,7 +32,7 @@ export const LOAD_TIMEOUT_MS = 8_000;
 /** 给一个 promise 套超时；原始错误照原样透传，只有"一直没动静"才报超时。 */
 export function withTimeout<T>(promise: Promise<T>, label: string, ms = LOAD_TIMEOUT_MS): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} 超过 ${ms} ms 没有回调（引擎既不成功也不报错）`)), ms);
+    const timer = setTimeout(() => reject(new Error(`${label} did not call back within ${ms} ms (the engine neither succeeded nor reported an error)`)), ms);
     promise.then(
       (value) => { clearTimeout(timer); resolve(value); },
       (error) => { clearTimeout(timer); reject(error); },
@@ -449,12 +449,12 @@ export async function createEngineSceneLoaders(app: unknown): Promise<{
       const loaded = await withTimeout(new Promise<{ resource?: { instantiateRenderEntity(): unknown } }>((resolve, reject) => {
         assets.loadFromUrlAndFilename(url, "model.glb", "container", (err, asset) => {
           // **回调的 err 才是权威**：只监听 error 事件会漏掉失败
-          if (err) reject(new Error(`container 加载失败: ${err instanceof Error ? err.message : JSON.stringify(err)}`));
+          if (err) reject(new Error(`container load failed: ${err instanceof Error ? err.message : JSON.stringify(err)}`));
           else resolve(asset as { resource?: { instantiateRenderEntity(): unknown } });
         });
       }), `container ${url}`);
       const instantiate = loaded.resource?.instantiateRenderEntity?.bind(loaded.resource);
-      if (!instantiate) throw new Error("container 没有 instantiateRenderEntity（GLB 未加载成功）");
+      if (!instantiate) throw new Error("the container has no instantiateRenderEntity (the GLB did not load successfully)");
       const entity = instantiate();
       return {
         entity,
@@ -472,19 +472,19 @@ export async function createEngineSceneLoaders(app: unknown): Promise<{
     async loadCollider(url) {
       const loaded = await withTimeout(new Promise<{ resource?: { renders?: unknown[] } }>((resolve, reject) => {
         assets.loadFromUrlAndFilename(url, "world.glb", "container", (err, asset) => {
-          if (err) reject(new Error(`碰撞网格加载失败: ${err instanceof Error ? err.message : JSON.stringify(err)}`));
+          if (err) reject(new Error(`collider mesh load failed: ${err instanceof Error ? err.message : JSON.stringify(err)}`));
           else resolve(asset as { resource?: { renders?: unknown[] } });
         });
-      }), `碰撞网格 ${url}`);
+      }), `collider mesh ${url}`);
       const renders = loaded.resource?.renders;
-      if (!renders?.length) throw new Error("碰撞网格没有 Render 资产（GLB 未加载成功或没有网格）");
+      if (!renders?.length) throw new Error("the collider mesh has no Render asset (the GLB did not load successfully or has no mesh)");
       const root = new Entity(`world-collider:${url}`);
       const attached = attachStaticMeshCollider(
         renders,
         () => new Entity("collider-mesh"),
         (child) => root.addChild(child as never),
       );
-      if (!attached) throw new Error("碰撞网格没有可用的 Render 资产");
+      if (!attached) throw new Error("the collider mesh has no usable Render asset");
       return { entity: root, dispose: () => root.destroy() };
     },
     async createSplat(url) {

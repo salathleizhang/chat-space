@@ -3,7 +3,7 @@ export const browserLocalEnabled = import.meta.env.VITE_BROWSER_LOCAL === "1";
 let ready: Promise<void> | undefined;
 export function ensureBrowserLocal() {
   ready ??= (async () => {
-    if (!navigator.serviceWorker || !navigator.locks || !globalThis.indexedDB) throw new Error("本地版本需要支持 Service Worker、IndexedDB 和 Web Locks 的现代浏览器");
+    if (!navigator.serviceWorker || !navigator.locks || !globalThis.indexedDB) throw new Error("The local build requires a modern browser that supports Service Worker, IndexedDB, and Web Locks");
     await navigator.serviceWorker.register("/local-files-sw.js", { scope: "/" });
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise<void>(resolve => {
@@ -24,7 +24,7 @@ function workerRequest(input: { path?: string; method?: string; body?: string; j
     const abort = () => { const error = signal?.reason ?? new DOMException("Aborted", "AbortError"); controller?.error(error); reject(error); finish(); };
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) { abort(); return; }
-    worker.onerror = event => { const error = new Error(event.message || "本地运行时加载失败"); controller?.error(error); reject(error); finish(); };
+    worker.onerror = event => { const error = new Error(event.message || "Failed to load the local runtime"); controller?.error(error); reject(error); finish(); };
     channel.port1.onmessage = event => {
       const message = event.data as { status?: number; headers?: [string, string][]; chunk?: Uint8Array; done?: boolean; error?: string };
       if (message.error) { const error = new Error(message.error); controller?.error(error); reject(error); finish(); }
@@ -66,6 +66,6 @@ export async function stageLocalFile(file: Blob): Promise<{ localPath: string }>
   return { localPath };
 }
 export async function localFileBlob(path: string): Promise<Blob> {
-  const entry = await localEntry(path); if (!entry) throw new Error(`本地文件不存在：${path}`);
+  const entry = await localEntry(path); if (!entry) throw new Error(`Local file not found: ${path}`);
   return typeof entry.value === "string" ? new Blob([entry.value]) : entry.value;
 }

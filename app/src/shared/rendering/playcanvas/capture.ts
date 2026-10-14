@@ -53,7 +53,7 @@ export async function captureScenePixels(app: AppBase, options: CaptureSceneOpti
   const camera = (options.camera ?? findFirstCamera(app)) as
     | { renderTarget: unknown; rect: unknown }
     | undefined;
-  if (!camera) throw new Error("captureScenePixels: 场景里没有可用的相机");
+  if (!camera) throw new Error("captureScenePixels: the scene has no usable camera");
 
   /** 尺寸与格式来自这张纹理；`RenderTarget` 自身没有 width/colorFormat 选项。 */
   const colorTexture = new Texture(device, {
