@@ -10,3 +10,4 @@ export { Switch } from "./Switch";
 export { ThinkingIndicator } from "./ThinkingIndicator";
 export { ToolbarButton } from "./ToolbarButton";
 export { Tooltip } from "./Tooltip";
+export { VoiceInputButton } from "./VoiceInputButton";

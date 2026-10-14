@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import {
+  FakeSpeechRecognition,
+  installFakeSpeechRecognition,
+  removeFakeSpeechRecognition,
+} from "../../test-utils";
 import type { LibraryAsset, PlanStep, ProjectPlan } from "../../shared/lib/libraryApi";
 import {
   AgentDock,
@@ -1467,5 +1472,82 @@ describe("AgentDock 历史滚动", () => {
     } finally {
       stub.restore();
     }
+  });
+});
+
+/**
+ * 语音输入在这个组件里的**落位契约**：麦克风必须在发送按钮**左边**（用户指定的位置），
+ * 而且它只往输入框里写字——一轮生成会花钱，不能由识别结果自己发出去。
+ * 行为本身（会话、错误、快捷键闸门）在 `shared/lib/useVoiceInput.test.ts` 与
+ * `shared/ui/VoiceInputButton.test.tsx` 里测，这里只盯"接上了没有、接在哪儿"。
+ *
+ * 这里是"DOM 节点进断言"那个坑的案发现场：最初写成 `expect(mic.parentElement).toBe(send.parentElement)`，
+ * 断言失败时 bun 去格式化节点图，整个进程 **SIGTRAP、一行输出都没有**。
+ * 现在 preload 给 `Node.prototype` 挂了 inspect 钩子（`src/test-dom-inspect.ts`），
+ * 失败会打印成 `Expected: <span.liquid-metal-send-button…> / Received: <span.inline-flex>` 这样一行。
+ * 下面的判据仍然比**下标**：它表达的意图（分支相邻）比"两个节点相等"精确。
+ */
+describe("AgentDock 语音输入", () => {
+  const micOf = (container: HTMLElement) =>
+    container.querySelector<HTMLButtonElement>('button[aria-label="Start voice input"]')!;
+  const sendOf = (container: HTMLElement) =>
+    container.querySelector<HTMLButtonElement>('button[aria-label="Send instructions"]')!;
+  /**
+   * 操作簇：最近的、同时装着麦克风和发送键的祖先，返回它两个分支的下标。
+   * **不数祖先层数**——VoiceInputButton 自己有根 div、Tooltip 还有一层锚点 span，
+   * 发送键在流式期间又会多套一层 Tooltip，写死"往上两级"必然错。
+   * 判据落在"分支相邻"上：麦克风那一支紧挨在发送键那一支前面，且簇里只有这两支。
+   */
+  const branchesOf = (mic: HTMLButtonElement, peer: Element) => {
+    let cluster: Element | null = mic.parentElement;
+    while (cluster && !cluster.contains(peer)) cluster = cluster.parentElement;
+    const children = [...(cluster?.children ?? [])];
+    return {
+      size: children.length,
+      micIndex: children.findIndex((child) => child.contains(mic)),
+      peerIndex: children.findIndex((child) => child.contains(peer)),
+    };
+  };
+
+  beforeEach(() => installFakeSpeechRecognition());
+  afterEach(() => removeFakeSpeechRecognition());
+
+  test("麦克风紧挨在发送按钮左边（同一个操作簇、分支相邻）", async () => {
+    const { container } = await render();
+    const mic = micOf(container);
+    const send = sendOf(container);
+
+    const branches = branchesOf(mic, send);
+    expect(branches.size).toBe(2);
+    expect(branches.micIndex).toBe(0);
+    expect(branches.peerIndex).toBe(1);
+  });
+
+  test("说出来的字落在输入框里，但不会自己发出去", async () => {
+    const { container, onSend } = await render();
+    const mic = micOf(container);
+
+    await act(async () => mic.click());
+    await act(async () =>
+      FakeSpeechRecognition.created[0]!.emit({ text: "生成一把椅子", final: true }),
+    );
+
+    expect(inputOf(container).value).toBe("生成一把椅子");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test('流式生成期间麦克风仍然可用，并且排在"停止"左边', async () => {
+    const { container } = await render({
+      streaming: true,
+      activity: { state: "working", message: "Generating" },
+    });
+    const mic = micOf(container);
+    const stop = container.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]')!;
+
+    expect(mic.disabled).toBe(false);
+    const branches = branchesOf(mic, stop);
+    expect(branches.size).toBe(2);
+    expect(branches.micIndex).toBe(0);
+    expect(branches.peerIndex).toBe(1);
   });
 });
