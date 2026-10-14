@@ -1,10 +1,8 @@
 import { CubeIcon } from "@phosphor-icons/react/Cube";
-import { CubeFocusIcon } from "@phosphor-icons/react/CubeFocus";
 import { GlobeHemisphereWestIcon } from "@phosphor-icons/react/GlobeHemisphereWest";
 import { ImageSquareIcon } from "@phosphor-icons/react/ImageSquare";
 import { ListChecksIcon } from "@phosphor-icons/react/ListChecks";
 import { memo } from "react";
-import { useNavigate } from "react-router-dom";
 import { Panel, ToolbarButton, Tooltip } from "../../shared/ui";
 import { SettingsDialog } from "../SettingsDialog";
 
@@ -37,18 +35,14 @@ function DottedDivider() {
 }
 
 export const Sidebar = memo(function Sidebar({ active, onChange }: SidebarProps) {
-  const navigate = useNavigate();
-
   return (
     <Panel className="flex items-center gap-1 p-1 rounded-full!">
-      <Tooltip content="Back to projects" side="top">
-        <ToolbarButton
-          icon={CubeFocusIcon}
-          aria-label="Back to projects"
-          onClick={() => navigate("/app")}
-        />
-      </Tooltip>
-      <DottedDivider />
+      {/*
+        **没有"返回项目列表"那一颗**（曾经是第一颗 `CubeFocusIcon`）：外壳顶部居中的
+        那颗 `<Button aria-label="Leave current scene">` 就是同一个动作（`navigate("/app")`），
+        两处并排只是把"离开场景"画了两遍（2026-10-14 用户要求删掉下面这颗）。
+        这里因此也不再需要 `useNavigate` / 首枚 `DottedDivider`。
+      */}
       {SECTIONS.map(({ id, label, icon }) => (
         <Tooltip key={id} content={label} side="top">
           <ToolbarButton
