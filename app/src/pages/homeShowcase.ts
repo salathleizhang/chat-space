@@ -1,16 +1,16 @@
 /**
- * 首页「精选世界」与「产品特性」两段的全部文案与素材地址。
+ * 首页「精选世界」与「产品特性」两段的英文文案与共享素材地址。
  *
  * **纯数据、零 import**：编辑层冻结集里的 `pages/*.ts` 不得传递依赖渲染库
  * （`editingLayerBoundary.test.ts` 规则 B），所以这里只有类型和字面量。
  *
- * 改文案 / 换素材只动这一个文件：
+ * 英文文案 / 共享素材在这里维护；中文文案与浏览器语言判定见 `homeCopy.ts`：
  *
  * - `SHOWCASE_WORLDS` —— 搜索框下面的 4 张世界缩略图。`projectSlug` 有值就是真实世界，
  *   点击进入该世界的项目工作台（视口会把该世界作为当前世界渲染）；缺省表示占位项，
  *   点击回到项目列表。**把真实 slug 填上就接上了**，别的地方都不用改。
  * - `PRODUCT_FEATURES` —— 特性按顺序左右交替排版。已提供的 GIF 录屏转成
- *   `.mp4` 接在 `video` 上，`image` 是同一录屏的首帧 poster；其余项仍用静态图。
+ *   `.mp4` 接在 `video` 上，`image` 保留原始预览；默认展示由 `cover` 指定的海报素材。
  */
 
 export interface ShowcaseWorld {
@@ -33,10 +33,12 @@ export interface ProductFeature {
   title: string;
   /** 标题下面那行小字 */
   tagline: string;
-  body: string;
-  bullets: string[];
-  /** 静态预览图；有录屏时是同一录屏的首帧 poster */
+  /** 原始预览素材存档；有录屏时是同一录屏的首帧，展示封面由 cover 指定 */
   image: string;
+  /** 天空静态封面上叠加的海报素材；录屏只在交互时播放。 */
+  cover: "composer" | "models" | "scene" | "hands" | "providers" | "texture" | "batch";
+  /** 可按功能覆盖封面图，保留同一套天空底图与版式。 */
+  coverImage?: string;
   /** 动态素材（mp4/webm）。填上后组件优先渲染它，无需改组件 */
   video?: string;
 }
@@ -86,116 +88,74 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   {
     id: "model-generation",
     title: "Model generation & editing",
-    tagline: "Text or image in, textured mesh out.",
-    body: "Describe a prop, or drop in a reference photo. ChatSpace generates the geometry, materials and textures, then puts the asset straight into your scene. Select a model and describe the changes you want to make.",
-    bullets: [
-      "Started from a prompt or a reference image",
-      "Textured materials assigned on arrival",
-      "Lands in the shared scene, ready to place",
-    ],
+    tagline: "Text or image in, textured mesh out",
     image: "/features/model-generation.jpg",
+    cover: "composer",
     video: "/features/model-generation.mp4",
   },
   {
     id: "world-generation",
     title: "World generation",
-    tagline: "Turn a reference into a world you can build in.",
-    body: "Start from an image or a description to generate an environment. Ask for the furniture separately, then arrange the generated models inside your world.",
-    bullets: [
-      "Start from an image or a prompt",
-      "Generate the environment and individual models",
-      "Explore and arrange everything in one workspace",
-    ],
+    tagline: "Turn a reference into a world you can build in",
     image: "/features/world-generation.jpg",
+    cover: "scene",
+    coverImage: "/worlds/lounge.webp",
     video: "/features/world-generation.mp4",
   },
   {
     id: "batch-editing",
     title: "Batch generation & editing",
-    tagline: "Generate a whole set, then edit it together.",
-    body: "Describe several models in one request and let ChatSpace generate the set. Multi-select assets to move, rotate, scale or re-material them together, with one undo step for each batch transform.",
-    bullets: [
-      "Multi-select transform on one shared gizmo",
-      "One undo step per batch",
-      "Generate multiple models in one request",
-    ],
+    tagline: "Generate a whole set, then edit it together",
     image: "/features/batch-editing.jpg",
+    cover: "batch",
     video: "/features/batch-editing.mp4",
   },
   {
     id: "auto-retopology",
     title: "Automatic retopology",
-    tagline: "Editable topology from a dense scan.",
-    body: "Turn a photogrammetry-grade mesh into a clean cage you can rig, animate and UV — without a manual retopo pass in another tool.",
-    bullets: [
-      "Clean, animation-ready edge flow",
-      "UVs and materials carry over",
-      "Replaces the heavy source mesh in place",
-    ],
+    tagline: "Editable topology from a dense scan",
     image: "/features/auto-retopology.jpg",
+    cover: "models",
+    coverImage: "/landing/retopology.png",
   },
   {
     id: "auto-animation",
     title: "Automatic animation",
-    tagline: "Rig it, then just ask for the motion.",
-    body: "Skeletons are inferred from the mesh, and animation is generated from plain language — walk cycles, idles, one-off gestures — then previewed in the viewport.",
-    bullets: [
-      "Skeletons inferred from geometry",
-      "Describe the motion in words",
-      "Re-roll until it reads the way you want",
-    ],
+    tagline: "Rig it, then just ask for the motion",
     image: "/features/auto-animation.jpg",
+    cover: "models",
+    coverImage: "/landing/animation.png",
   },
   {
     id: "shader-editing",
     title: "Texture & shader editing",
-    tagline: "Materials you can actually author.",
-    body: "Inspect and edit the material graph of any asset: swap texture channels, drive roughness and metalness, or author your own node setup and watch it update live.",
-    bullets: [
-      "Per-channel texture overrides",
-      "Live viewport preview while you edit",
-      "Wireframe and shading modes for inspection",
-    ],
+    tagline: "Materials you can actually author",
     image: "/features/shader-editing.jpg",
+    cover: "texture",
     video: "/features/shader-editing.mp4",
   },
   {
     id: "remote-blender",
     title: "Remote Blender control",
-    tagline: "A Blender machine you never have to open.",
-    body: "Run Blender on a remote host and drive it from the workspace — by hand or by the agent. Watch the live viewport stream while a scripted operation is running.",
-    bullets: [
-      "Remote session with a live viewport",
-      "Scriptable by the agent, auditable by you",
-      "Nothing to install on your own machine",
-    ],
+    tagline: "A Blender machine you never have to open",
     image: "/features/remote-blender.jpg",
+    cover: "models",
     video: "/features/remote-blender.mp4",
   },
   {
     id: "first-person-editing",
     title: "First-person editing",
-    tagline: "Step into your scene and place things directly.",
-    body: "Explore the scene at eye level with mouse and keyboard controls. Grab a model, move it into place and release it; its placement is saved once it settles.",
-    bullets: [
-      "Mouse look and WASD movement",
-      "Grab and reposition models from inside the scene",
-      "Settled placements saved to undo history",
-    ],
+    tagline: "Step into your scene and place things directly",
     image: "/features/first-person-editing.jpg",
+    cover: "scene",
     video: "/features/first-person-editing.mp4",
   },
   {
     id: "gesture-control",
     title: "Gesture control",
-    tagline: "Reach in and move things with your hands.",
-    body: "In first-person mode, grab and place assets with tracked hands or VR controllers. Grabbing selects, releasing drops, and the new placement is saved once the object settles.",
-    bullets: [
-      "Hand and controller tracking",
-      "Grab and click share one selection model",
-      "Settles, then commits to undo history",
-    ],
+    tagline: "Reach in and move things with your hands",
     image: "/features/gesture-control.jpg",
+    cover: "hands",
     video: "/features/gesture-control.mp4",
   },
 ];

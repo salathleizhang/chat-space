@@ -11,13 +11,19 @@ import { ACCEPTED_IMAGE_TYPES, imageFilesFromClipboard } from "../shared/lib/ima
 import { createProject } from "../shared/lib/libraryApi";
 import { Button, Input, Panel, Tooltip } from "../shared/ui";
 import { FeatureShowcase, WorldShowcase } from "./HomeSections";
-import { PRODUCT_FEATURES, SHOWCASE_WORLDS, type ShowcaseWorld } from "./homeShowcase";
+import type { ShowcaseWorld } from "./homeShowcase";
+import { browserHomeLocale, HOME_ACTIONS, HOME_COPY, HOME_FEATURES, HOME_WORLDS, savedHomeLocale, saveHomeLocale, type HomeLocale } from "./homeCopy";
+import "./home.css";
 
-const MODEL_ACTIONS = ["Model", "Unwrap", "UV-map", "Texture", "Skin", "Rig"] as const;
 const WORD_DURATION_MS = 2400;
 
 export function HomePage() {
   const navigate = useNavigate();
+  const [browserLocale, setBrowserLocale] = useState(browserHomeLocale);
+  const [languagePreference, setLanguagePreference] = useState(savedHomeLocale);
+  const locale = languagePreference ?? browserLocale;
+  const copy = HOME_COPY[locale];
+  const actions = HOME_ACTIONS[locale];
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +33,12 @@ export function HomePage() {
   const [actionIndex, setActionIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
+
+  useEffect(() => {
+    const syncLanguage = () => setBrowserLocale(browserHomeLocale());
+    window.addEventListener("languagechange", syncLanguage);
+    return () => window.removeEventListener("languagechange", syncLanguage);
+  }, []);
 
   useEffect(() => {
     const urls = imageFiles.map((file) => URL.createObjectURL(file));
@@ -43,7 +55,7 @@ export function HomePage() {
         setActionIndex(0);
       } else {
         interval = window.setInterval(
-          () => setActionIndex((index) => (index + 1) % MODEL_ACTIONS.length),
+          () => setActionIndex((index) => (index + 1) % actions.length),
           WORD_DURATION_MS,
         );
       }
@@ -55,14 +67,20 @@ export function HomePage() {
       window.clearInterval(interval);
       reducedMotion.removeEventListener("change", syncMotionPreference);
     };
-  }, []);
+  }, [actions.length]);
+
+  function selectLanguage(next: HomeLocale) {
+    setLanguagePreference(next);
+    setActionIndex(0);
+    saveHomeLocale(next);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const projectName =
       name.trim() ||
       (imageFiles.length > 0
-        ? imageFiles[0]!.name.replace(/\.[^.]+$/, "").trim().slice(0, 120) || "Image project"
+        ? imageFiles[0]!.name.replace(/\.[^.]+$/, "").trim().slice(0, 120) || copy.imageProject
         : "");
     if (!projectName || creating) return;
 
@@ -117,50 +135,56 @@ export function HomePage() {
   }
 
   return (
-    <div className="h-full w-full overflow-y-auto bg-project-hub-canvas text-project-hub-ink">
-      <div className="pointer-events-none fixed inset-x-0 top-3 z-10 flex justify-center">
-        <Panel
-          variant="liquid"
-          className="animate-chrome-enter-center pointer-events-auto flex w-[min(56rem,calc(100%-2rem))] items-center justify-between rounded-full! py-2 pr-2 pl-5"
-        >
-          <div className="flex items-center gap-2">
-            <CubeFocusIcon size={24} weight="duotone" className="text-ink-strong" />
-            <span className="text-sm font-medium text-ink-strong">ChatSpace</span>
-          </div>
-          <nav className="flex items-center gap-1" aria-label="Main navigation">
-            <Button variant="ghost" onClick={() => navigate("/app")}>Projects</Button>
+    <div className="home-landing h-full w-full overflow-y-auto" lang={locale}>
+      <header className="home-header">
+        <div className="home-brand">
+          <CubeFocusIcon size={26} weight="bold" />
+          <span>ChatSpace</span>
+        </div>
+        <nav className="home-nav flex items-center gap-1" aria-label={copy.mainNavigation}>
+          <div className="home-language-switch" role="group" aria-label={copy.languageSelection}>
             <Button
-              variant="primary"
-              icon={FolderSimplePlusIcon}
-              onClick={() => navigate("/app?create=1")}
-            >
-              Create project
-            </Button>
-          </nav>
-        </Panel>
-      </div>
-
-      <main className="animate-chrome-enter mx-auto w-full max-w-5xl px-6 pt-32 pb-16">
-        <section className="mx-auto flex max-w-3xl flex-col items-center text-center" aria-labelledby="home-title">
-          <h1
-            id="home-title"
-            aria-label="Say it, Model it"
-            className="text-3xl font-semibold tracking-tight text-project-hub-ink-strong sm:text-4xl"
+              variant="ghost"
+              className="home-language-button"
+              lang="zh-CN"
+              aria-pressed={locale === "zh-CN"}
+              onClick={() => selectLanguage("zh-CN")}
+            >中文</Button>
+            <Button
+              variant="ghost"
+              className="home-language-button"
+              lang="en"
+              aria-pressed={locale === "en"}
+              onClick={() => selectLanguage("en")}
+            >EN</Button>
+          </div>
+          <Button variant="ghost" className="home-nav-projects" onClick={() => navigate("/app")}>{copy.projects}</Button>
+          <Button
+            variant="primary"
+            icon={FolderSimplePlusIcon}
+            className="home-nav-create"
+            onClick={() => navigate("/app?create=1")}
           >
-            Say it,{" "}
-            <span className="whitespace-nowrap" aria-hidden="true">
-              <span key={actionIndex} className="home-rotating-word inline-block">
-                {MODEL_ACTIONS[actionIndex]}
-              </span>{" "}
-              it
-            </span>
-          </h1>
-          <p className="mt-3 text-sm text-project-hub-ink-subtle">
-            Name your project or add an image to start building in ChatSpace.
-          </p>
+            {copy.createProject}
+          </Button>
+        </nav>
+      </header>
+
+      <main className="home-main">
+        <section className="home-hero" aria-labelledby="home-title">
+          <h1 id="home-title" className="home-wordmark">ChatSpace</h1>
+          <img
+            className="home-mascot"
+            src="/landing/mascot.png"
+            alt={copy.mascotAlt}
+            width={3367}
+            height={1846}
+            fetchPriority="high"
+            draggable={false}
+          />
 
           <Panel
-            className="relative mt-9 w-full px-3 py-2"
+            className="home-composer relative w-full"
             onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
             onDragLeave={() => {
@@ -171,7 +195,7 @@ export function HomePage() {
           >
             {isDragOver && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-fill-active text-sm text-ink">
-                Drop to upload image
+                {copy.dropImage}
               </div>
             )}
             {imageFiles.length > 0 && (
@@ -191,7 +215,7 @@ export function HomePage() {
                         shape="circle"
                         size="xs"
                         icon={XIcon}
-                        aria-label={`Remove image ${file.name}`}
+                        aria-label={copy.removeImage(file.name)}
                         className="absolute top-0 right-0"
                         disabled={creating}
                         onClick={() => setImageFiles((current) => current.filter((_, i) => i !== index))}
@@ -199,12 +223,12 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
-                <span className="min-w-0 text-xs text-project-hub-ink-subtle">
-                  {imageFiles.length} {imageFiles.length === 1 ? "image" : "images"} will be sent after the project is created.
+                <span className="min-w-0 text-xs text-ink-subtle">
+                  {copy.imagesQueued(imageFiles.length)}
                 </span>
               </div>
             )}
-            <form onSubmit={(event) => void submit(event)} className="flex items-center gap-2">
+            <form onSubmit={(event) => void submit(event)} className="home-create-form flex items-center gap-2">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -218,13 +242,13 @@ export function HomePage() {
                   event.target.value = "";
                 }}
               />
-              <Tooltip content="Upload an image to start creating">
+              <Tooltip content={copy.uploadHint}>
                 <Button
                   variant="secondary"
                   shape="circle"
                   size="lg"
                   icon={PlusIcon}
-                  aria-label="Upload image"
+                  aria-label={copy.uploadImage}
                   className="control-edge-lit shrink-0 border border-line hover:border-ink-faint"
                   disabled={creating}
                   onClick={() => fileInputRef.current?.click()}
@@ -235,8 +259,8 @@ export function HomePage() {
                 variant="plain"
                 size="lg"
                 className="min-w-0 flex-1"
-                aria-label="Project name"
-                placeholder={imageFiles.length > 0 ? "Project name (optional)" : "Name your new project…"}
+                aria-label={copy.projectName}
+                placeholder={imageFiles.length > 0 ? copy.projectNameOptional : copy.projectPlaceholder}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 onPaste={handlePaste}
@@ -250,39 +274,56 @@ export function HomePage() {
                 shape="circle"
                 size="lg"
                 icon={ArrowRightIcon}
-                className="shrink-0"
+                className="home-submit shrink-0"
                 disabled={(!name.trim() && imageFiles.length === 0) || creating}
-                aria-label={creating ? "Creating project" : imageFiles.length > 0 ? "Create project and send images" : "Create project from name"}
+                aria-label={creating ? copy.creatingProject : imageFiles.length > 0 ? copy.createWithImages : copy.createFromName}
               />
             </form>
           </Panel>
           {error ? (
             <p role="alert" className="mt-3 text-sm text-signal">{error}</p>
           ) : (
-            <p className="mt-3 text-xs text-project-hub-ink-faint">
-              {imageFiles.length > 0 ? "Press Enter to create your project and send the images" : "Press Enter to create your project"}
+            <p className="home-enter-hint">
+              {imageFiles.length > 0 ? copy.enterWithImages : copy.enterToCreate}
             </p>
           )}
+          <p className="home-project-hint">
+            {copy.projectHint}
+          </p>
+
+          <div className="home-manifesto">
+            <div className="home-manifesto-copy">
+              <h2 aria-label={copy.heroAccessible}>
+                {copy.heroPrefix}<br />
+                <span className="whitespace-nowrap" aria-hidden="true">
+                  {locale === "zh-CN" ? "就会" : " "}
+                  <span key={`${locale}-${actionIndex}`} className="home-rotating-word inline-block">{actions[actionIndex]}</span>{copy.heroSuffix}
+                </span>
+              </h2>
+              {copy.heroTagline && <p className="home-tagline">{copy.heroTagline}</p>}
+            </div>
+          </div>
         </section>
 
         <WorldShowcase
-          worlds={SHOWCASE_WORLDS}
+          worlds={HOME_WORLDS[locale]}
+          copy={copy}
           onOpenWorld={openWorld}
           onIntent={() => void preloadAppDashboard()}
         />
 
-        <FeatureShowcase features={PRODUCT_FEATURES} />
+        <FeatureShowcase features={HOME_FEATURES[locale]} copy={copy} />
 
-        <section className="mt-24" aria-labelledby="cases-title">
-          <div className="mb-6 flex items-baseline justify-between">
-            <h2 id="cases-title" className="text-sm font-medium text-project-hub-ink-strong">Cases</h2>
-            <span className="text-xs text-project-hub-ink-subtle">0 total</span>
+        <section className="home-cases" aria-labelledby="cases-title">
+          <div className="home-section-heading">
+            <h2 id="cases-title">{copy.casesTitle}</h2>
+            <span>{copy.casesCount}</span>
           </div>
           <div className="flex flex-col items-center gap-3 py-20 text-center">
             <SquaresFourIcon size={36} weight="thin" className="text-project-hub-ink-faint" />
-            <span className="text-sm text-project-hub-ink-subtle">No cases yet</span>
+            <span className="text-sm text-project-hub-ink-subtle">{copy.noCases}</span>
             <span className="text-xs text-project-hub-ink-faint">
-              Cases made with ChatSpace will appear here when they are added.
+              {copy.casesHint}
             </span>
           </div>
         </section>
