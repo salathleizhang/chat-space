@@ -108,9 +108,13 @@ describe("useAgentChat 服务端凭证", () => {
 
     expect(streamChat).toHaveBeenCalledTimes(1);
     expect(streamChat.mock.calls[0]![2]).toEqual({
-      provider: undefined,
+      provider: "volcengine",
       baseUrl: undefined,
-      model: undefined,
+      model: "deepseek-v4-1-flash-260910",
+    });
+    expect(streamChat.mock.calls[0]![4]).toMatchObject({
+      threeDModel: "tripo-p2",
+      imageGenerateModel: "seedream-5",
     });
 
     await h.unmount();
@@ -131,9 +135,9 @@ describe("useAgentChat 服务端凭证", () => {
     await act(async () => h.result.current.send("生成一把椅子"));
 
     expect(streamChat.mock.calls[0]![2]).toEqual({
-      provider: undefined,
+      provider: "volcengine",
       baseUrl: undefined,
-      model: undefined,
+      model: "deepseek-v4-1-flash-260910",
     });
     expect(Object.keys(streamChat.mock.calls[0]![4] ?? {}).some((key) => key.endsWith("ApiKey"))).toBe(false);
 

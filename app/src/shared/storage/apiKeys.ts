@@ -8,6 +8,11 @@ const LEGACY_THREE_D_PROVIDER_KEY = "chatspace.threeDProviderSettings:v1";
 const THREE_D_MODEL_SETTINGS_KEY = "chatspace.threeDModelSettings:v1";
 const IMAGE_SETTINGS_KEY = "chatspace.imageGenerateModelSettings:v1";
 
+// 未保存偏好时使用编辑器默认组合；显式选择的 Auto（空字符串）仍然保留。
+const DEFAULT_LLM_MODEL = "deepseek-v4-1-flash-260910";
+const DEFAULT_THREE_D_MODEL = "tripo-p2";
+const DEFAULT_IMAGE_MODEL = "seedream-5";
+
 function readObject(key: string): Record<string, unknown> | null {
   try {
     const legacyKey = key.replace(/^chatspace\./, "gabo.");
@@ -73,7 +78,7 @@ function savedLlmModel(model: unknown): string {
 
 export function loadLlmSettings(): LlmSettings {
   const saved = readObject(LLM_SETTINGS_KEY);
-  const model = savedLlmModel(saved?.model);
+  const model = savedLlmModel(saved?.model ?? DEFAULT_LLM_MODEL);
   return { provider: model ? "volcengine" : "", baseUrl: "", model };
 }
 
@@ -118,8 +123,9 @@ function savedThreeDModel(model: unknown): string {
 
 export function loadThreeDModelSettings(): ThreeDModelSettings {
   const saved = readObject(THREE_D_MODEL_SETTINGS_KEY);
-  if (saved) return { model: savedThreeDModel(saved.model) };
+  if (saved) return { model: savedThreeDModel(saved.model ?? DEFAULT_THREE_D_MODEL) };
   const legacy = readObject(LEGACY_THREE_D_PROVIDER_KEY)?.provider;
+  if (legacy == null) return { model: DEFAULT_THREE_D_MODEL };
   return {
     model: savedThreeDModel(
       typeof legacy === "string" ? LEGACY_PROVIDER_MODELS[legacy] ?? "" : "",
@@ -142,7 +148,7 @@ export const IMAGE_GENERATE_MODEL_PRESETS = [
 
 export function loadImageGenerateModelSettings(): ImageGenerateModelSettings {
   const saved = readObject(IMAGE_SETTINGS_KEY);
-  const model = saved?.model;
+  const model = saved?.model ?? DEFAULT_IMAGE_MODEL;
   return {
     model:
       typeof model === "string" &&

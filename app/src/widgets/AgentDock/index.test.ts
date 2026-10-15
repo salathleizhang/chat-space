@@ -1296,15 +1296,18 @@ describe("AgentDock LLM 能力筛选", () => {
 });
 
 describe("AgentDock 图片生成模型选择", () => {
-  test("LLM、3D 和图片模型默认选项统一显示 Auto", async () => {
+  test("未保存偏好时显示 DeepSeek、Tripo P2 和 Seedream 5 默认组合", async () => {
+    globalThis.fetch = mock(async () =>
+      Response.json({ llmProviders: ["volcengine"] }),
+    ) as unknown as typeof fetch;
     const { container } = await render();
-    for (const label of [
-      "Choose chat model",
-      "Choose 3D generation model",
-      "Choose image generation model",
+    for (const [label, model] of [
+      ["Choose chat model", "DeepSeek V4.1 Flash"],
+      ["Choose 3D generation model", "Tripo P2"],
+      ["Choose image generation model", "Seedream 5.0"],
     ]) {
       const select = container.querySelector(`button[aria-label="${label}"]`);
-      expect(select?.textContent?.trim()).toBe("Auto");
+      expect(select?.textContent?.trim()).toBe(model);
     }
   });
 
@@ -1315,7 +1318,7 @@ describe("AgentDock 图片生成模型选择", () => {
     ) as HTMLButtonElement;
 
     expect(imageModelSelect).not.toBeNull();
-    expect(imageModelSelect.textContent).toContain("Auto");
+    expect(imageModelSelect.textContent).toContain("Seedream 5.0");
 
     await act(async () => imageModelSelect.click());
     expect(document.body.textContent).toContain("Seedream 4.5");

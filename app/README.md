@@ -12,6 +12,8 @@ bun run start
 
 默认连接 `http://127.0.0.1:3901` 的本机 chat 服务；可用 `VITE_CHAT_URL` 覆盖。
 
+编辑器未保存模型偏好时，默认选择 DeepSeek V4.1 Flash（聊天）、Tripo P2（3D）和 Seedream 5.0（图片）。手动选择会在浏览器中保存，再次进入时沿用，包括显式选择的 Auto；聊天模型仍按服务端已激活的供应商筛选。
+
 3D 渲染仅使用原生 WebGPU，需要 HTTPS/localhost 和可用的 GPU adapter/device。依赖升级后重启 Vite，必要时用 `bun run dev --force` 重建预打包缓存，避免混用旧版 Three.js。
 
 渲染层固定为 Three.js 0.186.1、Gaussian Splat Lite 1.1.5。Splat 与 collider GLB 使用同一份世界变换；collider 当前是**不可拾取、也不绘制的地形参照层**——`WorldColliderMesh.tsx` 的 `COLLIDER_VISIBLE = false` 让 three 遍历时整棵子树早退，一次绘制都不提交（**100% 透明**，不是 `opacity: 0`；GLB 仍照旧加载并挂在场景里）。想让地形参照显示回来就把那个常量翻成 `true`，用的是半透明实体材质（浓淡旋钮 `COLLIDER_OPACITY`）。它不是新增的物理碰撞引擎。第三方许可证及 NOTICE 随构建发布在 `/licenses/gaussian-splat-lite/`。
