@@ -1,4 +1,3 @@
-import { CubeFocusIcon } from "@phosphor-icons/react/CubeFocus";
 import { FolderSimplePlusIcon } from "@phosphor-icons/react/FolderSimplePlus";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -240,10 +239,7 @@ export function ProjectHubPage() {
           className="sky-header-glass sky-glass"
           aria-hidden="true"
         />
-        <div className="sky-brand">
-          <CubeFocusIcon size={24} weight="duotone" className="text-ink-strong" />
-          <span>ChatSpace</span>
-        </div>
+        <div className="sky-brand">ChatSpace</div>
         <div className="flex items-center gap-2">
           <CreateProjectDialog />
         </div>

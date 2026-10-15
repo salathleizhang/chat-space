@@ -1,5 +1,4 @@
 import { ArrowRightIcon } from "@phosphor-icons/react/ArrowRight";
-import { CubeFocusIcon } from "@phosphor-icons/react/CubeFocus";
 import { FolderSimplePlusIcon } from "@phosphor-icons/react/FolderSimplePlus";
 import { PlusIcon } from "@phosphor-icons/react/Plus";
 import { SquaresFourIcon } from "@phosphor-icons/react/SquaresFour";
@@ -139,7 +138,6 @@ export function HomePage() {
       <header className="home-header sky-header">
         <Panel variant="liquid" className="home-header-glass sky-header-glass sky-glass" aria-hidden="true" />
         <div className="home-brand sky-brand">
-          <CubeFocusIcon size={26} weight="bold" />
           <span>ChatSpace</span>
         </div>
         <nav className="home-nav flex items-center gap-1" aria-label={copy.mainNavigation}>
