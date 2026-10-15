@@ -308,6 +308,33 @@ export async function listSceneJobs(
   return jobs.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+/**
+ * 当前该读写的 SceneJob：给了 jobId 且它确实存在就用它；否则用与当前 SceneSpec
+ * revision 匹配的那一个；再不行取最近创建的。返回 undefined = 这个项目还没有
+ * 任何 SceneJob（读取方要区分"没有"和"坏了"，由调用方决定是报错还是返回 null）。
+ *
+ * jobId 与参考图分析的 runId 是同一类东西——**服务端拥有的不透明标识符**。
+ * 它只该是可选指向手段：解析必须能由服务端从项目状态独立完成，否则上下文一压缩、
+ * 会话一重开，模型就只能编一个 UUID 出来（事故见 referenceAnalysis 的 runId 注释）。
+ */
+export async function resolveCurrentSceneJob(
+  storage: AssetStorage,
+  projectSlug: string,
+  jobId?: string,
+): Promise<SceneJob | undefined> {
+  const jobs = await listSceneJobs(storage, projectSlug);
+  if (jobId) {
+    const exact = jobs.find((job) => job.id === jobId);
+    if (exact) return exact;
+  }
+  const spec = await readSceneSpec(storage, projectSlug);
+  if (spec) {
+    const matching = jobs.find((job) => job.specRevision === spec.revision);
+    if (matching) return matching;
+  }
+  return jobs[0];
+}
+
 export function mutateSceneJob(
   storage: AssetStorage,
   projectSlug: string,

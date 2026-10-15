@@ -15,7 +15,7 @@ import {
   setAssetStorage,
 } from "../../services/assetStorage";
 import { clearTasks, getTask } from "../../services/tasks";
-import { readSceneJob } from "../../services/sceneJobs";
+import { readSceneJob, readSceneSpec } from "../../services/sceneJobs";
 import { createAndStartSceneJob } from "../../services/sceneJobRunner";
 import { buildRequestContext } from "../../services/workflowRuns";
 import { createProject } from "./projectTools";
@@ -24,6 +24,7 @@ import {
   runAnalyzeReference,
   runConfirmReferenceAssets,
 } from "./referenceAnalysis";
+import { startSceneJobTool } from "./sceneJobOps";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-oneshot-tool-test-"));
 const storage = new LocalFileStorage(root);
@@ -271,12 +272,127 @@ describe("analyze-reference / 场景确认服务", () => {
     });
     const first = await runConfirmReferenceAssets("ost", { runId: started.runId });
     const repeated = await runConfirmReferenceAssets("ost", { runId: started.runId });
-    expect(repeated).toEqual(first);
+    expect(repeated.objects).toEqual(first.objects);
+    expect(repeated.projectSlug).toBe(first.projectSlug);
+    // 第二次走的是"复用已确认分析"这条路（临时 run 已被消费）：必须显式可辨，
+    // 而不是伪装成一次新的确认——start-scene-job 会把它回报给 Agent。
+    expect(first.reused).toBeUndefined();
+    expect(repeated.reused?.runId).toBe(started.runId);
   });
 
-  test("找不到 run 时报错", () => {
+  test("模型编造占位 runId 时仍能确认到唯一待确认分析（事故回归）", async () => {
+    await createProject(storage, { name: "占位符项目", slug: "placeholder-run" });
+    const image = `${projectSourceDir("placeholder-run")}/0-photo.png`;
+    await storage.writeBytes(image, PNG_BYTES);
+    const started = await runAnalyzeReference("placeholder-run", {
+      image,
+      analysis: GARAGE_ANALYSIS,
+    });
+
+    // 上下文压缩/会话重开后模型最典型的动作：补一个全零 UUID 当 runId。
+    // zod 的 uuid 校验按设计接受它，所以它必须在这里被当成"没给"，而不是一次假失败。
+    const confirmed = await runConfirmReferenceAssets("placeholder-run", {
+      runId: "00000000-0000-0000-0000-000000000000",
+    });
+    expect(confirmed.objects.map((object) => object.slug)).toEqual(["toolbox"]);
+    expect(confirmed.reused).toBeUndefined();
     expect(
-      runConfirmReferenceAssets("ost", { runId: "gone" }),
+      await storage.exists(`${projectDir("placeholder-run")}/.analyze-reference-${started.runId}.json`),
+    ).toBe(false);
+  });
+
+  test("项目已确认过场景时，完全不带 runId 也幂等复用而不是报错", async () => {
+    await createProject(storage, { name: "丢号项目", slug: "lost-run-id" });
+    const image = `${projectSourceDir("lost-run-id")}/0-photo.png`;
+    await storage.writeBytes(image, PNG_BYTES);
+    const started = await runAnalyzeReference("lost-run-id", {
+      image,
+      analysis: GARAGE_ANALYSIS,
+    });
+    await runConfirmReferenceAssets("lost-run-id", { runId: started.runId });
+
+    // 新会话里模型手上什么都没有：磁盘上的 analysis.json 才是事实来源。
+    const again = await runConfirmReferenceAssets("lost-run-id", {});
+    expect(again.objects.map((object) => object.slug)).toEqual(["toolbox"]);
+    expect(again.reused?.runId).toBe(started.runId);
+
+    // 编出来的（连 UUID 都不是的）runId 同样不能把这条路堵死。
+    const withBogusId = await runConfirmReferenceAssets("lost-run-id", {
+      runId: "not-a-uuid-at-all",
+    });
+    expect(withBogusId.objects.map((object) => object.slug)).toEqual(["toolbox"]);
+    expect(withBogusId.reused?.runId).toBe(started.runId);
+  });
+
+  test("多份待确认分析时按本场对话的图片解析，而不是要求模型记住 runId", async () => {
+    await createProject(storage, { name: "按图消歧", slug: "by-image" });
+    const imageA = `${projectSourceDir("by-image")}/0-a.png`;
+    const imageB = `${projectSourceDir("by-image")}/1-b.png`;
+    await storage.writeBytes(imageA, PNG_BYTES);
+    await storage.writeBytes(imageB, PNG_BYTES);
+    await runAnalyzeReference("by-image", { image: imageA, analysis: GARAGE_ANALYSIS });
+    const second = await runAnalyzeReference("by-image", { image: imageB, analysis: GARAGE_ANALYSIS });
+
+    // 两份都待确认、两个不同来源图：不带任何图片时必须报歧义（不许静默挑一份）。
+    await expect(runConfirmReferenceAssets("by-image", {})).rejects.toThrow("specify a runId");
+
+    // 用户在本场对话里看过哪张图，服务端自己就知道——这是可确定的信号。
+    const confirmed = await runConfirmReferenceAssets(
+      "by-image",
+      {},
+      { conversationImagePaths: [imageB] },
+    );
+    expect(confirmed.reused).toBeUndefined();
+    expect(
+      await storage.exists(`${projectDir("by-image")}/.analyze-reference-${second.runId}.json`),
+    ).toBe(false);
+  });
+
+  test("上一会话遗留的待确认分析不会被本会话自动捡起来", async () => {
+    await createProject(storage, { name: "跨会话遗留", slug: "stale-pending" });
+    const image = `${projectSourceDir("stale-pending")}/0-photo.png`;
+    await storage.writeBytes(image, PNG_BYTES);
+    const started = await runAnalyzeReference("stale-pending", {
+      image,
+      analysis: GARAGE_ANALYSIS,
+    });
+
+    // 会话起点远晚于这份分析 → 它是上一会话的遗留，不能当成"本次确认"
+    // （那会直接触发一轮付费生成）。没有已确认分析可复用，只能重新 analyze-reference。
+    await expect(
+      runConfirmReferenceAssets("stale-pending", {}, { sessionStartedAt: Number.MAX_SAFE_INTEGER }),
+    ).rejects.toThrow("call analyze-reference again");
+    expect(
+      await storage.exists(`${projectDir("stale-pending")}/.analyze-reference-${started.runId}.json`),
+    ).toBe(true);
+
+    // 会话判断只是"能不能自动捡"，不是权限：显式指定 runId 仍然放行。
+    const explicit = await runConfirmReferenceAssets(
+      "stale-pending",
+      { runId: started.runId },
+      { sessionStartedAt: Number.MAX_SAFE_INTEGER },
+    );
+    expect(explicit.objects.map((object) => object.slug)).toEqual(["toolbox"]);
+  });
+
+  test("有会话起点时，本会话新分析出来的那一份可以直接确认（epoch 0 也是合法值）", async () => {
+    await createProject(storage, { name: "本会话分析", slug: "same-session" });
+    const image = `${projectSourceDir("same-session")}/0-photo.png`;
+    await storage.writeBytes(image, PNG_BYTES);
+    await runAnalyzeReference("same-session", { image, analysis: GARAGE_ANALYSIS });
+
+    const confirmed = await runConfirmReferenceAssets(
+      "same-session",
+      {},
+      { sessionStartedAt: 0 },
+    );
+    expect(confirmed.objects.map((object) => object.slug)).toEqual(["toolbox"]);
+    expect(confirmed.reused).toBeUndefined();
+  });
+
+  test("没有任何待确认分析、也没有已确认场景时，给出可执行的报错", () => {
+    expect(
+      runConfirmReferenceAssets("no-analysis-at-all", { runId: "gone" }),
     ).rejects.toThrow("call analyze-reference again");
   });
 });
@@ -313,5 +429,42 @@ describe("SceneJob（可修订 DAG 调度）", () => {
       return;
     }
     throw new Error("SceneJob 后台任务未完成");
+  }, 20000);
+});
+
+describe("start-scene-job（runId 只是消歧参数，不是钥匙）", () => {
+  test("模型传全零占位 runId 时，照常按唯一待确认分析启动（事故端到端回归）", async () => {
+    const projectSlug = "tool-placeholder";
+    await createProject(storage, { name: "工具占位符", slug: projectSlug });
+    const image = `${projectSourceDir(projectSlug)}/0-photo.png`;
+    await storage.writeBytes(image, PNG_BYTES);
+    await runAnalyzeReference(projectSlug, { image, analysis: GARAGE_ANALYSIS });
+
+    const result = (await startSceneJobTool.execute!(
+      { runId: "00000000-0000-0000-0000-000000000000", selectedSlugs: ["toolbox"] },
+      {
+        requestContext: buildRequestContext({
+          projectSlug,
+          currentImagePaths: [image],
+          ...KEYS,
+        }),
+      } as never,
+    )) as { job: { id: string }; reusedPreviousAnalysis?: unknown };
+
+    expect(result.job.id).toBeTruthy();
+    // 走的是新确认这条路，不是"复用已确认分析"。
+    expect(result.reusedPreviousAnalysis).toBeUndefined();
+    const spec = await readSceneSpec(storage, projectSlug);
+    expect(spec?.objects.map((object) => object.slug)).toEqual(["toolbox"]);
+
+    // 等后台任务收尾，别把负载留给别的测试。
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const job = await readSceneJob(storage, projectSlug, result.job.id);
+      if (job.status === "running" || job.status === "paused" || job.status === "waiting_for_user") {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        continue;
+      }
+      break;
+    }
   }, 20000);
 });

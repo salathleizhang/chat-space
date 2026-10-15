@@ -190,80 +190,221 @@ export async function runAnalyzeReference(
 export interface ConfirmReferenceAssetsResult {
   projectSlug: string;
   objects: ObjectCandidate[];
+  /**
+   * 这次确认复用的是项目里**已经确认过**的场景分析，而不是一份新的待确认分析。
+   *
+   * 两条真实路径都会走到这里：同一轮中断后的重试（临时文件已被消费），以及新会话
+   * 里模型把 runId 弄丢了。旧实现一律报 `run_not_found`，于是模型以为"缺个 runId"、
+   * 编一个占位符重试，用户看到的是一次假失败。
+   */
+  reused?: { runId: string; analyzedAt: string };
 }
 
-async function pendingRunPath(projectSlug: string, runId?: string): Promise<string> {
+const NIL_UUID_RE = /^0{8}-0{4}-0{4}-0{4}-0{12}$/i;
+
+/**
+ * 把模型给的 runId 归一成"真实的 UUID"或 undefined。
+ *
+ * runId 是**消歧参数**，不是钥匙：模型在上下文压缩、会话重开之后经常把它弄丢，
+ * 丢掉时的典型表现是编一个占位符——实测最常见的是全零 UUID，而 zod 4 的
+ * `z.uuid()` 按设计会放它过去（不报错、只是查不到文件）。既然"要确认哪一份分析"
+ * 本来就该由服务端从磁盘状态 + 本轮请求上下文决定，这里就把"编错了/没给"
+ * 统一当成"没有"，而不是让它变成一次失败。
+ */
+export function normalizeRunId(raw: string | undefined): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || NIL_UUID_RE.test(trimmed)) return undefined;
+  const parsed = z.uuid().safeParse(trimmed);
+  return parsed.success ? parsed.data : undefined;
+}
+
+interface PendingRun {
+  path: string;
+  runId: string;
+  image: string;
+  createdAt: string;
+}
+
+/** 项目里所有还没被确认消费掉的 `.analyze-reference-<uuid>.json`（按时间排序）。 */
+async function listPendingRuns(projectSlug: string): Promise<PendingRun[]> {
   const storage = getAssetStorage();
-  if (runId !== undefined) {
-    const parsed = z.uuid().safeParse(runId);
-    const path = parsed.success ? pendingAnalysisPath(projectSlug, parsed.data) : "";
-    if (path && await storage.exists(path)) return path;
+  const dir = projectDir(projectSlug);
+  const runs: PendingRun[] = [];
+  for (const name of await storage.list(dir)) {
+    const match = /^\.analyze-reference-([0-9a-f-]{36})\.json$/i.exec(name);
+    if (!match?.[1]) continue;
+    const runId = match[1];
+    try {
+      const pending = await readJson(storage, `${dir}/${name}`, PendingReferenceAnalysisSchema);
+      runs.push({
+        path: `${dir}/${name}`,
+        runId,
+        image: pending.image,
+        createdAt: pending.createdAt,
+      });
+    } catch {
+      // 单份损坏记录不该让其它待确认分析一起不可用（与 listSceneJobs 同款取舍）。
+    }
+  }
+  return runs.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function ambiguousPendingRuns(runs: PendingRun[]): ChatServiceError {
+  return new ChatServiceError(
+    "The current project has multiple reference image analyses pending confirmation; specify a runId. " +
+      `Pending: ${runs
+        .map((run) => `${run.runId} (${run.image}, analyzed at ${run.createdAt})`)
+        .join("; ")}`,
+    409,
+    "ambiguous_pending_runs",
+  );
+}
+
+/**
+ * 从待确认分析里挑出这次确认该用的那一份。runId 的**精确命中**由调用方先试过
+ * （包括"它其实已经被消费、对应已确认分析"那条路），这里只做启发式解析：
+ *
+ * 1. 先按**本条消息**附带的图片缩小范围（用户重发同一张图是最强的指代）；
+ * 2. 再按**本场对话**里出现过的图片；
+ * 3. 再看是不是**本会话**创建的分析（`sessionStartedAt` 的口径与"参考图能否
+ *    跨会话复用"同源）：本会话新分析出来的那份，就是用户刚在确认的那份；
+ * 4. 客户端没带 `sessionStartedAt`（旧客户端）时不做会话判断，回到"只有一份就是它"；
+ * 5. 仍然分不清就报错并列出候选——**绝不静默挑一份**，那等于把 A 图的确认套到 B 图上。
+ *
+ * 返回 undefined = 没有可用作"新确认"的待确认分析（调用方按"复用已确认分析"
+ * 或"请重新 analyze-reference"处理，而不是在这里报 run_not_found）。
+ */
+async function pickPendingRun(
+  runs: PendingRun[],
+  currentImagePaths: string[],
+  conversationImagePaths: string[],
+  sessionStartedAt: number | undefined,
+): Promise<PendingRun | undefined> {
+  if (runs.length === 0) return undefined;
+  const narrow = (wanted: Set<string>, candidates: PendingRun[]): PendingRun[] =>
+    wanted.size === 0 ? [] : candidates.filter((run) => wanted.has(run.image));
+
+  const byCurrentImage = narrow(new Set(currentImagePaths), runs);
+  if (byCurrentImage.length === 1) return byCurrentImage[0];
+  if (byCurrentImage.length > 1) throw ambiguousPendingRuns(byCurrentImage);
+
+  const byConversationImage = narrow(new Set(conversationImagePaths), runs);
+  if (byConversationImage.length === 1) return byConversationImage[0];
+  if (byConversationImage.length > 1) throw ambiguousPendingRuns(byConversationImage);
+
+  if (sessionStartedAt !== undefined) {
+    const fromThisSession = runs.filter(
+      (run) => Date.parse(run.createdAt) >= sessionStartedAt,
+    );
+    if (fromThisSession.length === 1) return fromThisSession[0];
+    if (fromThisSession.length > 1) throw ambiguousPendingRuns(fromThisSession);
+    // 本会话没有新分析：剩下的都是上一会话的遗留，不许自动捡起来当成本次确认
+    // （这会直接触发一轮付费生成），交给调用方按"已确认分析"或"请重新分析"处理。
+    return undefined;
+  }
+  if (runs.length === 1) return runs[0];
+  throw ambiguousPendingRuns(runs);
+}
+
+/**
+ * 项目里已经有确认过的场景分析时，按它幂等返回（不需要 runId，也不是错误）。
+ *
+ * 这是"runId 只是消歧参数"的另一半：确认过一次之后，真正的事实是磁盘上的
+ * analysis.json，而不是某条对话里的一个 UUID。
+ *
+ * `requireRunId` 用于"模型确实带了一个 runId"的情形：只有它正好就是那次确认的
+ * runId 时才复用（已经消费掉的 run 再调用一次 = 纯重试）；否则这份已确认分析
+ * 可能是另一个场景，不该顶替调用方明确指的那个 run。
+ */
+async function reusableConfirmation(
+  projectSlug: string,
+  selectedSlugs: string[] | undefined,
+  requireRunId?: string,
+): Promise<ConfirmReferenceAssetsResult | undefined> {
+  const storage = getAssetStorage();
+  const analysisPath = projectAnalysisFile(projectSlug);
+  if (!(await storage.exists(analysisPath))) return undefined;
+  const confirmed = await readJson(storage, analysisPath, SceneAnalysisSchema);
+  const confirmation = confirmed.confirmation;
+  if (!confirmation) return undefined;
+  if (requireRunId !== undefined && confirmation.runId !== requireRunId) return undefined;
+  const requested = selectedSlugs ? new Set(selectedSlugs) : undefined;
+  const matchesPreviousSelection = requested
+    ? requested.size === confirmation.selectedSlugs.length &&
+      confirmation.selectedSlugs.every((slug) => requested.has(slug))
+    : confirmation.allSelected;
+  if (!matchesPreviousSelection) {
     throw new ChatServiceError(
-      `There is no recoverable reference image analysis run "${runId}" (it may not exist or may already have been confirmed; call analyze-reference again)`,
-      404,
-      "run_not_found",
+      "This reference image analysis has already started a SceneJob with a different object selection; to change the selection, call analyze-reference again",
+      409,
+      "confirmation_selection_mismatch",
     );
   }
-  const pending = (await storage.list(projectDir(projectSlug)))
-    .filter((name) => /^\.analyze-reference-[0-9a-f-]{36}\.json$/i.test(name));
-  if (pending.length === 1) return `${projectDir(projectSlug)}/${pending[0]}`;
-  throw new ChatServiceError(
-    pending.length === 0
-      ? "There is no reference image analysis pending confirmation; call analyze-reference again"
-      : "The current project has multiple reference image analyses pending confirmation; specify a runId",
-    409,
-    pending.length === 0 ? "run_not_found" : "multiple_pending_runs",
-  );
+  return {
+    projectSlug,
+    // 保留 box / heightMeters：摆放读的就是它们。
+    objects: confirmed.objects.map(({ sourceImages: _sources, ...object }) => object),
+    reused: { runId: confirmation.runId, analyzedAt: confirmed.analyzedAt },
+  };
 }
 
 /** 确认对象 → 落盘参考图分析候选；不创建资产，也不生成任何东西。 */
 export async function runConfirmReferenceAssets(
   projectSlug: string,
   input: { runId?: string; selectedSlugs?: string[] },
+  context: {
+    /** 本条消息附带的图片（工具上下文里的 currentImagePaths）。 */
+    imagePaths?: string[];
+    /** 本场对话里用户附带过的全部图片（conversationImagePaths）。 */
+    conversationImagePaths?: string[];
+    sessionStartedAt?: number;
+  } = {},
 ): Promise<ConfirmReferenceAssetsResult> {
   const storage = getAssetStorage();
-  let pendingPath: string;
-  try {
-    pendingPath = await pendingRunPath(projectSlug, input.runId);
-  } catch (error) {
-    // SceneJob 启动成功后会消费临时 run。重试完整场景时，同一 runId 应直接
-    // 复用已经确认的分析，而不是要求用户重新上传和确认。
-    const analysisPath = projectAnalysisFile(projectSlug);
-    if (
-      input.runId &&
-      error instanceof ChatServiceError &&
-      error.code === "run_not_found" &&
-      await storage.exists(analysisPath)
-    ) {
-      const confirmed = await readJson(storage, analysisPath, SceneAnalysisSchema);
-      const confirmation = confirmed.confirmation;
-      if (confirmation?.runId === input.runId) {
-        const requested = input.selectedSlugs
-          ? new Set(input.selectedSlugs)
-          : undefined;
-        const matchesPreviousSelection = requested
-          ? requested.size === confirmation.selectedSlugs.length &&
-            confirmation.selectedSlugs.every((slug) => requested.has(slug))
-          : confirmation.allSelected;
-        if (!matchesPreviousSelection) {
-          throw new ChatServiceError(
-            "This reference image analysis has already started a SceneJob with a different object selection; to change the selection, call analyze-reference again",
-            409,
-            "confirmation_selection_mismatch",
-          );
-        }
-        return {
-          projectSlug,
-          // 保留 box / heightMeters：摆放读的就是它们。
-          objects: confirmed.objects.map(({ sourceImages: _sources, ...object }) => object),
-        };
-      }
-    }
-    throw error;
+  const requestedRunId = normalizeRunId(input.runId);
+  const runs = await listPendingRuns(projectSlug);
+  /*
+    解析顺序（这是"runId 只是消歧参数"的完整形状）：
+    1. runId 精确命中一份待确认分析 → 用它；
+    2. runId 命中**已确认分析**的那次 runId（临时文件已被消费）→ 幂等复用，
+       无论项目里还躺着多少别的遗留待确认分析——纯重试不该被它们搅成歧义；
+    3. 否则按服务端自己看得到的信号挑（图片 / 本会话 / 唯一一份）；
+    4. 挑不出来时，只要项目已确认过场景就复用，最后才报"请重新 analyze-reference"。
+  */
+  const exactPending = requestedRunId === undefined
+    ? undefined
+    : runs.find((run) => run.runId === requestedRunId);
+  if (exactPending === undefined && requestedRunId !== undefined) {
+    const reusedByRunId = await reusableConfirmation(
+      projectSlug,
+      input.selectedSlugs,
+      requestedRunId,
+    );
+    if (reusedByRunId) return reusedByRunId;
+  }
+  const pendingRun = exactPending ?? await pickPendingRun(
+    runs,
+    context.imagePaths ?? [],
+    context.conversationImagePaths ?? [],
+    context.sessionStartedAt,
+  );
+  if (!pendingRun) {
+    // 没有可用的待确认分析：如果这个项目已经确认并升格过一份场景，那真正的事实
+    // 就在磁盘上，按它幂等返回即可（中断重试 / 新会话丢了 runId 都走这条路）。
+    const reused = await reusableConfirmation(projectSlug, input.selectedSlugs);
+    if (reused) return reused;
+    throw new ChatServiceError(
+      "There is no reference image analysis pending confirmation in this project" +
+        (input.runId ? ` (runId "${input.runId}" does not match one)` : "") +
+        "; call analyze-reference again",
+      404,
+      "run_not_found",
+    );
   }
   const pending = await readJson(
     storage,
-    pendingPath,
+    pendingRun.path,
     PendingReferenceAnalysisSchema,
   );
   if (pending.projectSlug !== projectSlug) {
@@ -343,7 +484,7 @@ export async function runConfirmReferenceAssets(
     };
   });
   // 全部元数据成功落盘后才消费 run；磁盘失败时保留草稿供原 runId 重试确认。
-  await storage.remove(pendingPath);
+  await storage.remove(pendingRun.path);
   return { projectSlug, objects: resolved };
 }
 
@@ -352,7 +493,7 @@ export async function runConfirmReferenceAssets(
 export const analyzeReferenceTool = createTool({
   id: "analyze-reference",
   description:
-    "Use the image explicitly attached to this user message as the official reference image for full scene generation, and produce object candidates awaiting user confirmation (free, written to disk locally, does not call another LLM). You can already see the current image directly: fill in the scene description according to the actual picture, and list in objects every atomic item that can be picked up and modeled independently; do not list walls, floors, carpets, sky, or water as objects, and do not merge a group of furniture into a set. **Every object must be given a normalized bounding box box=[x0,y0,x1,y1] (origin at top-left, values 0–1, tightly following the object's own outline; do not frame the ground projection, shadows, or neighboring objects), and give the real heightMeters where possible**; objects missing box cannot be automatically placed back into the 3D scene. Also fill in camera according to your observation: horizonRow (the normalized row where the horizon is; 0 is the top of the image; approximately the image centerline when the camera is level), cameraHeightMeters (shooting height; about 1.4–1.6 for a standing handheld shot), verticalFovDeg (vertical field of view; about 55–70 for a phone main camera) — placement relies on these three values to convert pixels into meters. After the user confirms, pass the returned runId and the optional selectedSlugs directly to start-scene-job. Do not call it for ordinary image viewing, screenshot debugging, or design critique.",
+    "Use the image explicitly attached to this user message as the official reference image for full scene generation, and produce object candidates awaiting user confirmation (free, written to disk locally, does not call another LLM). You can already see the current image directly: fill in the scene description according to the actual picture, and list in objects every atomic item that can be picked up and modeled independently; do not list walls, floors, carpets, sky, or water as objects, and do not merge a group of furniture into a set. **Every object must be given a normalized bounding box box=[x0,y0,x1,y1] (origin at top-left, values 0–1, tightly following the object's own outline; do not frame the ground projection, shadows, or neighboring objects), and give the real heightMeters where possible**; objects missing box cannot be automatically placed back into the 3D scene. Also fill in camera according to your observation: horizonRow (the normalized row where the horizon is; 0 is the top of the image; approximately the image centerline when the camera is level), cameraHeightMeters (shooting height; about 1.4–1.6 for a standing handheld shot), verticalFovDeg (vertical field of view; about 55–70 for a phone main camera) — placement relies on these three values to convert pixels into meters. After the user confirms, pass the returned runId (if you still have it) and the optional selectedSlugs to start-scene-job; the server can also find this pending analysis by itself, so never invent a runId placeholder. Do not call it for ordinary image viewing, screenshot debugging, or design critique.",
   inputSchema: AnalyzeReferenceDraftSchema,
   execute: async (input, context) => {
     if (!referenceAnalysisAllowed(context)) {
