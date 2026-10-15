@@ -19,6 +19,7 @@ import {
   Input,
   Panel,
 } from "../shared/ui";
+import "./projectHub.css";
 
 interface ProjectListItem {
   project: ProjectSummary;
@@ -158,11 +159,13 @@ function CreateProjectDialog() {
 
   return (
     <Dialog
+      className="project-create-dialog sky-glass"
       openOnMount={searchParams.get("create") === "1"}
       trigger={(open) => (
         <Button
           variant="primary"
           icon={FolderSimplePlusIcon}
+          className="sky-create"
           onClick={open}
           onMouseEnter={() => void preloadAppDashboard()}
         >
@@ -172,7 +175,7 @@ function CreateProjectDialog() {
     >
       {(close) => (
         <form
-          className="flex w-80 flex-col p-5"
+          className="flex w-80 max-w-full flex-col p-5"
           onSubmit={(event) => {
             event.preventDefault();
             void submit(close);
@@ -229,24 +232,24 @@ export function ProjectHubPage() {
   }, []);
 
   return (
-    <div className="h-full w-full overflow-y-auto bg-project-hub-canvas text-project-hub-ink">
-      {/* 顶栏：与 Agent Dock 同级的液态玻璃胶囊（全应用仅两处 liquid） */}
-      <div className="pointer-events-none fixed inset-x-0 top-3 z-10 flex justify-center">
+    <div className="project-hub sky-surface h-full w-full overflow-y-auto text-project-hub-ink">
+      {/* 顶栏：与首页同源的浅色液态玻璃胶囊。 */}
+      <header className="project-hub-header sky-header">
         <Panel
           variant="liquid"
-          className="animate-chrome-enter-center pointer-events-auto flex w-[min(56rem,calc(100%-2rem))] items-center justify-between rounded-full! py-2 pr-2 pl-5"
-        >
-          <div className="flex items-center gap-2">
-            <CubeFocusIcon size={24} weight="duotone" className="text-ink-strong" />
-            <span className="text-sm font-medium text-ink-strong">ChatSpace</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <CreateProjectDialog />
-          </div>
-        </Panel>
-      </div>
+          className="sky-header-glass sky-glass"
+          aria-hidden="true"
+        />
+        <div className="sky-brand">
+          <CubeFocusIcon size={24} weight="duotone" className="text-ink-strong" />
+          <span>ChatSpace</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <CreateProjectDialog />
+        </div>
+      </header>
 
-      <main className="animate-chrome-enter mx-auto w-full max-w-5xl px-6 pt-28 pb-16">
+      <main className="animate-chrome-enter mx-auto w-full max-w-5xl px-6 pt-12 pb-16">
         <div className="mb-6 flex items-baseline justify-between">
           <h1 className="text-sm font-medium text-project-hub-ink-strong">Projects</h1>
           {!loading && (

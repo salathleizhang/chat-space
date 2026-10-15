@@ -135,9 +135,10 @@ export function HomePage() {
   }
 
   return (
-    <div className="home-landing h-full w-full overflow-y-auto" lang={locale}>
-      <header className="home-header">
-        <div className="home-brand">
+    <div className="home-landing sky-surface h-full w-full overflow-y-auto" lang={locale}>
+      <header className="home-header sky-header">
+        <Panel variant="liquid" className="home-header-glass sky-header-glass sky-glass" aria-hidden="true" />
+        <div className="home-brand sky-brand">
           <CubeFocusIcon size={26} weight="bold" />
           <span>ChatSpace</span>
         </div>
@@ -162,7 +163,7 @@ export function HomePage() {
           <Button
             variant="primary"
             icon={FolderSimplePlusIcon}
-            className="home-nav-create"
+            className="home-nav-create sky-create"
             onClick={() => navigate("/app?create=1")}
           >
             {copy.createProject}

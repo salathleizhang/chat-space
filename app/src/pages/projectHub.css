@@ -1,0 +1,28 @@
+@import "../shared/ui/skyGlass.css";
+
+/* Light controls are scoped to this entry page, including its native dialog. */
+.project-hub {
+  --color-canvas: #fff;
+  --color-ink: var(--color-project-hub-ink);
+  --color-ink-strong: var(--color-project-hub-ink-strong);
+  --color-ink-subtle: var(--color-project-hub-ink-subtle);
+  --color-ink-faint: var(--color-project-hub-ink-faint);
+  --color-ink-inverse: #fff;
+  --color-accent: #050505;
+  --color-accent-hover: #282828;
+  --color-line: rgb(21 20 15 / 0.16);
+  --color-hairline: rgb(21 20 15 / 0.12);
+  --color-field: rgb(255 255 255 / 0.48);
+  --color-fill: rgb(21 20 15 / 0.05);
+  --color-fill-active: rgb(21 20 15 / 0.09);
+}
+
+.project-create-dialog {
+  max-width: calc(100vw - 32px);
+}
+
+.project-create-dialog::backdrop {
+  background: rgb(227 239 251 / 0.2);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}

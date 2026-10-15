@@ -1,0 +1,98 @@
+@font-face {
+  font-family: "ChatSpace Lanting Heavy";
+  src: url("/landing/FZLTTHK.TTF") format("truetype");
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+}
+
+/* Shared light surfaces for the landing and project creation entry points. */
+.sky-surface {
+  --sky-display: "ChatSpace Lanting Heavy", "FZLanTingHeiS-Heavy", "Lantinghei SC", "Arial Black", "PingFang SC", sans-serif;
+  font-family: "Lantinghei SC", "PingFang SC", Arial, sans-serif;
+  position: relative;
+  isolation: isolate;
+  background: #fff;
+}
+
+.sky-surface::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto;
+  height: 760px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent 30%, #fff 94%), url("/landing/sky.png") center top / cover no-repeat;
+}
+
+/* Panel supplies the blur/refraction; this is the shared light glass tint. */
+.sky-glass {
+  border: 1px solid rgb(21 20 15 / 0.08);
+  background: rgb(255 255 255 / 0.42);
+  box-shadow:
+    inset 0 0 2px 1px rgb(255 255 255 / 0.55),
+    inset 0 0 10px 4px rgb(255 255 255 / 0.22),
+    0 6px 24px rgb(17 17 26 / 0.06),
+    0 12px 40px rgb(17 17 26 / 0.05);
+}
+
+@media (max-width: 600px) {
+  .sky-surface::before { height: 600px; background-position: 42% top; }
+}
+
+.sky-header {
+  position: sticky;
+  top: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(1280px, calc(100% - 80px));
+  margin: 26px auto 0;
+  padding: 12px 20px;
+  border-radius: 9999px;
+}
+
+/* Reuse Panel's OpenDesign-derived refraction; keep the light landing surface
+   separate from the editor's dark glass tokens. */
+.sky-header-glass {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.sky-brand {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-family: var(--sky-display);
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: -0.7px;
+  color: #050505;
+}
+
+.sky-header .sky-create {
+  background: #050505;
+  color: #fff;
+  height: 42px;
+  padding: 0 20px;
+  font-weight: 600;
+}
+
+.sky-header .sky-create:hover { opacity: 0.8; }
+
+@media (max-width: 600px) {
+  .sky-header { top: 12px; width: calc(100% - 32px); margin-top: 16px; padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
+  .sky-brand { font-size: 16px; gap: 5px; }
+  .sky-header .sky-create { padding: 0 12px; height: 36px; font-size: 12px; }
+  .sky-brand svg { width: 21px; }
+  .sky-create svg { display: none; }
+}
+
+@media (max-width: 380px) {
+  .sky-header .sky-create { padding-inline: 10px; font-size: 11px; }
+}

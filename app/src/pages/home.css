@@ -1,12 +1,7 @@
+@import "../shared/ui/skyGlass.css";
+
 /* Poster art direction is scoped to the landing page. Project and editor tokens
    stay unchanged. FZLTTHK--GBK1-0 is the typeface recorded in the source PSD. */
-@font-face {
-  font-family: "ChatSpace Lanting Heavy";
-  src: url("/landing/FZLTTHK.TTF") format("truetype");
-  font-style: normal;
-  font-weight: 900;
-  font-display: swap;
-}
 
 .home-landing {
   --home-paper: #fff;
@@ -24,38 +19,6 @@
   background: var(--home-paper);
   color: var(--home-black);
   font-family: "Lantinghei SC", "PingFang SC", Arial, sans-serif;
-}
-
-.home-landing::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0 0 auto;
-  height: 760px;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent 30%, var(--home-paper) 94%), url("/landing/sky.png") center top / cover no-repeat;
-}
-
-.home-header {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: min(1280px, calc(100% - 80px));
-  margin: 0 auto;
-  padding-top: 26px;
-}
-
-.home-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--home-display);
-  font-size: 19px;
-  font-weight: 900;
-  letter-spacing: -0.7px;
 }
 
 .home-language-switch {
@@ -88,16 +51,6 @@
   padding: 0 20px;
   height: 42px;
 }
-
-.home-landing .home-nav-create {
-  background: var(--home-black);
-  color: var(--home-paper);
-  height: 42px;
-  padding: 0 20px;
-  font-weight: 600;
-}
-
-.home-nav-create:hover { opacity: 0.8; }
 
 .home-main {
   width: min(1200px, calc(100% - 80px));
@@ -289,16 +242,10 @@
 }
 
 @media (max-width: 600px) {
-  .home-landing::before { height: 600px; background-position: 42% top; }
-  .home-header { width: calc(100% - 32px); padding-top: 16px; gap: 8px; flex-wrap: wrap; }
   .home-nav { margin-left: auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
   .home-language-switch { margin-right: 4px; }
   .home-landing .home-language-button { height: 26px; padding-inline: 8px; }
-  .home-brand { font-size: 16px; gap: 5px; }
-  .home-brand svg { width: 21px; }
   .home-landing .home-nav-projects { padding: 0 10px; height: 36px; font-size: 12px; }
-  .home-landing .home-nav-create { padding: 0 12px; height: 36px; font-size: 12px; }
-  .home-nav-create svg { display: none; }
   .home-main { width: calc(100% - 40px); padding-bottom: 40px; }
   .home-hero { padding-top: 55px; }
   .home-wordmark { font-size: clamp(50px, 14.2vw, 86px); }
@@ -321,5 +268,4 @@
 
 @media (max-width: 380px) {
   .home-landing .home-nav-projects { padding-inline: 6px; font-size: 11px; }
-  .home-landing .home-nav-create { padding-inline: 10px; font-size: 11px; }
 }

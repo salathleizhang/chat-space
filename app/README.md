@@ -14,6 +14,10 @@ bun run start
 
 编辑器未保存模型偏好时，默认选择 DeepSeek V4.1 Flash（聊天）、Tripo P2（3D）和 Seedream 5.0（图片）。手动选择会在浏览器中保存，再次进入时沿用，包括显式选择的 Auto；聊天模型仍按服务端已激活的供应商筛选。
 
+首页顶部导航复用 `Panel variant="liquid"` 的 OpenDesign 同源玻璃滤镜，搭配半透明白底、内侧高光与柔和阴影，滚动时吸顶。Safari / Firefox 使用组件自带的 CSS 毛玻璃效果。
+项目入口 `/app` 与新建弹窗沿用同一套浅色玻璃表面，页面使用与首页一致的渐隐天空背景；样式由 `shared/ui/skyGlass.css` 共享。
+两页顶部导航的宽高、内边距、品牌字体与创建按钮尺寸也由这份样式统一，包含手机端规则。
+
 3D 渲染仅使用原生 WebGPU，需要 HTTPS/localhost 和可用的 GPU adapter/device。依赖升级后重启 Vite，必要时用 `bun run dev --force` 重建预打包缓存，避免混用旧版 Three.js。
 
 渲染层固定为 Three.js 0.186.1、Gaussian Splat Lite 1.1.5。Splat 与 collider GLB 使用同一份世界变换；collider 当前是**不可拾取、也不绘制的地形参照层**——`WorldColliderMesh.tsx` 的 `COLLIDER_VISIBLE = false` 让 three 遍历时整棵子树早退，一次绘制都不提交（**100% 透明**，不是 `opacity: 0`；GLB 仍照旧加载并挂在场景里）。想让地形参照显示回来就把那个常量翻成 `true`，用的是半透明实体材质（浓淡旋钮 `COLLIDER_OPACITY`）。它不是新增的物理碰撞引擎。第三方许可证及 NOTICE 随构建发布在 `/licenses/gaussian-splat-lite/`。
