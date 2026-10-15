@@ -1,0 +1,11 @@
+{
+  "id": "task-cdf0a813-cbfe-4620-b51b-de6090a56bb9",
+  "workflowId": "queue-smoke",
+  "projectSlug": "cloud-smoke",
+  "subject": "Queue delivery verification",
+  "status": "failed",
+  "phase": "failed",
+  "error": "执行曾中断且没有供应商回执；为避免重复付费，未自动重发。请检查供应商记录后重试",
+  "createdAt": "2026-10-06T15:31:23.311Z",
+  "updatedAt": "2026-10-06T15:32:03.931Z"
+}

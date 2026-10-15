@@ -1,0 +1,97 @@
+{
+  "files": [
+    {
+      "workspace": "87b2d96e-a284-4abe-8db1-7b58e3446813",
+      "path": "projects/cloud-smoke/project.json",
+      "text_content": "{\n  \"schemaVersion\": 1,\n  \"slug\": \"cloud-smoke\",\n  \"name\": \"Cloud smoke\",\n  \"createdAt\": \"2026-10-06T15:29:34.625Z\",\n  \"updatedAt\": \"2026-10-06T15:29:34.625Z\"\n}",
+      "blob_url": null,
+      "size_bytes": "160"
+    },
+    {
+      "workspace": "87b2d96e-a284-4abe-8db1-7b58e3446813",
+      "path": "projects/cloud-smoke/source/0-smoke.png",
+      "text_content": null,
+      "blob_url": "https://hqqxf32xzbwo1yvv.private.blob.vercel-storage.com/workspaces/87b2d96e-a284-4abe-8db1-7b58e3446813/518cc594-1fde-455c-8e63-5bf78b9a00dd/0-smoke.png",
+      "size_bytes": "68"
+    },
+    {
+      "workspace": "9f614c33-c0f9-4cbc-86d9-18e25de1d00b",
+      "path": "projects/p-muwu6kcu/project.json",
+      "text_content": "{\n  \"schemaVersion\": 1,\n  \"slug\": \"p-muwu6kcu\",\n  \"name\": \"Vercel browser verification\",\n  \"createdAt\": \"2026-10-06T15:31:36.229Z\",\n  \"updatedAt\": \"2026-10-06T15:31:36.229Z\"\n}",
+      "blob_url": null,
+      "size_bytes": "175"
+    },
+    {
+      "workspace": "87b2d96e-a284-4abe-8db1-7b58e3446813",
+      "path": "projects/cloud-smoke/tasks/task-cdf0a813-cbfe-4620-b51b-de6090a56bb9.json",
+      "text_content": "{\n  \"id\": \"task-cdf0a813-cbfe-4620-b51b-de6090a56bb9\",\n  \"workflowId\": \"queue-smoke\",\n  \"projectSlug\": \"cloud-smoke\",\n  \"subject\": \"Queue delivery verification\",\n  \"status\": \"failed\",\n  \"phase\": \"failed\",\n  \"error\": \"执行曾中断且没有供应商回执；为避免重复付费，未自动重发。请检查供应商记录后重试\",\n  \"createdAt\": \"2026-10-06T15:31:23.311Z\",\n  \"updatedAt\": \"2026-10-06T15:32:03.931Z\"\n}",
+      "blob_url": null,
+      "size_bytes": "423"
+    },
+    {
+      "workspace": "9f614c33-c0f9-4cbc-86d9-18e25de1d00b",
+      "path": "sessions/s-p-muwu6kcu-muwu6nqm.json",
+      "text_content": "{\n  \"schemaVersion\": 1,\n  \"id\": \"s-p-muwu6kcu-muwu6nqm\",\n  \"projectSlug\": \"p-muwu6kcu\",\n  \"title\": \"你好，请只回复一句确认你已连接。不要生成图片、模型或世界，也不要调用任何工具。\",\n  \"messages\": [\n    {\n      \"id\": \"msg-4032d479-dbc1-47bd-ba7d-8cec9783cf68\",\n      \"role\": \"user\",\n      \"content\": \"你好，请只回复一句确认你已连接。不要生成图片、模型或世界，也不要调用任何工具。\"\n    },\n    {\n      \"id\": \"msg-1c8ef5eb-1421-4e55-8700-51dac5b56a6e\",\n      \"role\": \"assistant\",\n      \"content\": \"已连接，随时可以开始你的 3D 创作任务。\",\n      \"agentStatus\": {\n        \"label\": \"Completed\",\n        \"status\": \"completed\"\n      }\n    },\n    {\n      \"id\": \"msg-0b066448-8549-4673-b978-2bd5ebb768a5\",\n      \"role\": \"user\",\n      \"content\": \"hi\"\n    },\n    {\n      \"id\": \"msg-953dacee-1bba-43c0-8c86-c124ffda3003\",\n      \"role\": \"assistant\",\n      \"content\": \"Hi! I'm connected and ready to help you create 3D models, scenes, and worlds. What would you like to build?\",\n      \"agentStatus\": {\n        \"label\": \"Completed\",\n        \"status\": \"completed\"\n      }\n    }\n  ],\n  \"createdAt\": \"2026-10-06T15:34:20.956Z\",\n  \"updatedAt\": \"2026-10-06T15:34:55.917Z\"\n}",
+      "blob_url": null,
+      "size_bytes": "1245"
+    },
+    {
+      "workspace": "87b2d96e-a284-4abe-8db1-7b58e3446813",
+      "path": "projects/cloud-smoke/assets/large-smoke/0-large-smoke.glb",
+      "text_content": null,
+      "blob_url": "https://hqqxf32xzbwo1yvv.private.blob.vercel-storage.com/workspaces/87b2d96e-a284-4abe-8db1-7b58e3446813/f9d21e06-4668-43db-8e68-1bed3d2a7c9b/0-large-smoke.glb",
+      "size_bytes": "5243376"
+    },
+    {
+      "workspace": "87b2d96e-a284-4abe-8db1-7b58e3446813",
+      "path": "projects/cloud-smoke/assets/large-smoke/asset.json",
+      "text_content": "{\n  \"schemaVersion\": 1,\n  \"id\": \"8bfa8f97-2b2b-454f-b874-f8826cf3bf88\",\n  \"slug\": \"large-smoke\",\n  \"kind\": \"model\",\n  \"name\": \"large-smoke\",\n  \"intent\": \"本地导入的 3D 模型\",\n  \"sourceImages\": [],\n  \"createdAt\": \"2026-10-06T15:35:40.294Z\"\n}",
+      "blob_url": null,
+      "size_bytes": "247"
+    }
+  ],
+  "jobs": [
+    {
+      "workspace": "87b2d96e-a284-4abe-8db1-7b58e3446813",
+      "id": "task-cdf0a813-cbfe-4620-b51b-de6090a56bb9",
+      "project": "cloud-smoke",
+      "descriptor": {
+        "input": {},
+        "operation": "3d"
+      },
+      "state": "failed",
+      "started": true,
+      "receipts": [],
+      "lease_owner": null,
+      "lease_until": null,
+      "created_at": "2026-10-06T15:31:27.124Z",
+      "updated_at": "2026-10-06T15:32:03.915Z"
+    }
+  ],
+  "usage": [
+    {
+      "day": "2026-10-06T00:00:00.000Z",
+      "scope": "global",
+      "kind": "upload",
+      "count": 2
+    },
+    {
+      "day": "2026-10-06T00:00:00.000Z",
+      "scope": "87b2d96e-a284-4abe-8db1-7b58e3446813",
+      "kind": "upload",
+      "count": 2
+    },
+    {
+      "day": "2026-10-06T00:00:00.000Z",
+      "scope": "global",
+      "kind": "chat",
+      "count": 2
+    },
+    {
+      "day": "2026-10-06T00:00:00.000Z",
+      "scope": "9f614c33-c0f9-4cbc-86d9-18e25de1d00b",
+      "kind": "chat",
+      "count": 2
+    }
+  ]
+}

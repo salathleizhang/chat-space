@@ -1,0 +1,80 @@
+{
+  "instanceName": "vefaas-201j2k8z-35j4q85b0u-db523102gtpddlohc8o0-sandbox",
+  "status": {
+    "up_to_date": true,
+    "protocol_version": 13,
+    "expected_protocol_version": 13,
+    "addon_version": [
+      1,
+      8
+    ],
+    "capabilities": [
+      "bpy_api_lookup",
+      "describe_node_type",
+      "drain_human_activity",
+      "execute_code",
+      "get_addon_info",
+      "get_object_info",
+      "get_scene_info",
+      "get_telemetry_consent",
+      "get_viewport_screenshot",
+      "get_world_state_snapshot",
+      "list_scene_items",
+      "pick_viewport_object",
+      "set_telemetry_consent"
+    ],
+    "blender_version": "5.2.2 LTS",
+    "premium_generators": [],
+    "source": "native",
+    "warning": null,
+    "telemetry_consent": false,
+    "update_command": "uvx mcp-for-blender install-addon",
+    "after_install": "If the addon file was updated: in Blender, Preferences → Add-ons → disable/enable 'Interface: Blender MCP', or restart Blender, then Start MCP Server."
+  },
+  "object": {
+    "name": "CloudPublicProbe",
+    "type": "MESH",
+    "location": [
+      2,
+      0,
+      0
+    ],
+    "rotation": [
+      0,
+      0,
+      0
+    ],
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "visible": true,
+    "materials": [],
+    "world_bounding_box": [
+      [
+        1.3000000715255737,
+        -0.6999999284744263,
+        -0.699999988079071
+      ],
+      [
+        2.6999998092651367,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    ],
+    "mesh": {
+      "vertices": 86,
+      "edges": 180,
+      "polygons": 96
+    }
+  },
+  "export": {
+    "glbPath": "projects/cloud-public-check/assets/cloud-probe-sphere/1-cloud-probe-sphere.glb",
+    "sidecarPath": "projects/cloud-public-check/assets/cloud-probe-sphere/.1-cloud-probe-sphere-request.json",
+    "index": 1,
+    "bytes": 13568,
+    "faces": 168,
+    "blenderVersion": "5.2.2 LTS"
+  }
+}

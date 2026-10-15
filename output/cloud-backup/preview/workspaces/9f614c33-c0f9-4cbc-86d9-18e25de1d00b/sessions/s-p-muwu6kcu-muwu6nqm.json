@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "s-p-muwu6kcu-muwu6nqm",
+  "projectSlug": "p-muwu6kcu",
+  "title": "你好，请只回复一句确认你已连接。不要生成图片、模型或世界，也不要调用任何工具。",
+  "messages": [
+    {
+      "id": "msg-4032d479-dbc1-47bd-ba7d-8cec9783cf68",
+      "role": "user",
+      "content": "你好，请只回复一句确认你已连接。不要生成图片、模型或世界，也不要调用任何工具。"
+    },
+    {
+      "id": "msg-1c8ef5eb-1421-4e55-8700-51dac5b56a6e",
+      "role": "assistant",
+      "content": "已连接，随时可以开始你的 3D 创作任务。",
+      "agentStatus": {
+        "label": "Completed",
+        "status": "completed"
+      }
+    },
+    {
+      "id": "msg-0b066448-8549-4673-b978-2bd5ebb768a5",
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "id": "msg-953dacee-1bba-43c0-8c86-c124ffda3003",
+      "role": "assistant",
+      "content": "Hi! I'm connected and ready to help you create 3D models, scenes, and worlds. What would you like to build?",
+      "agentStatus": {
+        "label": "Completed",
+        "status": "completed"
+      }
+    }
+  ],
+  "createdAt": "2026-10-06T15:34:20.956Z",
+  "updatedAt": "2026-10-06T15:34:55.917Z"
+}

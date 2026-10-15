@@ -1,0 +1,29 @@
+{
+  "deployment": "dpl_5bLKgnoyitNxCsLLtrdY3yGSYXNd",
+  "check": {
+    "app": 966,
+    "chat": 664,
+    "cloudflare": 12,
+    "exitCode": 0
+  },
+  "businessButtonsRemoved": true,
+  "manualCreateAndBatchFormRemoved": true,
+  "twoIndependentWindows": true,
+  "windowSize": {
+    "width": 352,
+    "height": 242
+  },
+  "remainingWindowButtons": [
+    "关闭此 Blender 窗口",
+    "Blender 全屏",
+    "最大化 Blender 窗口"
+  ],
+  "realAiTools": [
+    "blender-sessions",
+    "blender-session-action import"
+  ],
+  "imported": 0,
+  "bothSessionsPaused": true,
+  "newOrResumedSandbox": false,
+  "screenshot": "website-ai-controls-removed.png"
+}

@@ -1,0 +1,1 @@
+{"owner":"f6f98dbc-0b29-4999-801b-2e56d5770af8","sessions":[],"jobs":{},"limits":{"global":100,"owner":10,"queued":100},"defaultConcurrency":1,"budget":{"day":"2026-10-11","timezone":"UTC","runtime":{"usedAndReservedMs":0,"limitMs":36000000},"modelCalls":{"used":0,"limit":36}},"notices":{}}

@@ -1,0 +1,22 @@
+{
+  "instanceName": "vefaas-201j2k8z-35j4q85b0u-db4t8d0261qh048cubh0-sandbox",
+  "version": "V4",
+  "caller": "cloud-instance-webshell-via-public-https",
+  "blenderVersion": "5.2.2 LTS",
+  "objectName": "CloudPublicProbe",
+  "downloadStatus": 200,
+  "bytes": 13568,
+  "faces": 168,
+  "sha256": "53ec1eb953418c633a8fe3a0f414f6edbc7adc64d481fe9f2eff6749aa56e37e",
+  "desktopHttp": 200,
+  "desktopBytes": 70770,
+  "desktopPasswordCannotControl": 401,
+  "unauthenticatedControlStatus": 401,
+  "websocketHandshakeStatus": 101,
+  "websocketGreeting": "RFB 003.008",
+  "websocketOriginRequired": true,
+  "cleanupStatus": 204,
+  "afterCleanupStatus": 404,
+  "localWorkbenchAcceptance": "asset-published-and-visible; desktop-awaiting-node-preview-restart",
+  "localAssetPath": "output/blender-cloud-public-check/projects/cloud-public-check/assets/cloud-probe-sphere/0-cloud-probe-sphere.glb"
+}

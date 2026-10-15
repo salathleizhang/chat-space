@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "index": 1,
+  "slug": "cloud-probe-sphere",
+  "provider": "blender",
+  "model": "blender-5.2.2 LTS",
+  "params": {
+    "objectNames": [
+      "CloudPublicProbe"
+    ]
+  },
+  "status": "succeeded",
+  "outputs": [
+    {
+      "path": "projects/cloud-public-check/assets/cloud-probe-sphere/1-cloud-probe-sphere.glb"
+    }
+  ],
+  "createdAt": "2026-10-10T11:35:36.984Z",
+  "updatedAt": "2026-10-10T11:35:36.988Z"
+}

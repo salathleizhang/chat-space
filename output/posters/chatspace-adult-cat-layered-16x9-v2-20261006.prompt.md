@@ -1,0 +1,13 @@
+# ChatSpace adult cat anatomy revision
+
+Edited with the built-in image_gen tool.
+
+## Final prompt
+
+Use case: precise-object-edit
+Edit target: the supplied ChatSpace color poster.
+Correct the CAT'S ANATOMY and pose. The current cat is distorted: enormous broad barrel body, disproportionately thick oversized paws, awkward spread rear legs and a stretched humped silhouette. COMPLETELY REDRAW the cat from anatomically sound adult domestic-cat reference proportions rather than preserving this malformed silhouette.
+New cat: a healthy normal-weight adult short-haired brown tabby domestic cat, photorealistic natural fur, gently tapered slender torso, balanced chest and hips, realistic mature head in proper scale to the body, normal-size feline eyes, modest muzzle, medium ears, slim feline limbs, small normal rounded paws, a thin natural tapering curved tail. Four limbs only, no extra paws, no human arms or hands, no huge belly, no bodybuilder muscles, no oversized baby head. Clearly an adult cat, not a kitten or chibi.
+Pose: use a believable mildly reared-up adult cat, seen in a clean three-quarter side view facing right, balanced on its bent hind legs with rear paws reasonably close together beneath its hips (not an enormous split stance). Spine forms a natural gently curved upright diagonal; head sits naturally over shoulders; both forelegs reach forward with modest bent elbows and the two small paws wrap/clasp the sword hilt. This is a playful fantasy cat wielding a sword but its bodily proportions must remain those of a real adult feline. Maintain a clear legible entire silhouette and convincing center of gravity. Cat occupies the left foreground, with ears and upper back overlapping the bottom edges of the left headline letters. The corrected body should be visibly slimmer and more coherent than the source.
+Preserve everything else as closely as possible: black exact "ChatSpace" bold headline behind the foreground subjects, its lower portions occluded by the cat and orange Blender logo; pure white background; wide 16:9 layout; recognizable orange Blender logo with white ring and blue center on the right; silver sword with brass guard and dark grip thrusting right into the logo; yellow comic impact burst and black motion lines. If necessary adjust only the hilt/angle slightly to meet the corrected natural paw position while maintaining blade tip contact with the logo. Do not put title over the fur. Both cat and logo overlap the headline, which remains readable. No new text, no colored background, no watermark, no blood. Prioritize natural adult feline anatomy over an exaggerated action pose.
+

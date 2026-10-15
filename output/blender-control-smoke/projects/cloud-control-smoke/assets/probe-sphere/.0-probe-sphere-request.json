@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "index": 0,
+  "slug": "probe-sphere",
+  "provider": "blender",
+  "model": "blender-5.2.2 LTS",
+  "params": {
+    "objectNames": [
+      "CloudConnectionProbe"
+    ]
+  },
+  "status": "succeeded",
+  "outputs": [
+    {
+      "path": "projects/cloud-control-smoke/assets/probe-sphere/0-probe-sphere.glb"
+    }
+  ],
+  "createdAt": "2026-10-09T16:21:49.196Z",
+  "updatedAt": "2026-10-09T16:21:49.198Z"
+}

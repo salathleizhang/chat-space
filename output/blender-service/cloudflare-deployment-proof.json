@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-11T03:56:27.031Z",
+  "health": {
+    "status": 200,
+    "service": "chatspace-blender",
+    "platform": "cloudflare",
+    "durable": true,
+    "configured": true,
+    "pauseEnabled": false
+  },
+  "unauthenticatedStatus": 401,
+  "authenticatedList": {
+    "status": 200,
+    "count": 0
+  },
+  "allocationGateStatus": 503
+}

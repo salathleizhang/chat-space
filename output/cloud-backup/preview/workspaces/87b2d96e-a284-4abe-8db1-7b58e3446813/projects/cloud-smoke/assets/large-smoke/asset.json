@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "8bfa8f97-2b2b-454f-b874-f8826cf3bf88",
+  "slug": "large-smoke",
+  "kind": "model",
+  "name": "large-smoke",
+  "intent": "本地导入的 3D 模型",
+  "sourceImages": [],
+  "createdAt": "2026-10-06T15:35:40.294Z"
+}

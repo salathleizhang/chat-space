@@ -1,0 +1,39 @@
+{
+  "deployment": "dpl_5GnMBfiEyBmAvmnq1ZbRWENFeEjN",
+  "check": {
+    "app": 966,
+    "chat": 657,
+    "cloudflare": 12,
+    "exitCode": 0
+  },
+  "twoIndependentDesktopStreams": true,
+  "nativeDrag": true,
+  "nativeResize": true,
+  "defaultSize": {
+    "width": 352,
+    "height": 242
+  },
+  "positions": [
+    {
+      "id": "25ac53",
+      "x": 1552,
+      "y": 486
+    },
+    {
+      "id": "6dba37",
+      "x": 1184,
+      "y": 486
+    }
+  ],
+  "maximize": {
+    "width": 1920,
+    "height": 808,
+    "matchesViewport": true,
+    "restoreVerified": true
+  },
+  "stableSlotReopen": true,
+  "portalTextColorVerified": true,
+  "fullscreen": "pending_mac_unlock",
+  "sessionPauseConfirmation": "both_saved_and_paused",
+  "screenshot": "website-small-blender-windows-final.png"
+}

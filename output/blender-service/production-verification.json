@@ -1,0 +1,74 @@
+{
+  "verifiedAt": "2026-10-11",
+  "worker": "chatspace-blender",
+  "domain": "blender.junwei.cool",
+  "workerVersion": "fae5f496-aa1a-462a-b6b8-3b5fdbba23b5",
+  "check": {
+    "exitCode": 0,
+    "app": 956,
+    "chat": 657,
+    "cloudflare": 12
+  },
+  "checkpoint": {
+    "id": "cf6fa5f4-35c7-4fab-8eb0-1b095d066f11",
+    "bytes": 538444,
+    "sha256": "743ba58d4c13ff8859cdc3ae6f06a8af90c192d1c3e77afc25c73870510cae62"
+  },
+  "export": {
+    "id": "77fe9e3c-8953-4877-8017-6812ec660b7c",
+    "bytes": 1768,
+    "sha256": "6d58baa3a57a0916c8b39f6fba44f73e2fd1448407def2cd840335301d989114",
+    "triangles": 12
+  },
+  "desktop": {
+    "httpStatus": 200,
+    "htmlBytes": 70859,
+    "websocketRfb": true,
+    "securityBytes": 2,
+    "revoked": true
+  },
+  "batch": {
+    "parallel": true,
+    "savedAndPaused": true,
+    "onlyFailedItemRetried": true,
+    "artifacts": [
+      {
+        "item": "sphere",
+        "bytes": 17652,
+        "triangles": 224,
+        "sha256": "0db7a289c80d4c8807b4812c9b0a4fec66687fbf0871d9f2b09973539a7ddcd1"
+      },
+      {
+        "item": "retry-2521ed8b-aa43-4a86-8fc4-ada440c17acd",
+        "bytes": 1740,
+        "triangles": 12,
+        "sha256": "fe698c7d6aeb1fa009fc0bfbaf926a23692388fcf919796b8b71d0f0583d3d02"
+      }
+    ]
+  },
+  "website": {
+    "status": "deployed_verified",
+    "chromeDesktopVerified": true,
+    "userHealthConfirmed": true,
+    "deployment": "dpl_HAQR52HTXVvgcrtG6WHREm4zr1aX",
+    "domain": "www.junwei.cool",
+    "apiSessionsVerified": true,
+    "chromeDesktopVisible": true,
+    "project": "p-mv3ctr2n",
+    "session": "25ac53bf-8002-4a18-9fa6-cd27310e643a",
+    "desktopCheckpointReconnect": true,
+    "crossPageSessionPreserved": true,
+    "downloadedModel": {
+      "bytes": 1948,
+      "sha256": "e78b37ca61780fd166e9f1e7d30a2fe0679c38a81f783f8f821a7aa29f470340",
+      "objects": [
+        "ChromeInputCube"
+      ],
+      "triangles": 12
+    },
+    "importVerified": true,
+    "idempotentImportVerified": true,
+    "pauseRestoreVerified": true,
+    "savedAndPaused": true
+  }
+}

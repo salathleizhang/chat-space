@@ -1,0 +1,40 @@
+{
+  "files": [
+    {
+      "workspace": "d5398604-9a99-43df-a3da-9c045d9fba65",
+      "path": "projects/deployment-verification/project.json",
+      "text_content": "{\n  \"schemaVersion\": 1,\n  \"slug\": \"deployment-verification\",\n  \"name\": \"Production connectivity verification\",\n  \"createdAt\": \"2026-10-06T15:39:38.420Z\",\n  \"updatedAt\": \"2026-10-06T15:39:38.420Z\"\n}",
+      "blob_url": null,
+      "size_bytes": "197"
+    },
+    {
+      "workspace": "d5398604-9a99-43df-a3da-9c045d9fba65",
+      "path": "projects/deployment-verification/source/0-connection.png",
+      "text_content": null,
+      "blob_url": "https://w8rn2hc970krjhsp.private.blob.vercel-storage.com/workspaces/d5398604-9a99-43df-a3da-9c045d9fba65/6bfc7893-aacd-4818-b192-e74d99a459e3/0-connection.png",
+      "size_bytes": "68"
+    },
+    {
+      "workspace": "4f0693d4-1f28-496d-bafe-760e265f8559",
+      "path": "projects/p-muwuhqoo/project.json",
+      "text_content": "{\n  \"schemaVersion\": 1,\n  \"slug\": \"p-muwuhqoo\",\n  \"name\": \"我的第一个项目\",\n  \"createdAt\": \"2026-10-06T15:40:14.428Z\",\n  \"updatedAt\": \"2026-10-06T15:40:14.428Z\"\n}",
+      "blob_url": null,
+      "size_bytes": "169"
+    }
+  ],
+  "jobs": [],
+  "usage": [
+    {
+      "day": "2026-10-06T00:00:00.000Z",
+      "scope": "global",
+      "kind": "upload",
+      "count": 1
+    },
+    {
+      "day": "2026-10-06T00:00:00.000Z",
+      "scope": "d5398604-9a99-43df-a3da-9c045d9fba65",
+      "kind": "upload",
+      "count": 1
+    }
+  ]
+}

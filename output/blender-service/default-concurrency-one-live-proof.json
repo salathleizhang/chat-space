@@ -1,0 +1,12 @@
+{
+  "health": true,
+  "limits": {
+    "global": 100,
+    "owner": 10,
+    "queued": 100
+  },
+  "defaultConcurrency": 1,
+  "dailyOwnerMinutes": 600,
+  "dailyOwnerModelCalls": 36,
+  "readOnly": true
+}

@@ -1,0 +1,8 @@
+{
+  "glbPath": "projects/cloud-control-smoke/assets/probe-sphere/0-probe-sphere.glb",
+  "sidecarPath": "projects/cloud-control-smoke/assets/probe-sphere/.0-probe-sphere-request.json",
+  "index": 0,
+  "bytes": 13548,
+  "faces": 168,
+  "blenderVersion": "5.2.2 LTS"
+}

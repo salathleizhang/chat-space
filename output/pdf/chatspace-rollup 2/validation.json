@@ -1,0 +1,41 @@
+{
+  "ChatSpace-80x180cm.pdf": {
+    "pages": 1,
+    "page_mm": [
+      800.0,
+      1800.0
+    ],
+    "trim_mm": [
+      800.0,
+      1800.0
+    ],
+    "bytes": 3473941
+  },
+  "ChatSpace-80x180cm-3mm-bleed.pdf": {
+    "pages": 1,
+    "page_mm": [
+      806.0,
+      1806.0
+    ],
+    "trim_mm": [
+      800.0,
+      1800.0
+    ],
+    "bytes": 3474030
+  },
+  "preview": {
+    "pixels": [
+      4725,
+      10630
+    ],
+    "dpi": [
+      149.987,
+      149.987
+    ]
+  },
+  "qr": {
+    "decoded_from_final_preview": "https://www.junwei.cool/",
+    "method": "Apple Vision VNDetectBarcodesRequest"
+  },
+  "visual_review": "Latest PDF rendered at 800 × 1800 px and inspected: no clipping or overlap."
+}

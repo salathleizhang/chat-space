@@ -1,0 +1,159 @@
+{
+  "id": "3924bc46-129f-443d-9d11-bfaf09b3e786",
+  "number": 13,
+  "metadata": {
+    "created_on": "2026-10-11T11:31:02.40404Z",
+    "source": "wrangler",
+    "author_id": "794c74ef37838eae5ebc9cdae7311ed0",
+    "author_email": "1621422515@qq.com",
+    "has_preview": false
+  },
+  "annotations": {
+    "workers/triggered_by": "version_upload"
+  },
+  "resources": {
+    "script": {
+      "etag": "065ce5e5d9677f1292bb30d47b24b8c7c6b265f98523ea190685d1937ef9a2ad",
+      "handlers": [
+        "fetch",
+        "scheduled"
+      ],
+      "named_handlers": [
+        {
+          "name": "BlenderDesktop",
+          "handlers": [
+            "class"
+          ]
+        },
+        {
+          "name": "BlenderPool",
+          "handlers": [
+            "class"
+          ]
+        }
+      ],
+      "last_deployed_from": "wrangler"
+    },
+    "script_runtime": {
+      "migration_tag": "v1",
+      "compatibility_date": "2026-10-11",
+      "compatibility_flags": [
+        "nodejs_compat"
+      ],
+      "usage_model": "standard"
+    },
+    "bindings": [
+      {
+        "name": "BLENDER_AGENT_MODEL",
+        "text": "glm-5-3-flash-260828",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_DAILY_GLOBAL_MINUTES",
+        "text": "6000",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_DAILY_GLOBAL_MODEL_CALLS",
+        "text": "144",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_DAILY_OWNER_MINUTES",
+        "text": "600",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_DAILY_OWNER_MODEL_CALLS",
+        "text": "36",
+        "type": "plain_text"
+      },
+      {
+        "class_name": "BlenderDesktop",
+        "name": "BLENDER_DESKTOPS",
+        "namespace_id": "6cbf9db79c524135998cbf3a4fbceaa5",
+        "type": "durable_object_namespace"
+      },
+      {
+        "name": "BLENDER_FRAME_ORIGINS",
+        "text": "https://www.junwei.cool https://chat-space-app.vercel.app",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_FUNCTION_ID",
+        "text": "201j2k8z",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_IMAGE_INFO_ID",
+        "text": "1e1bj472zl",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_LIVE_TARGET",
+        "text": "https://saobidloj9b5hmpajmjko.apigateway-cn-beijing.volceapi.com/",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_PAUSE_ENABLED",
+        "text": "1",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_POOL",
+        "text": "cn-beijing-trial-v1",
+        "type": "plain_text"
+      },
+      {
+        "class_name": "BlenderPool",
+        "name": "BLENDER_POOLS",
+        "namespace_id": "974165e81aa94d5da609b8d03670fead",
+        "type": "durable_object_namespace"
+      },
+      {
+        "name": "BLENDER_SERVICE_BUILD",
+        "text": "sha256:1485b04a2886e05e7b364357df56c14d2991f87f39bd6a6bc44fb8cd1db39443",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_SERVICE_SECRET",
+        "type": "secret_text"
+      },
+      {
+        "name": "BLENDER_TOS_BUCKET",
+        "text": "chatspace-blender-cn-beijing-20261011",
+        "type": "plain_text"
+      },
+      {
+        "name": "BLENDER_TOS_ENDPOINT",
+        "text": "tos-cn-beijing.volces.com",
+        "type": "plain_text"
+      },
+      {
+        "name": "TOS_ACCESS_KEY",
+        "type": "secret_text"
+      },
+      {
+        "name": "TOS_SECRET_KEY",
+        "type": "secret_text"
+      },
+      {
+        "name": "VOLC_ACCESSKEY",
+        "type": "secret_text"
+      },
+      {
+        "name": "VOLC_KEY",
+        "type": "secret_text"
+      },
+      {
+        "name": "VOLC_REGION",
+        "text": "cn-beijing",
+        "type": "plain_text"
+      },
+      {
+        "name": "VOLC_SECRETKEY",
+        "type": "secret_text"
+      }
+    ]
+  }
+}
