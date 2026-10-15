@@ -1,9 +1,45 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
+import { CREATOR_INSTRUCTIONS } from "../prompts/creator";
+import * as toolsIndex from "../tools";
+import { BLENDER_TOOLS } from "../tools/blenderOps";
+import { BLENDER_SERVICE_TOOLS } from "../tools/blenderService";
 import { createCreatorAgent } from "./creator";
 
+/**
+ * 产品里所有工具 id 的词汇表（含配置开关控制、默认不注册的那些）。
+ *
+ * 从模块导出里现取而不是手写清单：手写清单会随新增工具过期，而这条测试的全部价值
+ * 就在于"提示词点名了一个不在工具表里的工具"必须立刻变红。
+ */
+/** createTool 的产物：有字符串 id 就是工具，否则当成"名字 → 工具"的表继续展开。 */
+function isTool(value: unknown): value is { id: string } {
+  return Boolean(value) && typeof value === "object" && typeof (value as { id?: unknown }).id === "string";
+}
+
+function collectToolIds(target: Set<string>, map: Record<string, unknown>): void {
+  for (const [name, value] of Object.entries(map)) target.add(isTool(value) ? value.id : name);
+}
+
+function allToolIds(): string[] {
+  const ids = new Set<string>();
+  for (const value of Object.values(toolsIndex)) {
+    if (isTool(value)) ids.add(value.id);
+    else if (value && typeof value === "object") collectToolIds(ids, value as Record<string, unknown>);
+  }
+  collectToolIds(ids, BLENDER_TOOLS);
+  collectToolIds(ids, BLENDER_SERVICE_TOOLS);
+  return [...ids];
+}
+
+/** 按标识符边界匹配：`inspect` 不该被 `inspection` 命中，`analyze-scene` 不该被 `analyze-reference` 命中。 */
+function mentionsTool(text: string, id: string): boolean {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`).test(text);
+}
+
 describe("creator 工具可用性", () => {
-  test("没有当前消息图片时不向模型提供 analyze-reference", async () => {
+  test("常驻工具与各自入参形状（含「提示词答应了的能力都挂上」的定点断言）", async () => {
     const tools = await createCreatorAgent({ apiKey: "sk-test" }).listTools();
     expect(tools["ask-user"]).toBeDefined();
     const askUserSchema = z.toJSONSchema(
@@ -71,7 +107,9 @@ describe("creator 工具可用性", () => {
     expect(tools["rig-model"]).toBeDefined();
     expect(tools["generate-animation"]).toBeDefined();
     expect(tools["generate-character"]).toBeDefined();
-    expect(Object.keys(tools)).not.toContain("unwrap-uv");
+    // 提示词点名了 unwrap-uv（"only unwrap-uv uses Hunyuan"），它就必须真的在工具表里：
+    // 2026-09-26 e0d5f27 只挂了 Tripo 那几个，把这条漏了，用户要 UV 只会拿到 Unknown tool。
+    expect(tools["unwrap-uv"]).toBeDefined();
     expect(Object.keys(tools)).not.toContain("build-cad-model");
     expect(Object.keys(tools)).not.toContain("get-cad-source");
     expect(Object.keys(tools)).not.toContain("generate-plate");
@@ -89,7 +127,12 @@ describe("creator 工具可用性", () => {
       { io: "input" },
     ) as { properties?: Record<string, unknown> };
     expect(Object.keys(placeObjectSchema.properties ?? {})).toEqual(["items"]);
-    expect(tools["analyze-reference"]).toBeUndefined();
+    /*
+      2026-10-15 事故的定点回归：analyze-reference 必须**常驻**。它以前按"本条消息恰好
+      一张图 + 关键词命中"裁剪，用户说「将这个场景生成出来」时工具表里没有它，模型硬调
+      拿到 Unknown tool，退而调 start-scene-job 又拿到一句叫它去调这个不存在工具的 404。
+    */
+    expect(tools["analyze-reference"]).toBeDefined();
     /*
       检查工具只有 inspect 一个（target 区分模型/场景）；旧的 inspect-asset 已并入它。
       schema 形状由下面那条"顶层 object"不变量守着——判别联合会序列化成 anyOf 并让请求 400。
@@ -116,12 +159,30 @@ describe("creator 工具可用性", () => {
     expect(tools["start-scene-job"]).toBeDefined();
   });
 
-  test("当前消息有图且明确要求参考图分析时才提供 analyze-reference", async () => {
-    const tools = await createCreatorAgent(
-      { apiKey: "sk-test" },
-      { enableAnalyzeReference: true },
-    ).listTools();
+  /**
+   * **类级不变量**：系统提示词里点名的工具，必须在模型看到的工具表里。
+   *
+   * 这条守的不是某一个工具，而是一整类事故：提示词无条件叫模型调 X，而工具表按
+   * 本条消息的措辞/图片把它裁掉 → 模型硬调拿到 `Unknown tool`（浏览器本地版），再拿
+   * 常驻的下一步工具去撞前置条件，得到一条无法执行的报错。2026-10-15 的
+   * 「Unknown tool: analyze-reference」+「no reference image analysis pending
+   * confirmation」就是这一类的实例。
+   *
+   * 词汇表直接从工具模块取（含配置开关控制的 blender 工具，它们默认不注册，所以提示词
+   * 一旦点名就会红）：新增工具或新增提示词措辞都会自动被这条守住，不需要维护例外表。
+   */
+  test("提示词点名的工具必须在工具表里", async () => {
+    const tools = await createCreatorAgent({ apiKey: "sk-test" }).listTools();
+    const mentioned = allToolIds().filter((id) => mentionsTool(CREATOR_INSTRUCTIONS, id));
+    // 词汇表本身要有效，否则"没点名"会让这条测试空转。
+    expect(mentioned.length).toBeGreaterThan(15);
+    expect(mentioned.filter((id) => !(id in tools))).toEqual([]);
+  });
+
+  test("analyze-reference 常驻，不随本条消息或任何请求参数变化", async () => {
+    const tools = await createCreatorAgent({ apiKey: "sk-test" }).listTools();
     expect(tools["analyze-reference"]).toBeDefined();
+    expect(tools["start-scene-job"]).toBeDefined();
   });
 
   /**

@@ -54,52 +54,25 @@ export async function listPendingGenerationTargets(
   });
 }
 
-/**
- * 参考图工作流会建立资产身份并引出后续生成，不能仅凭“消息里有图”猜测用户意图。
- * 这里只接受明确的参考图/资产提取措辞；普通看图、截图排错和设计讨论保持 false，
- * 由外层多模态模型直接回答。
- */
-export function hasExplicitReferenceAnalysisIntent(message: ChatMessage): boolean {
-  const text =
-    typeof message.content === "string"
-      ? message.content
-      : message.content
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n");
-  const normalized = text.toLowerCase().replace(/\s+/g, " ");
-  if (!normalized) return false;
+/*
+  这里曾经有一个 `hasExplicitReferenceAnalysisIntent`：拿正则去猜"这句话是不是在要
+  参考图资产提取"，并**用它决定 analyze-reference 是否出现在工具表里**。2026-10-15
+  的事故证明这个形状本身是错的，所以整块删掉了：
 
-  return [
-    /analyze-reference/,
-    /image-blast|uncover/,
-    /(完整|一键|自动).{0,12}(场景|世界).{0,16}(生成|建模|3d|三维)/,
-    /(一键|自动).{0,12}(生成|制作).{0,12}(完整)?(场景|世界)/,
-    /(生成|制作|创建|做成).{0,12}完整.{0,12}(场景|世界)/,
-    /参考图.{0,24}(分析|拆分|拆解|提取|识别|生成|建模|3d|三维)/,
-    /(分析|拆分|拆解|提取|识别).{0,24}参考图/,
-    /(提取|拆分|拆解|识别).{0,24}(资产|物体|对象|模型)/,
-    /(家具|物件|物品|物体|对象).{0,24}(拆出来|拆分|拆解|提取|隔离).{0,24}(参考图|单图|图片)/,
-    /(拆出来|单独拆|分别拆).{0,24}(参考图|单图)/,
-    /(把|将).{0,20}(图|图片|照片).{0,30}(生成|制作|创建|做成|转成|转换成).{0,16}(3d|三维|模型|资产)/,
-    /(图中|图片里|照片里|里面|其中).{0,30}(物体|对象|资产).{0,30}(生成|制作|建模|模型)/,
-    /(extract|split|identify).{0,32}(asset|object|model).{0,32}(image|photo)/,
-    /(image|photo).{0,32}(into|to|as).{0,16}(3d|assets?|models?)/,
-    /*
-      英文语序（2026-10 实测漏判：判定为 false 时工具集里根本没有 analyze-reference，
-      agent 只能自己编 slug 去调 mode=edit，批量 404）。中文那几条模式套不到英文语序上：
-      英文把"提取什么"放在动词之后、"从哪张图"挪到后半句，于是
-      "Extract all the furniture from this image and generate 3D models" 整句落空。
-      这两条分别覆盖**先提取后建模**与**先建模再交代来源**两种语序。
-      负例必须继续为假（"Can you make this 3D model look better?"、
-      "Is this 3D model from this photo correct?"）：所以第二条同时要求创造类动词与来源侧
-      落到图/物体上——光有"3D 模型 + 图"这两个词不算意图，那正是普通提问的样子。
-    */
-    /(extract|pull|isolate|separate|split|identify).{0,48}(objects?|items?|furniture|assets?|models?|pieces?)/,
-    /(generate|make|create|turn|convert|produce|build).{0,40}(3d|three-d|三维|models?|assets?).{0,40}\b(from|of|in|into|using)\b.{0,24}(image|photo|picture|objects?|furniture|items?|scene)/,
-  ].some((pattern) => pattern.test(normalized));
-}
+  - 它是**隐藏前置条件**：模型看不到自己这一轮算不算"明确要求"，只能靠措辞去撞正则。
+    项目名就叫「将这个场景生成出来。每一个家具都是单独的」，用户原样打出来判定为 false。
+  - 判定为 false 时工具表里没有 analyze-reference，而系统提示词无条件叫模型调它 →
+    浏览器本地版抛 `Unknown tool`，模型再退而调常驻的 start-scene-job → 404 且文案
+    还叫它去调那个不存在的工具。重试永远一样：工具表是按措辞算的。
+  - 它维护的是**措辞**而不是**边界**：真正的边界是"这张图是不是用户在本场对话里带来的"
+    （`conversationImagePaths`，只走客户端带来的本会话历史，绝不扫描 source/），
+    以及"付费前必须有用户点过的确认卡"。措辞猜错的代价（多一次免费分析 + 一张确认卡）
+    远小于把整条完整场景通路卡死的代价。
 
+  所以现在的口径：**工具常驻，判断留在提示词与工具描述里（模型看得见）**；
+  参考图由"本条消息附带的图 → 本场对话里用户附过的图"解析（见 requestContext.ts 的
+  referenceImagesInPlay），分析结果停在对象确认站，付费生成仍然要用户点卡同意。
+*/
 
 /**
  * 本轮请求里**整场对话**中用户附带的图片，按出现顺序去重。
@@ -112,6 +85,8 @@ export function hasExplicitReferenceAnalysisIntent(message: ChatMessage): boolea
  * 不是"这一条消息里的图"** —— 判据必须跟着他的指代走。
  *
  * 只看 `request.messages`（客户端带来的本会话历史），所以不会把上一场会话的图算进来。
+ * 2026-10-15 起它同时是"参考图分析该用哪张图"的回退来源（见 requestContext.ts 的
+ * referenceImagesInPlay）：同一条指代纪律，工具与工具表给的是同一个答案。
  */
 export function conversationImagePaths(messages: ChatMessage[]): string[] {
   const paths: string[] = [];
@@ -123,8 +98,6 @@ export function conversationImagePaths(messages: ChatMessage[]): string[] {
   }
   return paths;
 }
-
-
 
 /** 对话流增量：文本或工具调用透明度事件（toolCallId+args 供 app 侧协作工具消费） */
 export type ChatDelta =
@@ -387,7 +360,6 @@ export function withReplyLanguageDirective(
 export function buildChatRequestContext(
   request: ChatStreamRequest,
   currentImagePaths: string[],
-  referenceAnalysisAllowed: boolean,
   conversationImages: string[] = [],
 ) {
   return buildRequestContext({
@@ -395,7 +367,6 @@ export function buildChatRequestContext(
     llm: request.llm,
     currentImagePaths,
     conversationImagePaths: conversationImages,
-    referenceAnalysisAllowed,
     worldLabsApiKey: request.worldLabsApiKey,
     tripo3dApiKey: request.tripo3dApiKey,
     hunyuanApiKey: request.hunyuanApiKey,
@@ -420,9 +391,9 @@ export async function* streamChat(
     (message) => message.role === "user",
   );
   /*
-    续跑轮没有新的用户输入：它看的是 Agent 自己的产物，不是用户附的参考图。
-    这里必须把两条请求级判断都按"没有用户消息"处理，否则上一轮用户附的参考图
-    会被重新认成"本条消息明确附带"，把 analyze-reference 重新放回工具集。
+    续跑轮没有新的用户输入，它看到的是 Agent 自己的产物；`resume` 里的图不算用户附图。
+    注意这里只影响"本条消息附带了什么"，**不再影响工具表**：工具表只由进程配置决定
+    （见 creator.ts 的模块注释），所以措辞与图片判不出所以然时，模型仍然看得见工具。
   */
   const currentImagePaths =
     !request.resume && latestUserMessage && typeof latestUserMessage.content !== "string"
@@ -430,15 +401,7 @@ export async function* streamChat(
           .filter((part) => part.type === "image")
           .map((part) => part.path)
       : [];
-  const referenceAnalysisAllowed = Boolean(
-    !request.resume &&
-      latestUserMessage &&
-      currentImagePaths.length === 1 &&
-      hasExplicitReferenceAnalysisIntent(latestUserMessage),
-  );
-  const agent = createCreatorAgent(request.llm, {
-    enableAnalyzeReference: referenceAnalysisAllowed,
-  });
+  const agent = createCreatorAgent(request.llm);
   const storage = getAssetStorage();
   const state = await getProjectState(storage, request.projectSlug);
   const pendingTargets = await listPendingGenerationTargets(
@@ -541,7 +504,6 @@ export async function* streamChat(
     requestContext: buildChatRequestContext(
       request,
       currentImagePaths,
-      referenceAnalysisAllowed,
       conversationImages,
     ),
   });

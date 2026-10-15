@@ -10,7 +10,6 @@ import {
   toAnswerMessage,
   buildChatRequestContext,
   conversationImagePaths,
-  hasExplicitReferenceAnalysisIntent,
   imagePathsFromToolResult,
   listPendingGenerationTargets,
   planContextText,
@@ -27,81 +26,6 @@ const root = await mkdtemp(join(tmpdir(), "chatspace-chat-context-test-"));
 const storage = new LocalFileStorage(root);
 afterAll(() => rm(root, { recursive: true, force: true }));
 
-function imageMessage(text: string): ChatMessage {
-  return {
-    role: "user",
-    content: [
-      { type: "image", path: "projects/demo/source/0-image.png" },
-      { type: "text", text },
-    ],
-  };
-}
-
-describe("hasExplicitReferenceAnalysisIntent", () => {
-  test("普通看图、截图排错和设计评价都不激活参考图工作流", () => {
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("请查看这张图片。"))).toBe(false);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("这个报错为什么出现？"))).toBe(false);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("你觉得这个界面设计怎么样？"))).toBe(false);
-    // 英文负例：有图片也有 3D/模型字眼，但没有任何"提取/生成"意图。
-    expect(
-      hasExplicitReferenceAnalysisIntent(imageMessage("What do you think of this interior design?")),
-    ).toBe(false);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("Why does this error appear?"))).toBe(false);
-    expect(
-      hasExplicitReferenceAnalysisIntent(imageMessage("Can you make this 3D model look better?")),
-    ).toBe(false);
-    expect(
-      hasExplicitReferenceAnalysisIntent(imageMessage("Is this 3D model from this photo correct?")),
-    ).toBe(false);
-  });
-
-  test("明确要求参考图分析或从图片生成资产时才激活", () => {
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("请分析这张参考图，提取可生成的资产"))).toBe(true);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("把这张图片做成 3D 模型"))).toBe(true);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("提取图里的桌椅对象并分别建模"))).toBe(true);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("把这张图一键生成完整场景"))).toBe(true);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("把这张图生成完整场景"))).toBe(true);
-    expect(hasExplicitReferenceAnalysisIntent(imageMessage("直接用这张图生成世界"))).toBe(false);
-    expect(
-      hasExplicitReferenceAnalysisIntent(
-        imageMessage("把这个图片的每个家具拆出来，生成单个的参考图"),
-      ),
-    ).toBe(true);
-  });
-
-  test("英文语序也要激活（2026-10 实测漏判导致 analyze-reference 整轮缺失）", () => {
-    // 真实事故原话：判定为 false 时工具集里没有 analyze-reference，
-    // agent 只能自己编 slug 去调 mode=edit，批量 404。
-    expect(
-      hasExplicitReferenceAnalysisIntent(
-        imageMessage("Extract all the furniture from this image and generate 3D models"),
-      ),
-    ).toBe(true);
-    expect(
-      hasExplicitReferenceAnalysisIntent(
-        imageMessage("extract every object from the photo and make 3d assets"),
-      ),
-    ).toBe(true);
-    expect(
-      hasExplicitReferenceAnalysisIntent(
-        imageMessage("pull the items out of this image as 3d models"),
-      ),
-    ).toBe(true);
-    expect(
-      hasExplicitReferenceAnalysisIntent(
-        imageMessage("generate 3D models from the objects in this photo"),
-      ),
-    ).toBe(true);
-    expect(
-      hasExplicitReferenceAnalysisIntent(
-        imageMessage("generate 3D models of the furniture in this picture"),
-      ),
-    ).toBe(true);
-    expect(
-      hasExplicitReferenceAnalysisIntent(imageMessage("Turn this photo into 3D models")),
-    ).toBe(true);
-  });
-});
 
 /**
  * 用户的指代是「我发你的那张」，不是「这一条消息里的那张」。
@@ -457,7 +381,7 @@ describe("buildChatRequestContext", () => {
         seed3dApiKey: "ark-seed3d-key",
       },
       [],
-      false,
+      [],
     );
 
     expect(context.get<string>("seed3dApiKey")).toBe("ark-seed3d-key");
@@ -472,7 +396,7 @@ describe("buildChatRequestContext", () => {
         imageGenerateModel: "seedream-5-pro",
       },
       [],
-      false,
+      [],
     );
 
     expect(context.get<string>("imageGenerateModel")).toBe("seedream-5-pro");
@@ -694,5 +618,94 @@ describe("streamChat 的思维链接线", () => {
       .toEqual(["先看场景", "再想摆放"]);
     // 思维链不是回复正文：混进 text 就会被写进会话记录、并在下一轮回放给模型
     expect(deltas.filter((delta) => delta.type === "text").map((delta) => delta.text)).toEqual(["好了"]);
+  });
+});
+
+/**
+ * 工具表接线（2026-10-15 事故的端到端回归）。
+ *
+ * 事故的形状：用户先发一张场景图，下一句才说「将这个场景生成出来」。以前
+ * `streamChat` 拿**本条消息**的图片 + 一个措辞正则去决定 `analyze-reference` 要不要
+ * 进工具表，那句话两条都不满足 → 工具表里没有它。而系统提示词无条件叫模型调它，
+ * 于是模型硬调（浏览器本地版报 `Unknown tool: analyze-reference`），再退而调常驻的
+ * `start-scene-job`，拿到一句"没有待确认分析，去调 analyze-reference"的 404 —— 叫它
+ * 去调一个刚刚不存在的工具。重试永远一样，因为工具表是按那句话算出来的。
+ *
+ * 这里跑真实 `streamChat`，判据是**发给上游的报文**：工具表与这句话的措辞无关。
+ */
+describe("streamChat 的工具表接线", () => {
+  test("带图后续一句「将这个场景生成出来」时，工具表照旧含 analyze-reference", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "chatspace-tool-wiring-test-"));
+    const projectStorage = new LocalFileStorage(projectRoot);
+    const now = new Date().toISOString();
+    await writeJson(projectStorage, projectFile("demo"), ProjectSchema, {
+      schemaVersion: 1,
+      slug: "demo",
+      name: "Demo",
+      createdAt: now,
+      updatedAt: now,
+    });
+    setAssetStorage(projectStorage);
+    // 历史里那张图必须真的存在：它会经 readAsDataUri 变成报文里的图片部件。
+    await projectStorage.writeBytes(
+      "projects/demo/source/0-photo.png",
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    );
+
+    const bodies: string[] = [];
+    const originalFetch = globalThis.fetch;
+    const sse = [
+      'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}',
+      "",
+      'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n");
+    globalThis.fetch = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: RequestInit,
+    ) => {
+      bodies.push(typeof init?.body === "string" ? init.body : String(init?.body ?? ""));
+      return new Response(sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+
+    try {
+      try {
+        for await (const _chunk of streamChat({
+          projectSlug: "demo",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "image", path: "projects/demo/source/0-photo.png" },
+                { type: "text", text: "看看这个房间" },
+              ],
+            },
+            { role: "assistant", content: "好的" },
+            // 这一句不含"完整/一键/自动"，也不带图：事故里就是它把工具裁掉的。
+            { role: "user", content: "将这个场景生成出来" },
+          ],
+          llm: { apiKey: "sk-test", baseUrl: "http://127.0.0.1:9/v1", model: "test" },
+        })) {
+          // 不需要消费内容
+        }
+      } catch {
+        // 假响应不保证被上游解析器完整接受
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      setAssetStorage(undefined);
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+
+    const payload = bodies.join("\n");
+    expect(bodies.length).toBeGreaterThan(0);
+    expect(payload.includes('"analyze-reference"'), "工具表里没有 analyze-reference").toBe(true);
+    // 事故的另一半：下游工具必须与它同时在，否则模型只能去撞前置条件。
+    expect(payload.includes('"start-scene-job"'), "工具表里没有 start-scene-job").toBe(true);
   });
 });

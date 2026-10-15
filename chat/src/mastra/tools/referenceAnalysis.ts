@@ -21,8 +21,7 @@ import { getAssetStorage, readJson, writeJson } from "../../services/assetStorag
 import { mutateCandidates } from "../../services/candidateRegistry";
 import { requireProject, uniqueAssetSlug } from "./projectTools";
 import {
-  currentImagePaths,
-  referenceAnalysisAllowed,
+  referenceImagesInPlay,
   requireCurrentProject,
 } from "./requestContext";
 
@@ -394,10 +393,16 @@ export async function runConfirmReferenceAssets(
     // 就在磁盘上，按它幂等返回即可（中断重试 / 新会话丢了 runId 都走这条路）。
     const reused = await reusableConfirmation(projectSlug, input.selectedSlugs);
     if (reused) return reused;
+    /*
+      这里是死路的**唯一**出口，所以文案必须能被执行：点名已修复为常驻工具的
+      analyze-reference，并说清图片从哪来（本条消息或本场对话）。旧文案只说
+      "call analyze-reference again"，而在 2026-10-15 的事故里那个工具恰恰不在
+      工具表里——模型于是反复重试同两件事。
+    */
     throw new ChatServiceError(
       "There is no reference image analysis pending confirmation in this project" +
         (input.runId ? ` (runId "${input.runId}" does not match one)` : "") +
-        "; call analyze-reference again",
+        "; first call analyze-reference with the reference image (the image attached to this message, or the one the user attached earlier in this conversation), then call start-scene-job again",
       404,
       "run_not_found",
     );
@@ -490,32 +495,44 @@ export async function runConfirmReferenceAssets(
 
 // ---------- Mastra 工具包装 ----------
 
+/**
+ * 工具入参 = 视觉分析草稿 + 一个**可选**的 `image`。
+ *
+ * `image` 只在"这场对话里有不止一张用户附图"时用来指认（否则由服务端按
+ * `referenceImagesInPlay` 解析：本条消息的图，没有就用本场对话里的那张）。少了它，
+ * 多图对话里的用户说"用第二张"时模型没有任何字段能把这句话表达出来，又变成一条死路。
+ * 它只是指认手段，不是钥匙：路径最终仍由 runAnalyzeReference 校验必须落在本项目 source/。
+ */
+const AnalyzeReferenceToolInputSchema = AnalyzeReferenceDraftSchema.extend({
+  image: LogicalPathSchema.optional(),
+});
+
 export const analyzeReferenceTool = createTool({
   id: "analyze-reference",
   description:
-    "Use the image explicitly attached to this user message as the official reference image for full scene generation, and produce object candidates awaiting user confirmation (free, written to disk locally, does not call another LLM). You can already see the current image directly: fill in the scene description according to the actual picture, and list in objects every atomic item that can be picked up and modeled independently; do not list walls, floors, carpets, sky, or water as objects, and do not merge a group of furniture into a set. **Every object must be given a normalized bounding box box=[x0,y0,x1,y1] (origin at top-left, values 0–1, tightly following the object's own outline; do not frame the ground projection, shadows, or neighboring objects), and give the real heightMeters where possible**; objects missing box cannot be automatically placed back into the 3D scene. Also fill in camera according to your observation: horizonRow (the normalized row where the horizon is; 0 is the top of the image; approximately the image centerline when the camera is level), cameraHeightMeters (shooting height; about 1.4–1.6 for a standing handheld shot), verticalFovDeg (vertical field of view; about 55–70 for a phone main camera) — placement relies on these three values to convert pixels into meters. After the user confirms, pass the returned runId (if you still have it) and the optional selectedSlugs to start-scene-job; the server can also find this pending analysis by itself, so never invent a runId placeholder. Do not call it for ordinary image viewing, screenshot debugging, or design critique.",
-  inputSchema: AnalyzeReferenceDraftSchema,
+    "Use the reference image the user pointed at as the official reference image for full scene generation, and produce object candidates awaiting user confirmation (free, written to disk locally, does not call another LLM). **The image is the one attached to this message, or — when this message carries none — the one the user attached earlier in this conversation; the server resolves that itself, so never ask the user to upload it again, and never pick a file out of the project's source/ directory on your own.** Pass image only to say explicitly which one, and only when the conversation holds several images. You can already see the current image directly: fill in the scene description according to the actual picture, and list in objects every atomic item that can be picked up and modeled independently; do not list walls, floors, carpets, sky, or water as objects, and do not merge a group of furniture into a set. **Every object must be given a normalized bounding box box=[x0,y0,x1,y1] (origin at top-left, values 0–1, tightly following the object's own outline; do not frame the ground projection, shadows, or neighboring objects), and give the real heightMeters where possible**; objects missing box cannot be automatically placed back into the 3D scene. Also fill in camera according to your observation: horizonRow (the normalized row where the horizon is; 0 is the top of the image; approximately the image centerline when the camera is level), cameraHeightMeters (shooting height; about 1.4–1.6 for a standing handheld shot), verticalFovDeg (vertical field of view; about 55–70 for a phone main camera) — placement relies on these three values to convert pixels into meters. After the user confirms, pass the returned runId (if you still have it) and the optional selectedSlugs to start-scene-job; the server can also find this pending analysis by itself, so never invent a runId placeholder. **Only call it when the user asks to extract assets or generate a scene from the image** — for ordinary image viewing, screenshot debugging, or design critique, just answer. Do not call it on an automatic resume turn: there is no new user request in such a turn; report to the user and let them decide.",
+  inputSchema: AnalyzeReferenceToolInputSchema,
   execute: async (input, context) => {
-    if (!referenceAnalysisAllowed(context)) {
+    const { image: designatedImage, ...analysis } = input;
+    const projectSlug = requireCurrentProject(context);
+    const candidates = referenceImagesInPlay(context);
+    /*
+      图片解析是**唯一**的前置条件（"该不该做"由模型按工具描述与系统提示词判断）。
+      解析不出来时错误必须写成"下一步该做什么"：这是可恢复的，不是死路。
+    */
+    const image =
+      designatedImage ?? (candidates.length === 1 ? candidates[0] : undefined);
+    if (!image) {
       throw new ChatServiceError(
-        "This message does not explicitly ask to extract 3D assets from the attached image as a reference image",
-        400,
-        "reference_analysis_intent_required",
-      );
-    }
-    const images = currentImagePaths(context);
-    if (images.length !== 1) {
-      throw new ChatServiceError(
-        images.length === 0
-          ? "This message has no attached image, so reference image asset extraction cannot be started"
-          : "This message has multiple attached images; reference image asset extraction currently supports only a single image",
+        candidates.length === 0
+          ? "There is no image to use as a reference image: this message carries none and the user attached none earlier in this conversation. " +
+            "Ask the user to attach the scene photo (or to say which existing image to use) before calling this tool again."
+          : `This conversation has more than one image the user attached (${candidates.join(", ")}), and reference asset extraction takes exactly one. ` +
+            "Put this on an ask-user card so the user picks one, then pass that image's full path as the image parameter.",
         400,
         "reference_image_required",
       );
     }
-    return runAnalyzeReference(
-      requireCurrentProject(context),
-      { image: images[0]!, analysis: input },
-    );
+    return runAnalyzeReference(projectSlug, { image, analysis });
   },
 });

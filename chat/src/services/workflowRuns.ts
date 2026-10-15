@@ -15,8 +15,6 @@ export interface RunKeys {
    * 再单独补一句"就用这张"。只看 `currentImagePaths` 会让那种追问拿不到任何图。
    */
   conversationImagePaths?: string[];
-  /** 最新用户文本明确要求把附图提取/生成成 3D 资产。 */
-  referenceAnalysisAllowed?: boolean;
   /** AgentDock 当前图片生成模型；天空盒编辑等工具直接消费，不暴露为工具参数。 */
   imageGenerateModel?: ChatStreamRequest["imageGenerateModel"];
   /** AgentDock 当前 3D 模型选择；start-3d-batch 直接消费，不暴露为工具参数。 */
@@ -43,7 +41,6 @@ export function buildRequestContext(keys: RunKeys): RequestContext {
   if (keys.llm) ctx.set("llm", keys.llm);
   if (keys.currentImagePaths) ctx.set("currentImagePaths", keys.currentImagePaths);
   if (keys.conversationImagePaths) ctx.set("conversationImagePaths", keys.conversationImagePaths);
-  if (keys.referenceAnalysisAllowed) ctx.set("referenceAnalysisAllowed", true);
   if (keys.imageGenerateModel) ctx.set("imageGenerateModel", keys.imageGenerateModel);
   if (keys.threeDModel) ctx.set("threeDModel", keys.threeDModel);
   // 0 是合法时刻（epoch），所以按 undefined 判而不是真值判。

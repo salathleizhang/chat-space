@@ -91,10 +91,22 @@ function readImagePathList(
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
 }
 
-export function referenceAnalysisAllowed(
+/**
+ * 这次参考图分析该用哪张图：**本条消息附带的图**优先，没有就回退到**本场对话里
+ * 用户附过的图**。
+ *
+ * 两条纪律，别改：
+ * ① 回退只看 `conversationImagePaths`（服务端从本次请求的会话历史算出来，只覆盖客户端
+ *    带来的这一场对话）。**绝不扫描项目 source/ 目录**：那里可能躺着上一场会话生成的
+ *    参考图，归属不明，静默复用等于拿旧图开工（2026-10-05 用户报的正是这条）。
+ * ② 回退是必需的：用户先发图、下一句才说「将这个场景生成出来」时，本条消息没有图，
+ *    只看 currentImagePaths 会让整条完整场景通路报"本条消息没有附带图片"。
+ */
+export function referenceImagesInPlay(
   context: ToolContextLike | undefined,
-): boolean {
-  return readContextValue(context, "referenceAnalysisAllowed") === true;
+): string[] {
+  const current = currentImagePaths(context);
+  return current.length > 0 ? current : conversationImagePaths(context);
 }
 
 /** AgentDock 当前图片生成模型；Auto/旧请求统一回退到默认 Seedream 4.5。 */

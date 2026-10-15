@@ -117,7 +117,6 @@ describe("analyze-reference / 场景确认服务", () => {
         requestContext: buildRequestContext({
           projectSlug: "ost",
           currentImagePaths: [OST_IMAGE],
-          referenceAnalysisAllowed: true,
           ...KEYS,
         }),
       } as never,
@@ -152,34 +151,74 @@ describe("analyze-reference / 场景确认服务", () => {
     ]);
   });
 
-  test("本条消息没有图片时硬拒绝，不扫描项目历史源图", () => {
-    expect(
-      analyzeReferenceTool.execute!(
-        GARAGE_ANALYSIS,
-        {
-          requestContext: buildRequestContext({
-            projectSlug: "ost",
-            referenceAnalysisAllowed: true,
-            ...KEYS,
-          }),
-        } as never,
-      ),
-    ).rejects.toThrow("This message has no attached image");
+  test("本条消息没有图时用本场对话里用户附过的那张（2026-10-15 事故：整条完整场景通路卡死）", async () => {
+    /*
+      用户先发图、下一句才说「将这个场景生成出来」时，本条消息没有图。以前
+      analyze-reference 既被措辞正则裁掉、又要求"本条消息恰好一张图"，于是模型拿到
+      Unknown tool，退而调 start-scene-job 又拿到 404。这里钉住可恢复的形状。
+    */
+    const projectSlug = "conversation-image";
+    await createProject(storage, { name: "对话附图", slug: projectSlug });
+    const image = `${projectSourceDir(projectSlug)}/0-photo.png`;
+    await storage.writeBytes(image, PNG_BYTES);
+
+    const result = await analyzeReferenceTool.execute!(
+      GARAGE_ANALYSIS,
+      {
+        requestContext: buildRequestContext({
+          projectSlug,
+          conversationImagePaths: [image],
+          ...KEYS,
+        }),
+      } as never,
+    ) as { objects: { slug: string }[] };
+    expect(result.objects.map((object) => object.slug)).toEqual(["toolbox"]);
   });
 
-  test("普通附图消息即使有图片也不能启动参考图资产提取", () => {
-    expect(
+  test("整场对话里有多张图时要求指认，按 image 指认后照常分析", async () => {
+    const projectSlug = "two-conversation-images";
+    await createProject(storage, { name: "两张对话附图", slug: projectSlug });
+    const first = `${projectSourceDir(projectSlug)}/0-a.png`;
+    const second = `${projectSourceDir(projectSlug)}/1-b.png`;
+    await storage.writeBytes(first, PNG_BYTES);
+    await storage.writeBytes(second, PNG_BYTES);
+    const requestContext = buildRequestContext({
+      projectSlug,
+      conversationImagePaths: [first, second],
+      ...KEYS,
+    });
+
+    // 不指认：报错必须是"下一步该做什么"，而且列出候选，不能是死路。
+    await expect(
+      analyzeReferenceTool.execute!(GARAGE_ANALYSIS, { requestContext } as never),
+    ).rejects.toThrow(/more than one image.*ask-user card/);
+
+    const result = await analyzeReferenceTool.execute!(
+      { ...GARAGE_ANALYSIS, image: second },
+      { requestContext } as never,
+    ) as { objects: { slug: string }[] };
+    expect(result.objects.map((object) => object.slug)).toEqual(["toolbox"]);
+    // 指认的那张才是这次分析的依据。
+    expect(await storage.exists(`${projectSourceDir(projectSlug)}/1-b.png.json`)).toBe(true);
+  });
+
+  test("一张图都没有时拒绝，且绝不扫描项目 source/ 里的旧图", async () => {
+    /*
+      边界是"用户在本场对话里带来的图"，不是"项目里存在的图"：source/ 里可能躺着
+      上一场会话生成的参考图，归属不明，静默复用等于拿旧图开工。
+    */
+    const projectSlug = "stale-source-only";
+    await createProject(storage, { name: "只有旧源图", slug: projectSlug });
+    await storage.writeBytes(`${projectSourceDir(projectSlug)}/0-old.png`, PNG_BYTES);
+
+    await expect(
       analyzeReferenceTool.execute!(
         GARAGE_ANALYSIS,
         {
-          requestContext: buildRequestContext({
-            projectSlug: "ost",
-            currentImagePaths: [OST_IMAGE],
-            ...KEYS,
-          }),
+          requestContext: buildRequestContext({ projectSlug, ...KEYS }),
         } as never,
       ),
-    ).rejects.toThrow("does not explicitly ask");
+    ).rejects.toThrow(/no image to use as a reference image.*Ask the user to attach/);
   });
 
   test("分析停在对象确认站 → 确认后只落候选，不点火或创建空资产", async () => {
@@ -361,7 +400,7 @@ describe("analyze-reference / 场景确认服务", () => {
     // （那会直接触发一轮付费生成）。没有已确认分析可复用，只能重新 analyze-reference。
     await expect(
       runConfirmReferenceAssets("stale-pending", {}, { sessionStartedAt: Number.MAX_SAFE_INTEGER }),
-    ).rejects.toThrow("call analyze-reference again");
+    ).rejects.toThrow("call analyze-reference with the reference image");
     expect(
       await storage.exists(`${projectDir("stale-pending")}/.analyze-reference-${started.runId}.json`),
     ).toBe(true);
@@ -393,7 +432,7 @@ describe("analyze-reference / 场景确认服务", () => {
   test("没有任何待确认分析、也没有已确认场景时，给出可执行的报错", () => {
     expect(
       runConfirmReferenceAssets("no-analysis-at-all", { runId: "gone" }),
-    ).rejects.toThrow("call analyze-reference again");
+    ).rejects.toThrow("call analyze-reference with the reference image");
   });
 });
 
