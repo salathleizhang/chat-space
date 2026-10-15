@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ChatServiceError } from "../common/errors";
 import { projectFile } from "../common/libraryPaths";
 import { ProjectSchema, RequestSidecarSchema } from "../dto/library";
-import { LocalFileStorage, readJson, writeJson } from "./assetStorage";
+import { LocalFileStorage, readAsDataUri, readJson, setInlineImageShrinker, writeJson } from "./assetStorage";
 
 const root = await mkdtemp(join(tmpdir(), "chatspace-storage-test-"));
 const storage = new LocalFileStorage(root);
@@ -93,5 +93,57 @@ describe("JSON 契约读写", () => {
       RequestSidecarSchema.safeParse({ ...base, params: { apiKey: "sk-x" } })
         .success,
     ).toBe(false);
+  });
+});
+
+/**
+ * 图片内联的瘦身 hook。
+ *
+ * 这一条是给"请求体太大 → 跨境那一跳把它拖到分钟级 → 撞满 Vercel 300 秒上限"兜底的：
+ * 浏览器构建装一个基于 OffscreenCanvas 的实现，其他运行时（Bun 本机服务、测试）不装，
+ * 行为必须与改造前逐字一致。所以两条不变量最重要：**没装就原样**、**装坏了也原样**。
+ */
+describe("内联图片的瘦身 hook", () => {
+  test("没装瘦身器时逐字回到原来的 data URI", async () => {
+    await storage.writeBytes("projects/hook/source/tiny.png", new Uint8Array([1, 2, 3]));
+    setInlineImageShrinker(undefined);
+    expect(await readAsDataUri(storage, "projects/hook/source/tiny.png")).toBe(
+      `data:image/png;base64,${Buffer.from([1, 2, 3]).toString("base64")}`,
+    );
+  });
+
+  test("装上瘦身器后按新字节与新 mime 内联", async () => {
+    await storage.writeBytes("projects/hook/source/big.png", new Uint8Array(64));
+    setInlineImageShrinker(async ({ bytes, mime, logicalPath }) => {
+      expect(logicalPath).toBe("projects/hook/source/big.png");
+      expect(mime).toBe("image/png");
+      expect(bytes.byteLength).toBe(64);
+      return { bytes: new Uint8Array([9]), mime: "image/jpeg" };
+    });
+    expect(await readAsDataUri(storage, "projects/hook/source/big.png")).toBe(
+      `data:image/jpeg;base64,${Buffer.from([9]).toString("base64")}`,
+    );
+    setInlineImageShrinker(undefined);
+  });
+
+  test("瘦身器返回 undefined（缩小没收益/解不开）时回退原图", async () => {
+    await storage.writeBytes("projects/hook/source/keep.png", new Uint8Array([7, 7]));
+    setInlineImageShrinker(async () => undefined);
+    expect(await readAsDataUri(storage, "projects/hook/source/keep.png")).toBe(
+      `data:image/png;base64,${Buffer.from([7, 7]).toString("base64")}`,
+    );
+    setInlineImageShrinker(undefined);
+  });
+
+  test("模型文件不过瘦身器（它只处理图片）", async () => {
+    await storage.writeBytes("projects/hook/source/mesh.glb", new Uint8Array([5]));
+    let called = 0;
+    setInlineImageShrinker(async () => {
+      called += 1;
+      return undefined;
+    });
+    await readAsDataUri(storage, "projects/hook/source/mesh.glb");
+    expect(called).toBe(0);
+    setInlineImageShrinker(undefined);
   });
 });

@@ -22,6 +22,24 @@ function sseResponse(body: string): Response {
 }
 
 describe("streamChat", () => {
+  test("思维链事件走 onReasoning，不进正文（推理模型等待期的可见进度）", async () => {
+    globalThis.fetch = mock(async () =>
+      sseResponse(
+        'event: reasoning\ndata: {"type":"reasoning","text":"先看场景"}\n\n' +
+          'event: delta\ndata: {"type":"delta","text":"答案"}\n\n' +
+          'event: done\ndata: {"type":"done"}\n\n',
+      ),
+    ) as unknown as typeof fetch;
+    const callbacks = { ...handlers(), onReasoning: mock(() => {}) };
+
+    await streamChat("demo", [], {}, callbacks);
+
+    expect(callbacks.onReasoning).toHaveBeenCalledWith("先看场景");
+    // 思维链不是回复正文：混进 content 会污染会话记录，也会被回放给模型
+    expect(callbacks.onDelta).toHaveBeenCalledTimes(1);
+    expect(callbacks.onDelta).toHaveBeenCalledWith("答案");
+  });
+
   test("忽略 SSE 心跳注释并正常处理 done", async () => {
     globalThis.fetch = mock(async () =>
       sseResponse(

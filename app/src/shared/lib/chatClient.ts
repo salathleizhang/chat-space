@@ -67,6 +67,11 @@ export interface LlmRequestConfig {
 
 interface StreamHandlers {
   onDelta: (text: string) => void;
+  /**
+   * 推理模型的思维链增量。它先于正文到达，是用来填满"等待期"的可见进度——
+   * 不并入正文，只渲染成独立的一小块。
+   */
+  onReasoning?: (text: string) => void;
   /** agent 工具调用透明度：调用了哪个工具（付费操作对用户可见）；
    *  inspect-asset 等客户端协作工具靠 args 驱动 app 侧动作 */
   onTool?: (
@@ -182,6 +187,7 @@ export async function streamChat(
 
         const event = JSON.parse(dataLine.slice(5)) as
           | { type: "delta"; text: string }
+          | { type: "reasoning"; text: string }
           | {
               type: "tool";
               name: string;
@@ -207,6 +213,7 @@ export async function streamChat(
           | { type: "error"; message: string };
 
         if (event.type === "delta") handlers.onDelta(event.text);
+        else if (event.type === "reasoning") handlers.onReasoning?.(event.text);
         else if (event.type === "tool")
           handlers.onTool?.(event.name, event.toolCallId, event.args);
         else if (event.type === "tool-result")

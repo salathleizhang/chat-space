@@ -1,7 +1,7 @@
 import "./bootstrap";
 import { tickTaskPumps } from "../../../chat/src/common/taskPump";
 import { createApp } from "../../../chat/src/app";
-import { withAssetStorage } from "../../../chat/src/services/assetStorage";
+import { withAssetStorage, setInlineImageShrinker } from "../../../chat/src/services/assetStorage";
 import { withCloudContext } from "../../../chat/src/cloud/context";
 import { BrowserAssetStorage } from "./storage";
 import { browserContext, runBrowserJob } from "./jobs";
@@ -9,7 +9,12 @@ import { configureCapabilities } from "./config";
 import { installProviderProxy } from "./network";
 import { setBlenderExportImporter } from "../../../chat/src/mastra/tools/blenderService";
 import { importCloudBlenderExports } from "./blenderImports";
+import { canShrinkInlineImages, shrinkInlineImage } from "./imageShrink";
 setBlenderExportImporter(importCloudBlenderExports);
+// 图片内联前先缩到 1024px：请求体要走"访客 → Vercel → 供应商"两跳，而
+// Vercel(美东) → 火山(北京) 实测只有 ~12 KB/s，大图会把单次请求拖到分钟级并撞满
+// Vercel 的 300 秒函数上限（504）。没有 OffscreenCanvas 的环境不装，行为不变。
+if (canShrinkInlineImages) setInlineImageShrinker(shrinkInlineImage);
 installProviderProxy();
 const scope = globalThis as unknown as { onmessage: (event: MessageEvent) => void; postMessage: (message: unknown, transfers?: Transferable[]) => void };
 scope.onmessage = async event => {

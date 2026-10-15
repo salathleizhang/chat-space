@@ -1,4 +1,5 @@
 import { commitLocal, localEntries, localEntry } from "./storage";
+import { liveWorkers, workerRequest } from "./workerPool";
 export const browserLocalEnabled = import.meta.env.VITE_BROWSER_LOCAL === "1";
 let ready: Promise<void> | undefined;
 export function ensureBrowserLocal() {
@@ -23,34 +24,10 @@ export function ensureBrowserLocal() {
   })().catch(error => { ready = undefined; throw error; });
   return ready;
 }
-const activeWorkers = new Set<Worker>();
-function workerRequest(input: { path?: string; method?: string; body?: string; job?: string }, signal?: AbortSignal): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker("/local-runtime.js", { type: "module" });
-    activeWorkers.add(worker);
-    const channel = new MessageChannel();
-    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
-    const finish = () => { activeWorkers.delete(worker); worker.terminate(); channel.port1.close(); signal?.removeEventListener("abort", abort); };
-    const abort = () => { const error = signal?.reason ?? new DOMException("Aborted", "AbortError"); controller?.error(error); reject(error); finish(); };
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) { abort(); return; }
-    worker.onerror = event => { const error = new Error(event.message || "Failed to load the local runtime"); controller?.error(error); reject(error); finish(); };
-    channel.port1.onmessage = event => {
-      const message = event.data as { status?: number; headers?: [string, string][]; chunk?: Uint8Array; done?: boolean; error?: string };
-      if (message.error) { const error = new Error(message.error); controller?.error(error); reject(error); finish(); }
-      else if (message.status !== undefined) {
-        const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; }, cancel() { finish(); } });
-        resolve(new Response(stream, { status: message.status, headers: message.headers }));
-      } else if (message.chunk) controller?.enqueue(message.chunk);
-      else if (message.done) { controller?.close(); if (input.job) resolve(new Response(null, { status: 204 })); finish(); }
-    };
-    worker.postMessage({ path: "/api/health", method: "GET", ...input, port: channel.port2 }, [channel.port2]);
-  });
-}
 let driving = false;
 /** No timer is trusted for progress: every existing GET /tasks heartbeat checks dueAt. */
 async function driveJobs() {
-  for (const worker of activeWorkers) worker.postMessage({ tick: true });
+  for (const worker of liveWorkers) worker.postMessage({ tick: true });
   if (driving) return;
   driving = true;
   try {

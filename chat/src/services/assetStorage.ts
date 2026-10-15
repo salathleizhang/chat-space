@@ -203,6 +203,29 @@ const MIME_BY_EXT: Record<string, string> = {
   stl: "model/stl",
 };
 
+/**
+ * 内联图片的"瘦身器"（可选 hook，浏览器构建装上真正的实现）。
+ *
+ * 为什么需要：图片是以 data URI 塞进请求体的，而请求体要走
+ * `访客 → Vercel 函数 → 供应商` 两跳。实测 Vercel(美东) → 火山(北京) 那一跳只有
+ * **~12 KB/s**：291KB 的图要 24 秒，3MB 的手机照片要 4 分钟——正好撞满 Vercel 的
+ * 300 秒函数上限，表现为 `FUNCTION_INVOCATION_TIMEOUT`（504）。
+ * 换成 URL 也不是免费的：火山自己去拉 URL 时**从海外主机会直接超时**（实测维基百科
+ * 与 GitHub raw 都失败，只有国内主机成功），所以那条路要求国内对象存储。
+ * 降采样则两头都治：传输少一个量级，供应商侧的视觉 token 也少一个量级。
+ *
+ * 默认不装（Node/Bun 侧没有 canvas）：拿不到瘦身器时一律照原样内联。
+ */
+export interface InlineImageShrinker {
+  (input: { bytes: Uint8Array; mime: string; logicalPath: string }): Promise<
+    { bytes: Uint8Array; mime: string } | undefined
+  >;
+}
+let inlineImageShrinker: InlineImageShrinker | undefined;
+export function setInlineImageShrinker(shrinker: InlineImageShrinker | undefined): void {
+  inlineImageShrinker = shrinker;
+}
+
 /** 库内图片/模型文件 → data URI（送多模态模型/直连渠道的统一入口） */
 export async function readAsDataUri(
   storage: AssetStorage,
@@ -218,7 +241,14 @@ export async function readAsDataUri(
     );
   }
   const bytes = await storage.readBytes(logicalPath);
-  return `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
+  /*
+    瘦身只作用于图片，且失败一律回退到原字节：这一步是优化，任何解码/编码问题都不该
+    让一条本来能跑通的请求失败。
+  */
+  const shrunk = mime.startsWith("image/") && inlineImageShrinker
+    ? await inlineImageShrinker({ bytes, mime, logicalPath })
+    : undefined;
+  return `data:${shrunk?.mime ?? mime};base64,${Buffer.from(shrunk?.bytes ?? bytes).toString("base64")}`;
 }
 
 let defaultStorage: AssetStorage | undefined;

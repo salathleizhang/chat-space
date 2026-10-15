@@ -85,6 +85,11 @@ export interface ChatMessage {
   assets?: ChatAssetAttachment[];
   /** 这一轮 assistant 回复内发生的工具轨迹，按调用顺序排列。 */
   activities?: AgentMessageActivity[];
+  /**
+   * 模型这一轮的思维链（推理模型先吐这段再吐正文）。**只用于展示**：不并入
+   * content、不回放给模型。以前它被整段丢弃，等待期界面上完全空白，用户以为卡死。
+   */
+  reasoning?: string;
   /** 这一轮对话顶部唯一的 Agent 状态；步骤节点本身只使用圆点。 */
   agentStatus?: AgentMessageStatus;
   /**
@@ -530,6 +535,49 @@ const MessageHistory = memo(function MessageHistory({
     </div>
   );
 
+  /**
+   * 推理模型的思维链块。
+   *
+   * 两种形态是刻意的：**正文还没开始时展开**，因为那正是"模型在工作但你看不到"
+   * 的等待期（实测一个稍难的提示要 85 秒才有第一个可见字符）；正文一开始就收成
+   * 一行摘要，把版面让给回复，但保留可展开的记录。
+   */
+  const renderReasoning = (text: string, live: boolean) => {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    if (live) {
+      return (
+        <div
+          data-agent-reasoning="running"
+          className="mb-2 rounded-inset border border-hairline bg-surface-raised px-3 py-2"
+        >
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-ink-subtle">
+            Thinking
+          </div>
+          <div className="max-h-40 overflow-hidden whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-subtle">
+            {trimmed}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <details
+        data-agent-reasoning="completed"
+        className="mb-2 rounded-inset border border-hairline bg-surface-raised px-3 py-2"
+      >
+        <summary
+          data-agent-reasoning-summary
+          className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-ink-subtle"
+        >
+          Thought for {trimmed.length} characters
+        </summary>
+        <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-subtle">
+          {trimmed}
+        </div>
+      </details>
+    );
+  };
+
   const renderAssistantMessage = (message: ChatMessage, messageIndex: number) => {
     const toolActivities = (message.activities ?? []).filter(
       (item): item is AgentMessageActivity & { toolName: string } =>
@@ -621,6 +669,11 @@ const MessageHistory = memo(function MessageHistory({
       >
         {turnStatus && (
           <div className="mb-2">{renderTurnStatus(turnStatus)}</div>
+        )}
+        {/* 正文还没落地时展开思维链，落地后收成一行摘要 */}
+        {renderReasoning(
+          message.reasoning ?? "",
+          isCurrentStream && !message.content.trim(),
         )}
         {message.autoTurn && (
           <AgentAutoTurnCard attachment={message.autoTurn} />

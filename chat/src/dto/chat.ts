@@ -165,6 +165,11 @@ export type ChatStreamRequest = z.infer<typeof ChatStreamRequestSchema>;
  */
 export const ChatStreamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("delta"), text: z.string() }),
+  /**
+   * 推理模型的思维链增量。与 `delta` 分开：它不是回复正文，客户端渲染成"思考"块，
+   * 不并入消息内容、也不回放给模型。
+   */
+  z.object({ type: z.literal("reasoning"), text: z.string() }),
   z.object({
     type: z.literal("tool"),
     name: z.string(),

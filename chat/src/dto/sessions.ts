@@ -12,6 +12,11 @@ export const SessionMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["user", "assistant"]),
   content: z.string(),
+  /**
+   * 模型这一轮的思维链。只用于展示与恢复：不并入 content、不回放给模型，
+   * 所以它不改变任何请求语义，旧会话缺这个字段也完全兼容。
+   */
+  reasoning: z.string().optional(),
   pendingTaskIds: z.array(z.string().min(1)).optional(),
   pendingInspectionAssetSlug: SlugSchema.optional(),
   /** 等待主视口截图的整场景检查机位（视角 id，见 app 的 INSPECTION_VIEW_IDS） */

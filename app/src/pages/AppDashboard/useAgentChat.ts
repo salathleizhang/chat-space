@@ -1291,6 +1291,19 @@ export function useAgentChat({
           }
           appendTo(assistantId, (content) => content + delta);
         },
+        /*
+          推理模型先吐思维链再吐正文。以前服务端把这段整段丢掉，界面上就是几十秒的
+          完全空白（实测一个稍难的提示要 85 秒才出第一个可见字符），用户以为卡死。
+          这里只做累积：它不进 content，所以不会被当成回复、也不会回放给模型。
+        */
+        onReasoning: (delta) => {
+          if (!activeRef.current || controller.signal.aborted) return;
+          if (!delta) return;
+          updateMessage(assistantId, (message) => ({
+            ...message,
+            reasoning: (message.reasoning ?? "") + delta,
+          }));
+        },
         onTool: (name, toolCallId, args) => {
           if (!activeRef.current || controller.signal.aborted) return;
           name = canonicalToolName(name);

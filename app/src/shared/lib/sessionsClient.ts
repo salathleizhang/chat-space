@@ -8,6 +8,12 @@ export interface SessionMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /**
+   * 模型这一轮的思维链（推理模型先吐这段再吐正文）。**只用于展示**：不并入
+   * content、不参与后续请求的上下文。以前它被整段丢弃，用户看到的就是长时间
+   * 空白，以为卡死了。
+   */
+  reasoning?: string;
   /** 已提交且尚未完成自动跟进的后台任务；随会话保存以支持恢复。 */
   pendingTaskIds?: string[];
   /** 等待工作台截图的资产；恢复后继续自检。 */

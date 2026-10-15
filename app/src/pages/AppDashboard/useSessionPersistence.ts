@@ -46,10 +46,12 @@ function restoredMessages(session: StoredSession): ChatMessage[] {
 }
 
 function storedMessages(messages: ChatMessage[]) {
-  return messages.map(({ id, role, content, images, assets, autoTurn, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug, pendingSceneInspectionView, pendingCloseupAssetSlug, pendingQuestion, questionAnswer, supersededQuestion }) => ({
+  return messages.map(({ id, role, content, reasoning, images, assets, autoTurn, activities, agentStatus, pendingTaskIds, pendingInspectionAssetSlug, pendingSceneInspectionView, pendingCloseupAssetSlug, pendingQuestion, questionAnswer, supersededQuestion }) => ({
     id,
     role,
     content,
+    // 思维链只用于展示与恢复，不参与任何请求上下文
+    ...(reasoning ? { reasoning } : {}),
     ...(images?.length ? { images } : {}),
     ...(assets?.length ? { assets } : {}),
     ...(autoTurn ? { autoTurn } : {}),

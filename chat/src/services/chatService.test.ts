@@ -635,3 +635,64 @@ describe("streamChat 的回复语言接线", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * 思维链接线。
+ *
+ * `reasoning-delta` 分支很容易写了但接不上（Mastra 的分片名、payload 字段、以及
+ * 往上冒的那一路任一环对不上，都表现为"静默什么都不显示"）。所以这里跑一次真实的
+ * `streamChat`，钉住"上游的思维链真的变成了 reasoning 增量，而且没有混进正文"。
+ */
+describe("streamChat 的思维链接线", () => {
+  test("上游的 reasoning-delta 变成 reasoning 增量，且不混进正文", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "chatspace-reasoning-test-"));
+    const projectStorage = new LocalFileStorage(projectRoot);
+    const now = new Date().toISOString();
+    await writeJson(projectStorage, projectFile("demo"), ProjectSchema, {
+      schemaVersion: 1,
+      slug: "demo",
+      name: "Demo",
+      createdAt: now,
+      updatedAt: now,
+    });
+    setAssetStorage(projectStorage);
+
+    const originalFetch = globalThis.fetch;
+    // finish_reason 必须给到 "stop"：只发 delta、不给结束原因时上游 SDK 会重试整条流，
+    // 于是同一段思维链被冒出来五次（这条夹具踩过）。
+    const chunk = (delta: Record<string, unknown>, finish: string | null = null) =>
+      `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 0, model: "test", choices: [{ index: 0, delta, finish_reason: finish }] })}`;
+    const sse = [
+      chunk({ role: "assistant", reasoning_content: "先看场景" }),
+      chunk({ reasoning_content: "再想摆放" }),
+      chunk({ content: "好了" }),
+      chunk({}, "stop"),
+      "data: [DONE]",
+      "",
+    ].join("\n\n");
+    globalThis.fetch = (async () =>
+      new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch;
+
+    const deltas: Array<{ type: string; text?: string }> = [];
+    try {
+      for await (const delta of streamChat({
+        projectSlug: "demo",
+        messages: [{ role: "user", content: "帮我看看" }],
+        llm: { apiKey: "sk-test", baseUrl: "http://127.0.0.1:9/v1", model: "test" },
+      })) {
+        deltas.push(delta as { type: string; text?: string });
+      }
+    } catch {
+      // 假响应不保证被上游解析器完整接受；判据只看已经冒出来的增量
+    } finally {
+      globalThis.fetch = originalFetch;
+      setAssetStorage(undefined);
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+
+    expect(deltas.filter((delta) => delta.type === "reasoning").map((delta) => delta.text))
+      .toEqual(["先看场景", "再想摆放"]);
+    // 思维链不是回复正文：混进 text 就会被写进会话记录、并在下一轮回放给模型
+    expect(deltas.filter((delta) => delta.type === "text").map((delta) => delta.text)).toEqual(["好了"]);
+  });
+});

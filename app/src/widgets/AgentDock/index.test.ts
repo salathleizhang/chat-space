@@ -1554,3 +1554,48 @@ describe("AgentDock 语音输入", () => {
     expect(branches.peerIndex).toBe(1);
   });
 });
+
+/**
+ * 思维链的展示。
+ *
+ * 这条对应真实事故：推理模型先吐思维链再吐正文，而这段以前被**整段丢弃**——实测一个
+ * 稍难的提示要 85 秒才出现第一个可见字符，用户看到的是完全空白、以为卡死了。
+ * 所以不变量是：正文还没落地时必须**看得见**思维链；正文一开始就让位（收成一行摘要）。
+ */
+describe("AgentDock 思维链展示", () => {
+  const REASONING = [
+    {
+      id: "a1",
+      role: "assistant" as const,
+      content: "",
+      reasoning: "先确认场景里有什么",
+      agentStatus: { label: "Thinking", status: "running" as const },
+    },
+  ];
+
+  test("正文还没出现时展开显示思维链，正文一到就收成摘要", async () => {
+    const live = await render({ messages: REASONING, streaming: true });
+    const block = live.container.querySelector('[data-agent-reasoning="running"]');
+    expect(block).not.toBeNull();
+    expect(block!.textContent).toContain("先确认场景里有什么");
+
+    // 正文落地 + 流结束：同一个消息不再占用版面，只留可展开的一行
+    const done = await render({
+      messages: [{ ...REASONING[0]!, content: "已经放好了" }],
+      streaming: false,
+    });
+    expect(done.container.querySelector('[data-agent-reasoning="running"]')).toBeNull();
+    const collapsed = done.container.querySelector('[data-agent-reasoning="completed"]');
+    expect(collapsed).not.toBeNull();
+    expect(collapsed!.querySelector('[data-agent-reasoning-summary]')!.textContent)
+      .toContain("Thought for");
+    expect(collapsed!.textContent).toContain("先确认场景里有什么");
+  });
+
+  test("没有思维链的消息不渲染这个块（旧会话与不推理的模型不受影响）", async () => {
+    const { container } = await render({
+      messages: [{ id: "a2", role: "assistant" as const, content: "普通回复" }],
+    });
+    expect(container.querySelector("[data-agent-reasoning]")).toBeNull();
+  });
+});

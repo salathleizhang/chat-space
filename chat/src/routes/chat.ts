@@ -60,6 +60,8 @@ chatRoutes.post("/stream", async (c) => {
         // 流式响应创建后工具仍会注册任务；必须在通知用户之前确认队列事实已持久化。
         await Promise.all(currentCloudContext()?.pending ?? []);
         if (delta.type === "text") await emit({ type: "delta", text: delta.text });
+        else if (delta.type === "reasoning")
+          await emit({ type: "reasoning", text: delta.text });
         else if (delta.type === "tool")
           await emit({
             type: "tool",

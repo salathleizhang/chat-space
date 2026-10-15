@@ -129,6 +129,11 @@ export function conversationImagePaths(messages: ChatMessage[]): string[] {
 /** 对话流增量：文本或工具调用透明度事件（toolCallId+args 供 app 侧协作工具消费） */
 export type ChatDelta =
   | { type: "text"; text: string }
+  /**
+   * 推理模型的思维链增量。与 `text` 分开是刻意的：它不是回复正文，不写进消息
+   * 内容、不回放给模型，只在等待期间给用户一个"正在思考"的可见进度。
+   */
+  | { type: "reasoning"; text: string }
   | {
       type: "tool";
       name: string;
@@ -544,6 +549,14 @@ export async function* streamChat(
   for await (const chunk of output.fullStream) {
     if (chunk.type === "text-delta") {
       yield { type: "text", text: chunk.payload.text };
+    } else if (chunk.type === "reasoning-delta") {
+      /*
+        推理模型在正文之前先吐一段思维链。**它以前被整段丢弃**，症状是界面上
+        长时间空白（实测一个稍难的提示要 85 秒才出第一个可见字符），用户以为卡死了。
+        现在照原样转出去，由工作台渲染成"思考"块——不并入正文，因为它不是给用户
+        看的答复，混进去会污染会话记录与后续上下文。
+      */
+      yield { type: "reasoning", text: chunk.payload.text };
     } else if (chunk.type === "tool-call") {
       const payload = chunk.payload as {
         toolName?: string;
