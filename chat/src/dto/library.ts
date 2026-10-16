@@ -24,8 +24,11 @@ export const LogicalPathSchema = z
   );
 export type LogicalPath = z.infer<typeof LogicalPathSchema>;
 
-/** 模型导出目标格式：glb 原样直出，gltf 走 gltf-transform 无损重新打包，obj 走 three.js 场景图往返 */
-export const ExportFormatSchema = z.enum(["glb", "gltf", "obj"]);
+/**
+ * 模型导出目标格式：glb 原样直出，gltf 走 gltf-transform 无损重新打包，obj 走 three.js 场景图往返，
+ * skp 走 openskp 的 legacy 写入器（三角汤 + base color 贴图，带三角数准入，见 `services/skpExport.ts`）。
+ */
+export const ExportFormatSchema = z.enum(["glb", "gltf", "obj", "skp"]);
 export type ExportFormat = z.infer<typeof ExportFormatSchema>;
 
 /** 批量导出请求体：多个逻辑路径统一转成同一目标格式，打包成 zip 返回 */

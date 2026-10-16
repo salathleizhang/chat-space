@@ -585,13 +585,14 @@ async function putScene(
   }
 }
 
-export const EXPORT_FORMATS = ["glb", "gltf", "obj"] as const;
+export const EXPORT_FORMATS = ["glb", "gltf", "obj", "skp"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 export const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
   glb: "GLB",
   gltf: "glTF",
   obj: "OBJ",
+  skp: "SKP",
 };
 
 /**

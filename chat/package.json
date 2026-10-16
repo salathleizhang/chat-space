@@ -28,6 +28,8 @@
     "@volcengine/tos-sdk": "2.9.1",
     "hono": "^4.12.27",
     "jszip": "^3.10.1",
+    "meshoptimizer": "^1.3.0",
+    "openskp": "^1.3.0",
     "three": "^0.185.1",
     "zod": "^4.4.3"
   }

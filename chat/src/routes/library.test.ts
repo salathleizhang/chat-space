@@ -87,6 +87,18 @@ describe("模型导出", () => {
     expect(await response.text()).toContain("v ");
   });
 
+  test("glb 转 skp", async () => {
+    const response = await app.request(
+      "/api/library/export?source=projects/demo/assets/dog/0-dog.glb&format=skp",
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/vnd.sketchup.skp");
+    expect(response.headers.get("content-disposition")).toContain('filename="0-dog.skp"');
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    // legacy SketchUp 容器的签名头
+    expect([...bytes.subarray(0, 4)]).toEqual([0xff, 0xfe, 0xff, 0x0e]);
+  });
+
   test("缺 source 参数报错", async () => {
     const response = await app.request("/api/library/export?format=glb");
     expect(response.status).toBe(400);

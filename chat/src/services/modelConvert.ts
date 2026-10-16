@@ -5,6 +5,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { ChatServiceError } from "../common/errors";
 import type { ExportFormat } from "../dto/library";
 import type { AssetStorage } from "./assetStorage";
+import { glbToSkp } from "./skpExport";
 
 export interface ConvertedFile {
   fileName: string;
@@ -16,6 +17,7 @@ const MIME_BY_FORMAT: Record<ExportFormat, string> = {
   glb: "model/gltf-binary",
   gltf: "model/gltf+json",
   obj: "text/plain",
+  skp: "application/vnd.sketchup.skp",
 };
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
@@ -111,7 +113,8 @@ function baseNameOf(logicalPath: string): string {
 
 /**
  * 资产库内模型格式转换：只支持 glb 源（同索引优先 glb 的取舍下，绝大多数资产本就是 glb）。
- * glTF 原格式导出会内嵌外部 buffer/图片；其他非 glb 源不支持跨格式转换。
+ * glTF 原格式导出会内嵌外部 buffer/图片；skp 走 openskp 的三角汤写入器（带贴图与三角数准入）；
+ * 其他非 glb 源不支持跨格式转换。
  */
 export async function convertModel(
   storage: AssetStorage,
@@ -139,7 +142,25 @@ export async function convertModel(
   }
 
   const glbBytes = await storage.readBytes(sourcePath);
-  const bytes =
-    targetFormat === "gltf" ? await glbToEmbeddedGltf(glbBytes) : await glbToObj(glbBytes);
+  let bytes: Uint8Array;
+  if (targetFormat === "gltf") {
+    bytes = await glbToEmbeddedGltf(glbBytes);
+  } else if (targetFormat === "skp") {
+    const result = await glbToSkp(glbBytes);
+    // 减面、贴图降级这类"文件与源不完全一致"的事必须留痕，否则只能靠猜
+    if (result.decimatedFrom !== undefined || result.notices.length > 0) {
+      console.warn(
+        `[export] ${sourcePath} → skp：写入 ${result.facesWritten} 个面` +
+          (result.decimatedFrom !== undefined
+            ? `（源 ${result.decimatedFrom} 三角面，超过准入后已自动减面到 ${result.triangles}）`
+            : "") +
+          (result.facesWithoutUv > 0 ? `；${result.facesWithoutUv} 个面 UV 退化未钉贴图` : "") +
+          (result.notices.length > 0 ? `；${result.notices.join("；")}` : ""),
+      );
+    }
+    bytes = result.bytes;
+  } else {
+    bytes = await glbToObj(glbBytes);
+  }
   return { fileName, mimeType: MIME_BY_FORMAT[targetFormat], bytes };
 }

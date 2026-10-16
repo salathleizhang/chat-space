@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Document, NodeIO } from "@gltf-transform/core";
+import { parseSkp } from "openskp";
 import { ChatServiceError } from "../common/errors";
 import { convertModel } from "./modelConvert";
 import { LocalFileStorage } from "./assetStorage";
@@ -116,6 +117,19 @@ describe("convertModel", () => {
     expect(result.fileName).toBe("0-crate.obj");
     const text = new TextDecoder().decode(result.bytes);
     expect(text).toContain("v ");
+  });
+
+  test("glb → skp 走 openskp 写入器，产出可再读回的 SketchUp 文件", async () => {
+    const result = await convertModel(storage, "projects/demo/assets/crate/0-crate.glb", "skp");
+    expect(result.fileName).toBe("0-crate.skp");
+    expect(result.mimeType).toBe("application/vnd.sketchup.skp");
+    const buffer = result.bytes.buffer.slice(
+      result.bytes.byteOffset,
+      result.bytes.byteOffset + result.bytes.byteLength,
+    ) as ArrayBuffer;
+    const model = parseSkp(buffer);
+    expect(model.version.startsWith("{17")).toBe(true);
+    expect(model.root.faces.length).toBeGreaterThan(0);
   });
 
   test("非 glb 源资产转换报错，同格式仍可直出", async () => {

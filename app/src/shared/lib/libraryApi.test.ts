@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_WORLD_SEMANTICS,
   deriveLibraryAssets,
+  EXPORT_FORMAT_LABELS,
+  EXPORT_FORMATS,
   selectProjectSkybox,
   type ProjectState,
 } from "./libraryApi";
@@ -20,6 +22,22 @@ function state(files: string[], latestModelOperation?: string): ProjectState {
     assets: [{ slug: "chair", files, latestModelOperation }],
   };
 }
+
+describe("导出格式契约（右键菜单与批量导出的资料来源）", () => {
+  test("菜单里有 SKP，且每种格式都有标签", () => {
+    // 两处菜单都是 EXPORT_FORMATS.map 出来的，所以加进这个数组就等于加进 UI
+    expect(EXPORT_FORMATS).toContain("skp");
+    for (const format of EXPORT_FORMATS) {
+      // 漏一个标签会在菜单里渲染出 undefined
+      expect(EXPORT_FORMAT_LABELS[format]).toBeTruthy();
+    }
+    expect(EXPORT_FORMAT_LABELS.skp).toBe("SKP");
+  });
+
+  test("SKP 追加在末尾，原有 GLB/glTF/OBJ 的次序不变", () => {
+    expect(EXPORT_FORMATS.slice(0, 3)).toEqual(["glb", "gltf", "obj"]);
+  });
+});
 
 describe("deriveLibraryAssets 模型代次语义", () => {
   test("普通任务同代多格式只渲染优选主文件", () => {
