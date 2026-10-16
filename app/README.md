@@ -71,7 +71,11 @@ const materials = await (await import('/src/shared/rendering/materials.browser.t
 
 ### 使用与诊断
 
-- MediaPipe JS 固定 `0.10.17`，WASM 使用同版本 CDN 路径，模型使用 Google 官方地址；可用 `?handWasm=<目录>&handModel=<URL>` 覆盖。Three 保持项目固定版本与 WebGPU-only 渲染器。
+### 资产从哪来（同源，第三方只兜底）
+
+- MediaPipe JS 固定 `0.10.17`。**wasm 与模型都随产物同源发出**（`/mediapipe/0.10.17/...`，`vercel.json` 给这条路径配了 `immutable` 长缓存），不再默认从 jsDelivr / Google bucket 下载——模型那个 URL 实测**不压缩且只缓存 1 小时**（7.82 MB 每次过期都重下），是"开启手势模式要等很久"的最大一项。版本号、两个 sha256 钉子与兜底地址集中在 `src/widgets/Viewport/handAssets.ts`。
+- wasm **不入库**：`app/scripts/sync-hand-assets.ts` 在 `dev` / `build` 之前从 `node_modules/@mediapipe/tasks-vision/wasm/` 复制（只复制 SIMD 那一套），并校验依赖版本与 sha256。模型 `hand_landmarker.task`（7.82 MB）**提交进仓库**；来源、更新步骤与"升级时要改哪几处"见 [资产说明](public/mediapipe/README.md)。
+- 同源加载失败（资产漏部署、非 SIMD 环境下的 404）会**自动兜底**到 jsDelivr 的 wasm + Google 的模型；面板上的 `source` 显示的是**实际**生效的那一份。`?handWasm=<目录>&handModel=<URL>` 仍可显式指定来源，显式指定时**不**兜底。Three 保持项目固定版本与 WebGPU-only 渲染器。
 - 开启时切单窗格。图像关键点确定手的屏幕位置和距离，骨骼姿态取原始三维关键点。
 - 手模与抓取射线每帧跟随实际交互相机：第三人称从透视窗格的 OrbitControls 读取当前相机，第一人称使用根画布相机。更新排在相机移动之后、核心场景渲染之前；切换投影时读取新相机，屏幕范围计入相机 zoom。
 - 预览叠加 2D 关键点与检测帧数，用于区分摄像头、检测与显示问题。

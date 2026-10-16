@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
+  HAND_ASSET_VERSION,
+  HAND_CDN_SOURCE,
+  HAND_MODEL_LOCAL,
   HAND_MODEL_URL,
   HAND_WASM_CDN,
+  HAND_WASM_LOCAL,
+} from "./handAssets";
+import {
   describeCameraError,
   describeModelError,
+  handTrackingFallbacks,
   resolveHandTrackingSource,
 } from "./useHandTracking";
 
@@ -13,19 +20,25 @@ import {
  */
 
 describe("wasm / 模型的来源", () => {
-  test("默认走 jsDelivr 的 wasm 与 Google 的模型", () => {
+  test("默认走**同源**资产（不再默认从第三方下载）", () => {
     const source = resolveHandTrackingSource("");
-    expect(source.wasmBase).toBe(HAND_WASM_CDN);
-    expect(source.modelUrl).toBe(HAND_MODEL_URL);
+    expect(source.wasmBase).toBe(HAND_WASM_LOCAL);
+    expect(source.modelUrl).toBe(HAND_MODEL_LOCAL);
   });
 
-  test("CDN 路径里的版本号必须与 npm 包锁定的版本一致（错配是静默的运行时错误）", () => {
-    // 与 app/package.json 的 "@mediapipe/tasks-vision": "0.10.17" 同版本；
-    // 升级依赖时这一条会失败，提醒一起改（wasm 与 js 的接口在 0.10.x 里动过）
-    expect(HAND_WASM_CDN).toContain("@mediapipe/tasks-vision@0.10.17");
+  test("同源与其他路径里的版本号必须一致，且与 npm 包里装的版本一致", async () => {
+    // wasm 与 js 错配是**静默的运行时错误**（加载到一半报无意义的 RuntimeError），
+    // 所以版本号在这里与 `app/package.json` 对一次；
+    // `app/scripts/sync-hand-assets.ts` 在 dev / build 之前还会再对一次。
+    expect(HAND_WASM_LOCAL).toContain(HAND_ASSET_VERSION);
+    expect(HAND_WASM_CDN).toContain(`@mediapipe/tasks-vision@${HAND_ASSET_VERSION}`);
+    const manifest = JSON.parse(
+      await Bun.file(new URL("../../../package.json", import.meta.url)).text(),
+    ) as { dependencies: Record<string, string> };
+    expect(manifest.dependencies["@mediapipe/tasks-vision"]).toBe(HAND_ASSET_VERSION);
   });
 
-  test("?handWasm= / ?handModel= 可以覆盖成本地副本，末尾斜杠会被抹掉", () => {
+  test("?handWasm= / ?handModel= 可以覆盖来源，末尾斜杠会被抹掉", () => {
     const source = resolveHandTrackingSource("?handDebug=1&handWasm=/mediapipe/wasm/&handModel=/mediapipe/hand.task");
     expect(source.wasmBase).toBe("/mediapipe/wasm");
     expect(source.modelUrl).toBe("/mediapipe/hand.task");
@@ -33,8 +46,22 @@ describe("wasm / 模型的来源", () => {
 
   test("query 里没有覆盖项时保持默认（别把空串当覆盖）", () => {
     const source = resolveHandTrackingSource("?handWasm=&handModel=");
-    expect(source.wasmBase).toBe(HAND_WASM_CDN);
-    expect(source.modelUrl).toBe(HAND_MODEL_URL);
+    expect(source.wasmBase).toBe(HAND_WASM_LOCAL);
+    expect(source.modelUrl).toBe(HAND_MODEL_LOCAL);
+  });
+});
+
+describe("兜底来源", () => {
+  test("默认来源挂了才接 CDN（同源资产漏部署、只发 SIMD 那一套时的 404 都靠它）", () => {
+    expect(handTrackingFallbacks("")).toEqual([HAND_CDN_SOURCE]);
+    expect(HAND_CDN_SOURCE.wasmBase).toBe(HAND_WASM_CDN);
+    expect(HAND_CDN_SOURCE.modelUrl).toBe(HAND_MODEL_URL);
+  });
+
+  test("用户显式指定来源时**不**兜底（静默换源比加载失败更难查）", () => {
+    expect(handTrackingFallbacks("?handWasm=/w&handModel=/m.task")).toEqual([]);
+    // 只覆盖一项也算显式指定
+    expect(handTrackingFallbacks("?handModel=/m.task")).toEqual([]);
   });
 });
 

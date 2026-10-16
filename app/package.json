@@ -3,13 +3,14 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev": "bun run sync:hand && vite",
+    "build": "bun run sync:hand && tsc --noEmit && vite build",
     "preview": "vite preview",
     "start": "vite preview",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "probe:gpu": "bun scripts/gpu-probe.mjs"
+    "probe:gpu": "bun scripts/gpu-probe.mjs",
+    "sync:hand": "bun scripts/sync-hand-assets.ts"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.6",

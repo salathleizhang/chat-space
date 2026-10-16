@@ -1,5 +1,11 @@
 import { useEffect } from "react";
 import type { HandLandmarker, HandLandmarkerResult } from "@mediapipe/tasks-vision";
+import {
+  HAND_CDN_SOURCE,
+  HAND_LOCAL_SOURCE,
+  isLocalHandSource,
+  type HandTrackingSource,
+} from "./handAssets";
 import { createHandDetectionState, interpretDetections } from "./handDetections";
 import type { HandTrackingStore } from "./handTrackingStore";
 
@@ -9,12 +15,15 @@ import type { HandTrackingStore } from "./handTrackingStore";
  * ### 依赖从哪来
  * - **js 运行时走 npm 包**（`@mediapipe/tasks-vision`，锁在 `app/package.json`），不是往页面里插
  *   `<script src="...vision_bundle.mjs">`：包版本与类型都由 lockfile 管，构建也不需要联网。
- * - **wasm 与模型是运行时下载的**（这是本功能唯一的联网点）：wasm 走 jsDelivr 上**与 npm 同版本**
- *   的路径，模型走 Google 官方的 `mediapipe-models` bucket。两者都可以用 `?handWasm=` / `?handModel=`
- *   覆盖成本地副本（离线部署时把这两个文件放到 `app/public/` 下指过去即可）。
+ * - **wasm 与模型现在同源**（`/mediapipe/<版本>/...`，随产物发出、`immutable` 长缓存；
+ *   见 `handAssets.ts` 与 `app/public/mediapipe/README.md`）。**第三方只剩兜底**：
+ *   同源加载失败时才按 `HAND_CDN_SOURCE`（jsDelivr 的 wasm + Google bucket 的模型）重试一次。
+ *   这条兜底同时兜住两件事——资产没被正确部署，以及"只随包发了 SIMD 那一套"在不支持
+ *   wasm SIMD 的环境下的 404。
+ * - 仍然可以用 `?handWasm=` / `?handModel=` 显式指定来源；**用户显式指定时不再偷偷换源**。
  *   版本号与 `app/package.json` 的 `@mediapipe/tasks-vision` **必须同版本**：wasm 与 js 的接口在
- *   0.10.x 里改过（见 `HAND_WASM_CDN` 的注释），错配的症状是"模型加载到一半报无意义的
- *   `RuntimeError`"。真机验证时以"能不能真的检测出手"为准，不以"没有报错"为准。
+ *   0.10.x 里改过（见 `handAssets.ts` 的 `HAND_ASSET_VERSION`），错配的症状是"模型加载到一半
+ *   报无意义的 `RuntimeError`"。真机验证时以"能不能真的检测出手"为准，不以"没有报错"为准。
  *
  * ### 为什么检测跑在自己的 rAF 里，而不是 R3F 的 `useFrame`
  * 摄像头是 30 fps、渲染是 60 fps，两者不该互相决定节奏；而且检测是**同步阻塞**的
@@ -22,21 +31,6 @@ import type { HandTrackingStore } from "./handTrackingStore";
  * "有新的一帧结果"时叫醒渲染循环一次（画布是 `frameloop="demand"`，见 store 的
  * `setFrameRequester`）。
  */
-
-/**
- * wasm 的 CDN 基址。**版本号必须与 `app/package.json` 的 `@mediapipe/tasks-vision` 一致**。
- * 换成别的版本时，下面这个路径要一起改；改完必须真机复测（wasm 与 js 错配不会在类型上暴露）。
- */
-export const HAND_WASM_CDN =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm";
-
-/**
- * 手部关键点模型（float16，Google 官方 bucket）。
- * 项目不把它入库：7.5 MB 的二进制产物、且是 Apache-2.0 的独立发布物，
- * 走官方 URL 或用户的本地覆盖都行（见文件头）。
- */
-export const HAND_MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 
 /** 同时追踪两只手（参考图里就是双手） */
 export const HAND_NUM_HANDS = 2;
@@ -48,18 +42,16 @@ export const HAND_NUM_HANDS = 2;
  */
 export const HAND_DETECT_MIN_INTERVAL_MS = 1000 / 60;
 
-export interface HandTrackingSource {
-  wasmBase: string;
-  modelUrl: string;
-}
+/** 来源类型在 `handAssets.ts`（那里也是默认值与兜底值的唯一出处），这里只转发一次 */
+export type { HandTrackingSource } from "./handAssets";
 
 /**
  * 解析 wasm 与模型的来源（纯函数，单测钉住覆盖优先级）。
- * 覆盖参数：`?handWasm=<目录 URL>`、`?handModel=<模型 URL>`。
+ * 覆盖参数：`?handWasm=<目录 URL>`、`?handModel=<模型 URL>`。**默认是同源资产**。
  */
 export function resolveHandTrackingSource(search: string): HandTrackingSource {
-  let wasmBase = HAND_WASM_CDN;
-  let modelUrl = HAND_MODEL_URL;
+  let wasmBase = HAND_LOCAL_SOURCE.wasmBase;
+  let modelUrl = HAND_LOCAL_SOURCE.modelUrl;
   try {
     const params = new URLSearchParams(search ?? "");
     const wasm = params.get("handWasm");
@@ -70,6 +62,20 @@ export function resolveHandTrackingSource(search: string): HandTrackingSource {
     // search 不是合法 query 时用默认值，绝不让诊断参数把整个视口弄崩
   }
   return { wasmBase, modelUrl };
+}
+
+/**
+ * 主来源失败后还要试哪些来源（按顺序）。
+ *
+ * 只在**默认来源**上挂兜底：用户用 `?handWasm=` / `?handModel=` 明确指了地方的时候，
+ * 悄悄换到 CDN 会让他以为自己的覆盖生效了（而实际读的是别人的文件），那种"静默换源"
+ * 比加载失败更难查。
+ *
+ * 兜底**不是可选的美化**：只随包发 SIMD 那一套 wasm，非 SIMD 环境会同源 404；
+ * 资产漏部署（比如 `app/public/mediapipe/` 没进产物）时也是这条把它接住。
+ */
+export function handTrackingFallbacks(search: string): HandTrackingSource[] {
+  return isLocalHandSource(resolveHandTrackingSource(search)) ? [HAND_CDN_SOURCE] : [];
 }
 
 /** 相机错误的用户可读文案（这几句话会出现在预览小窗里，单测钉住） */
@@ -116,9 +122,10 @@ export function useHandTracking({
 }: UseHandTrackingOptions): void {
   useEffect(() => {
     if (!enabled) return;
-    const source = resolveHandTrackingSource(
-      search ?? (typeof location === "undefined" ? "" : location.search),
-    );
+    const effectiveSearch = search ?? (typeof location === "undefined" ? "" : location.search);
+    /** 主来源 + 兜底（默认是同源资产，兜底是第三方；用户显式覆盖时没有兜底） */
+    const primary = resolveHandTrackingSource(effectiveSearch);
+    const candidates = [primary, ...handTrackingFallbacks(effectiveSearch)];
     let cancelled = false;
     let raf = 0;
     let stream: MediaStream | null = null;
@@ -184,7 +191,7 @@ export function useHandTracking({
     };
 
     const start = async () => {
-      store.setStatus("requesting", null, `${source.wasmBase} · ${source.modelUrl}`);
+      store.setStatus("requesting", null, `${primary.wasmBase} · ${primary.modelUrl}`);
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
         store.setStatus("error", "This browser has no camera API");
         return;
@@ -220,34 +227,53 @@ export function useHandTracking({
       if (cancelled) return;
 
       store.setStatus("loading");
-      let task: HandLandmarker;
+      let task: HandLandmarker | null = null;
+      let failure: unknown = null;
+      const options = {
+        runningMode: "VIDEO" as const,
+        numHands: HAND_NUM_HANDS,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      };
       try {
         const vision = await import("@mediapipe/tasks-vision");
-        const fileset = await vision.FilesetResolver.forVisionTasks(source.wasmBase);
-        const options = {
-          runningMode: "VIDEO" as const,
-          numHands: HAND_NUM_HANDS,
-          minHandDetectionConfidence: 0.5,
-          minHandPresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        };
         /*
-          GPU 委托（内部走 WebGL/WebGPU 的 shader）在少数环境里建不起来（显卡被占用、
-          无头容器）。那时退到 CPU：慢一些，但功能是好的——比"整个模式用不了"强。
+          按候选来源依次试：同源资产（默认）→ CDN（兜底）。两个来源都失败才判错。
+          每一轮都显式写 `source`，这样面板上显示的是**实际**生效的那一份——
+          兜底悄悄生效而面板还写着同源路径的话，"为什么它变慢了"就无从判断了。
         */
-        try {
-          task = await vision.HandLandmarker.createFromOptions(fileset, {
-            ...options,
-            baseOptions: { modelAssetPath: source.modelUrl, delegate: "GPU" },
-          });
-        } catch {
-          task = await vision.HandLandmarker.createFromOptions(fileset, {
-            ...options,
-            baseOptions: { modelAssetPath: source.modelUrl, delegate: "CPU" },
-          });
+        for (const candidate of candidates) {
+          if (cancelled) break;
+          store.setStatus("loading", null, `${candidate.wasmBase} · ${candidate.modelUrl}`);
+          try {
+            const fileset = await vision.FilesetResolver.forVisionTasks(candidate.wasmBase);
+            /*
+              GPU 委托（内部走 WebGL/WebGPU 的 shader）在少数环境里建不起来（显卡被占用、
+              无头容器）。那时退到 CPU：慢一些，但功能是好的——比"整个模式用不了"强。
+            */
+            try {
+              task = await vision.HandLandmarker.createFromOptions(fileset, {
+                ...options,
+                baseOptions: { modelAssetPath: candidate.modelUrl, delegate: "GPU" },
+              });
+            } catch {
+              task = await vision.HandLandmarker.createFromOptions(fileset, {
+                ...options,
+                baseOptions: { modelAssetPath: candidate.modelUrl, delegate: "CPU" },
+              });
+            }
+            break;
+          } catch (error) {
+            failure = error;
+          }
         }
       } catch (error) {
-        if (!cancelled) store.setStatus("error", describeModelError(error));
+        // 动态 import 自己失败（chunk 404 / 语法错）也算这一层
+        failure = error;
+      }
+      if (!task) {
+        if (!cancelled) store.setStatus("error", describeModelError(failure));
         stopCamera();
         return;
       }

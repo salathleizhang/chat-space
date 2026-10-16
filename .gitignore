@@ -26,6 +26,11 @@ blender/docker/vendor/
 # Generated browser-local worker (built before Vite copies public/)
 app/public/local-runtime.js
 
+# 手势模式的 wasm（9.7MB）：dev / build 之前从 node_modules 复制，**不入库**
+# （见 app/public/mediapipe/README.md）。只忽略 wasm 子目录——同一棵树里的
+# hand_landmarker.task 是**刻意提交**的（npm 包里没有它）。
+app/public/mediapipe/*/wasm/
+
 # Python control regression tests
 blender/docker/__pycache__/
 
