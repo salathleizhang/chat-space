@@ -29,23 +29,41 @@ import {
   HAND_WASM_SHA256,
 } from "../src/widgets/Viewport/handAssets";
 
+/*
+  产物里的布局（路径**由 handAssets.ts 决定**，这里只负责把它落到磁盘上）：
+
+    app/public/mediapipe/0.10.17/hand_landmarker.task   ← 仓库里的模型，这里只校验
+    app/public/mediapipe/0.10.17/wasm/vision_wasm_internal.{js,wasm}  ← 每次从 node_modules 复制
+
+  版本号在路径里，是为了让 `vercel.json` 那条 `/mediapipe/*` 的 `immutable` 成立：
+  换内容必然换 URL。所以这里**不允许**出现第二处版本号。
+*/
 const appDir = fileURLToPath(new URL("..", import.meta.url));
-/** `/mediapipe/0.10.17` → `mediapipe/0.10.17` */
+/** `/mediapipe/0.10.17` → `mediapipe/0.10.17`（web 路径不能直接当 fs 路径用） */
 const assetRelDir = HAND_ASSET_BASE.replace(/^\/+/, "");
 const assetDir = join(appDir, "public", assetRelDir);
 const wasmOutDir = join(assetDir, "wasm");
 const modelPath = join(assetDir, "hand_landmarker.task");
 
+/**
+ * 报错用 `process.exit(1)` 而不是 `throw`：这条脚本的前置条件是 `dev` / `build` 的第一步，
+ * 退出码才是 CI 与 bun 读的东西；抛异常多打一坨栈，反而把"该改哪一处"埋掉。
+ */
 function fail(message: string): never {
   console.error(`[hand-assets] ${message}`);
   process.exit(1);
 }
 
+/** 按内容而不是"大小 + 时间戳"判定：换过版本的同名文件大小可能一样，mtime 又不可靠 */
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** 依赖可能被 hoist 到仓库根的 `node_modules`，两个位置都看 */
+/**
+ * wasm 的来源目录。**读安装到的包，而不是 `app/package.json`**：后者写的是 semver 范围
+ * （`0.10.17` 也可能被解析成别的补丁版），只有装到磁盘上的那份才是真正会被复制进产物的字节。
+ * bun 可能把它 hoist 到仓库根，所以两个位置都看。
+ */
 function findPackageDir(): string {
   const candidates = [
     join(appDir, "node_modules/@mediapipe/tasks-vision"),
@@ -61,6 +79,7 @@ function findPackageDir(): string {
   return found;
 }
 
+/** 装到的包自报的版本；只用于与 `HAND_ASSET_VERSION` 对比（未知就报未知，不猜） */
 async function readPinnedVersion(packageDir: string): Promise<string> {
   const manifest = JSON.parse(await readFile(join(packageDir, "package.json"), "utf8")) as {
     version?: string;
@@ -68,6 +87,13 @@ async function readPinnedVersion(packageDir: string): Promise<string> {
   return manifest.version ?? "(未知)";
 }
 
+/**
+ * 把 SIMD 那一套 wasm 复制进 `public/`，逐个文件先校验再落盘。
+ *
+ * **顺序不能反**：先写后校验的话，一旦依赖被换过，产物里留下的就是一份没人验证过的 wasm，
+ * 而"复制过去了"本身看起来完全正常。已经一致的文件不重写——`dev` 每次启动都会跑这条脚本，
+ * 没必要每回都动 9.5 MB 的 mtime（那会让 Vite / 增量构建认为整棵树变了）。
+ */
 async function copyWasm(packageDir: string): Promise<string[]> {
   await mkdir(wasmOutDir, { recursive: true });
   const lines: string[] = [];
@@ -94,6 +120,13 @@ async function copyWasm(packageDir: string): Promise<string[]> {
   return lines;
 }
 
+/**
+ * 校验（不下载、不复制）仓库里那份模型。
+ *
+ * 两种失败要分开报：**文件不在**（多半是被 `.gitignore` 连带忽略掉、或误删）与
+ * **哈希不符**（被换过 / 下到一半）。两者的处理动作不同，所以文案里直接给出可粘贴的
+ * `curl` 与期望哈希——这条脚本的读者通常是几周后升级 MediaPipe 的自己。
+ */
 async function checkModel(): Promise<string> {
   if (!existsSync(modelPath)) {
     fail(
@@ -115,6 +148,11 @@ async function checkModel(): Promise<string> {
   return `hand_landmarker.task（${(bytes.byteLength / 1e6).toFixed(2)} MB，已提交在仓库里）`;
 }
 
+/*
+  顶层直接跑（不是 `main()`）：这条脚本没有可复用的导出，被 import 的唯一可能是复制它。
+  **顺序有意义**——先对版本，再复制 wasm，最后校验模型：版本不对时后面两步读的是不该用的字节，
+  早点失败才不会留下"复制好了但版本是错的"这种半成品目录。
+*/
 const packageDir = findPackageDir();
 const installed = await readPinnedVersion(packageDir);
 if (installed !== HAND_ASSET_VERSION) {

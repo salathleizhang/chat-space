@@ -53,6 +53,7 @@ describe("wasm / 模型的来源", () => {
 
 describe("兜底来源", () => {
   test("默认来源挂了才接 CDN（同源资产漏部署、只发 SIMD 那一套时的 404 都靠它）", () => {
+    // 整对象比：只比长度的话，"兜底指到了别的 wasm 目录"这种错法照样能过
     expect(handTrackingFallbacks("")).toEqual([HAND_CDN_SOURCE]);
     expect(HAND_CDN_SOURCE.wasmBase).toBe(HAND_WASM_CDN);
     expect(HAND_CDN_SOURCE.modelUrl).toBe(HAND_MODEL_URL);
@@ -60,7 +61,7 @@ describe("兜底来源", () => {
 
   test("用户显式指定来源时**不**兜底（静默换源比加载失败更难查）", () => {
     expect(handTrackingFallbacks("?handWasm=/w&handModel=/m.task")).toEqual([]);
-    // 只覆盖一项也算显式指定
+    // 只覆盖一项也算显式指定：否则"改 wasm 目录、模型仍走同源"会被换到 CDN 的模型
     expect(handTrackingFallbacks("?handModel=/m.task")).toEqual([]);
   });
 });

@@ -122,9 +122,13 @@ export function useHandTracking({
 }: UseHandTrackingOptions): void {
   useEffect(() => {
     if (!enabled) return;
+    /*
+      来源在 effect 开头算一次就固定下来（不随渲染重算）：底下那个循环要按同一份顺序重试，
+      中途换来源等于"加载到一半改目标"，而每次重试都要重新下载整个模型与 wasm。
+    */
     const effectiveSearch = search ?? (typeof location === "undefined" ? "" : location.search);
-    /** 主来源 + 兜底（默认是同源资产，兜底是第三方；用户显式覆盖时没有兜底） */
     const primary = resolveHandTrackingSource(effectiveSearch);
+    /** 主来源 + 兜底（默认同源在前、第三方在后；用户显式覆盖时只有一项） */
     const candidates = [primary, ...handTrackingFallbacks(effectiveSearch)];
     let cancelled = false;
     let raf = 0;
@@ -227,8 +231,14 @@ export function useHandTracking({
       if (cancelled) return;
 
       store.setStatus("loading");
+      /** 建好的检测任务；**为 null 才是失败**（兜底来源成功时也是非 null） */
       let task: HandLandmarker | null = null;
+      /** 最后一轮失败的原因：两个来源都挂时才拿它给用户看（别用 AggregrateError 那类东西） */
       let failure: unknown = null;
+      /*
+        五个阈值参数与两套来源、两个委托都无关，**刻意提到循环外**：它们必须逐字相同，
+        否则"换来源/换委托"就变成同时改了两件事，读数与故障都无法归因。
+      */
       const options = {
         runningMode: "VIDEO" as const,
         numHands: HAND_NUM_HANDS,
@@ -244,6 +254,7 @@ export function useHandTracking({
           兜底悄悄生效而面板还写着同源路径的话，"为什么它变慢了"就无从判断了。
         */
         for (const candidate of candidates) {
+          // 卸载会打断这个循环：此时**不要**去写状态（组件已经没了，写进去的是幽灵状态）
           if (cancelled) break;
           store.setStatus("loading", null, `${candidate.wasmBase} · ${candidate.modelUrl}`);
           try {
@@ -251,6 +262,7 @@ export function useHandTracking({
             /*
               GPU 委托（内部走 WebGL/WebGPU 的 shader）在少数环境里建不起来（显卡被占用、
               无头容器）。那时退到 CPU：慢一些，但功能是好的——比"整个模式用不了"强。
+              这一层是**同一个来源内部**的降级（GPU→CPU）；换来源是外面那层循环，两者别混。
             */
             try {
               task = await vision.HandLandmarker.createFromOptions(fileset, {
@@ -263,8 +275,10 @@ export function useHandTracking({
                 baseOptions: { modelAssetPath: candidate.modelUrl, delegate: "CPU" },
               });
             }
+            // 拿到任务就收工（`task` 非空 = 后面 `if (!task)` 不会走）
             break;
           } catch (error) {
+            // 这一份来源不行：**留着最后一条错误**，两个来源都失败时它就是给用户看的原因
             failure = error;
           }
         }
@@ -278,6 +292,7 @@ export function useHandTracking({
         return;
       }
       if (cancelled) {
+        // 加载完才发现已被卸载：wasm 任务必须在这里关掉，否则相机指示灯灭了、显存还占着
         task.close();
         return;
       }

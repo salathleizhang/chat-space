@@ -36,6 +36,28 @@ curl -o app/public/mediapipe/0.10.17/hand_landmarker.task \
   https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 ```
 
+## 线上实测（2026-10-16，`chat-space-app.vercel.app`）
+
+不只是"换了个源"——Vercel 对这三条都做了 brotli，所以传输量也真的降了：
+
+| 产物 | 之前（第三方） | 现在（同源） |
+| --- | --- | --- |
+| `vision_wasm_internal.wasm` | 2 909 268 B（jsDelivr gzip） | 2 771 941 B（br） |
+| `vision_wasm_internal.js` | 50 253 B（gzip） | 52 431 B（br） |
+| `hand_landmarker.task` | 7 819 105 B（GCS **不压缩**） | 5 865 101 B（br） |
+| 首次合计 | 10 778 626 B | **8 689 473 B（−19%）** |
+| 第二次起 | 模型 `max-age=3600`，每小时重下 7.8 MB | `immutable`，**0 字节** |
+
+响应头核对方式（三条都应是 `content-encoding: br` + `immutable`）：
+
+```bash
+curl -sI -H 'Accept-Encoding: br' https://chat-space-app.vercel.app/mediapipe/0.10.17/wasm/vision_wasm_internal.wasm \
+  | grep -i -E 'content-encoding|cache-control'
+```
+
+⚠️ 这条验证**必须**带 `Accept-Encoding`：不带的话响应里本来就不会有 `content-encoding`，
+很容易得出"Vercel 不压缩 wasm"的错误结论（本次一开始就这么错过一次）。
+
 ## 升级 MediaPipe 时改哪几处（顺序别省）
 
 1. `app/package.json` 的 `@mediapipe/tasks-vision` 与 `app/src/widgets/Viewport/handAssets.ts`

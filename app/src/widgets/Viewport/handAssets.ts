@@ -44,6 +44,9 @@ export const HAND_WASM_FILES = ["vision_wasm_internal.js", "vision_wasm_internal
  * 内容钉子（sha256）。不是"可选的自检"：`node_modules` 里的 wasm 与提交进仓库的模型
  * 一旦被人换过（升级依赖只改了一半、模型下到不完整、CDN 被投毒），症状都是运行时
  * 无意义的 `RuntimeError` 或"检测不出手"，所以这里让它**在构建时就炸**。
+ *
+ * 用 `Record<文件名, 哈希>` 而不是两个自由变量：以后要随包发第二个 wasm 变体时，
+ * 类型会强制补上它的钉子，不会出现"复制了但没校验"的漏网文件。
  */
 export const HAND_WASM_SHA256: Readonly<Record<(typeof HAND_WASM_FILES)[number], string>> = {
   "vision_wasm_internal.js": "33a4125f825b343d2d9773951a73692f40bee368c9b591af8ff652fd501af90b",
@@ -75,7 +78,13 @@ export const HAND_CDN_SOURCE: HandTrackingSource = {
   modelUrl: HAND_MODEL_URL,
 };
 
-/** 这一份来源是不是"同源默认值"（用来判断要不要接兜底） */
+/**
+ * 这一份来源是不是"同源默认值"（用来判断要不要接兜底）。
+ *
+ * 比**两个字段的值**而不是对象身份：调用方那一份来自 `resolveHandTrackingSource()`，
+ * 每次都是新对象，比身份永远是 false，兜底就永远不生效。
+ * 两个字段都要比：只覆盖 wasm 或只覆盖模型同样属于"用户自己指定了来源"。
+ */
 export function isLocalHandSource(source: HandTrackingSource): boolean {
   return source.wasmBase === HAND_WASM_LOCAL && source.modelUrl === HAND_MODEL_LOCAL;
 }
