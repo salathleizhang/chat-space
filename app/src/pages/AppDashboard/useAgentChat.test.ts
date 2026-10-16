@@ -969,6 +969,26 @@ describe("生成流程持续执行", () => {
     expect(JSON.stringify(streamChat.mock.calls[1])).toContain("blender-session-action import");
     await h.unmount();
   });
+  /**
+   * 真实事故（p-mv3ctr2n）：桌子已经发布了 GLB，任务却以 model_budget_exhausted 收尾。
+   * 失败行必须交出会话 id 与"先查已存产物"的口径，否则会话只会建议重新建模、或宣称产物丢了。
+   */
+  test("失败的 cloud Blender 任务交出会话 id 和已存产物，而不是重新建模", async () => {
+    const { h, pollTasks } = await liveHarness();
+    await act(async () => h.result.current.send("用 Blender 建模并导入"));
+    await act(async () => handlersOf(0).onToolResult("start-blender-batch", "b", undefined, ["blender-session-1"]));
+    await act(async () => handlersOf(0).onDone());
+    const callback = pollTasks.mock.calls[0]![1] as (value: unknown) => void;
+    await act(async () => callback({ tasks: [{ id: "blender-session-1", workflowId: "blender-cloud", projectSlug: "proj-a", subject: "Blender: Table", status: "failed", error: "model_budget_exhausted", result: { blenderSessionId: "real-session" } }] }));
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const resume = JSON.stringify(streamChat.mock.calls[1]);
+    expect(resume).toContain("Blender: Table: failed (model_budget_exhausted)");
+    expect(resume).toContain("cloud Blender sessionId=real-session");
+    expect(resume).toContain("Query blender-session-action status");
+    expect(resume).toContain("Do not restart, resume, retry or re-model automatically");
+    await h.unmount();
+  });
   test("提交后的回复结束仍保持运行，后台完成自动交付后才结束", async () => {
     const { h, settle } = await liveHarness();
     await act(async () => h.result.current.send("生成金毛的模型"));

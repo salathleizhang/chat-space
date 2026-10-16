@@ -52,6 +52,10 @@ describe("creator 工具可用性", () => {
         if (enabled) {
           expect(instructions).toContain("Batch desktops are read-only");
           expect(instructions).toContain("does not establish that the modeling requirements were too complex");
+          // 真实事故：任务以 model_budget_exhausted 收尾时，桌子其实已经发布了 GLB。
+          // 口径必须写进提示词，否则模型会当成"还在跑"或"文件丢了"。
+          expect(instructions).toContain("model_budget_exhausted is a terminal per-job limit");
+          expect(instructions).toContain("A checkpoint alone is a saved Blender project, not a GLB");
         }
       }
     } finally { Object.assign(config.blender, { cloudService: original }); }

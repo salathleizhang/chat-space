@@ -14,6 +14,7 @@ export async function importCloudBlenderExports(project: string, sessionId: stri
   const { session } = await blenderService<{ session: { project: string } }>(`sessions/${sessionId}`);
   if (session.project !== project) throw new Error("The model belongs to another project");
   const { exports } = await blenderService<{ exports: Export[] }>(`sessions/${sessionId}/exports`);
+  if (!exports.length) throw new Error("This session has no exported GLB to import. Its saved Blender project is separate; do not retry modeling just to look for a file.");
   let count = 0;
   for (const artifact of exports) {
     if (!/^[a-f0-9-]{36}$/.test(artifact.id) || artifact.sessionId !== sessionId || !/^[a-f0-9]{64}$/.test(artifact.sha256)) throw new Error("Invalid model manifest");

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { BlenderJobs } from "./jobs";
-import { BlenderStore } from "./store";
+import { BlenderStore, type Session } from "./store";
 import { BlenderBatchRunner, BlenderPlannerError, plannerReceipt } from "./batchRunner";
 import { BlenderArtifacts } from "./artifacts";
 import { SandboxSecrets } from "./secrets";
@@ -128,6 +128,99 @@ test("daily model cap prevents a paid request and waits without replaying or aff
     expect(jobs.get(items[1]!.id)!.requests).toBe(0);
     expect(store.hasQueuedOperations(items[1]!.id)).toBe(false);
     await runner.step(store.session(items[1]!.id)); expect(paidCalls).toBe(1);
+  } finally { store.close(); }
+});
+/** A reserved, prepared session with the sandbox control token the export path opens. */
+function readySession(store: BlenderStore, secrets: SandboxSecrets, sessionId: string): Session {
+  const reserved = store.reserveNext()!;
+  store.transition(reserved.id, reserved.epoch, ["allocating"], "ready", "sandbox-" + reserved.id);
+  const session = store.session(sessionId);
+  store.saveCredentials(sessionId, session.epoch, secrets.seal(secrets.generate(), sessionId, session.epoch));
+  return session;
+}
+/** Exactly what the scheduler does with a batch tool operation: dispatch it, then deliver its receipt. */
+function receipt(store: BlenderStore, sessionId: string, state: "succeeded" | "failed" = "succeeded", result: unknown = { ok: true }) {
+  const epoch = store.session(sessionId).epoch, operation = store.claimOperation(sessionId, epoch);
+  if (!operation) throw new Error("No queued operation to receipt");
+  store.finishOperation(operation.id, epoch, state, result);
+  return operation;
+}
+/**
+ * Stands in for `BlenderArtifacts`: `list` is the authoritative record of what was
+ * really published, so a commit that never registers an artifact is a failed publication.
+ */
+function fakeArtifacts(committing = true) {
+  const published: string[] = [];
+  const artifact = (id: string, sessionId: string) => ({ id, sessionId, objectKey: "obj", manifestKey: "man", bytes: 1024, sha256: "a".repeat(64), triangles: 12 });
+  return { published, exports: {
+    list: (_owner: string, sessionId: string) => published.map(id => artifact(id, sessionId)),
+    commit: async (session: Session, operation: { id: string }) => {
+      if (committing) published.push(operation.id);
+      return artifact(operation.id, session.id);
+    },
+  } satisfies Pick<BlenderArtifacts, "list" | "commit"> };
+}
+test("a verified export publication ends the job instead of buying the decision that says done", async () => {
+  const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store), secrets = new SandboxSecrets("s".repeat(40));
+  const { published, exports } = fakeArtifacts(); let modelCalls = 0; const prompts: string[] = [];
+  const runner = new BlenderBatchRunner(jobs, async messages => {
+    modelCalls++; prompts.push(messages.map(message => message.content).join("\n"));
+    return { decision: { action: "tool", tool: "export_scene", arguments: { format: "glb" } } as const, tokens: 100 };
+  }, exports, { exportFile: async () => new Uint8Array() }, secrets);
+  try {
+    const [item] = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "a", label: "Table", prompt: "table" }], "build");
+    await runner.step(readySession(store, secrets, item!.id));
+    // The planner is told the export closes the job, so the cap cannot be spent on another inspection.
+    expect(prompts[0]).toContain("Export is the final action");
+    expect(prompts[0]).toContain("at most 12 decisions");
+    expect(jobs.get(item!.id)!.pendingOperation).not.toBeNull();
+    receipt(store, item!.id);
+    // The incident: the export was the 12th and last admitted paid decision, and the
+    // old code asked for a 13th one to hear the model say "done" — the cap failed the
+    // job even though a verified GLB had already been published.
+    const atCap = jobs.get(item!.id)!; atCap.requests = 12; jobs.save(atCap);
+    await runner.step(store.session(item!.id));
+    expect(published).toEqual([atCap.pendingOperation!]);
+    expect(jobs.get(item!.id)).toMatchObject({ state: "succeeded", error: null, pendingOperation: null, requests: 12 });
+    expect(store.session(item!.id).stopReason).toBe("ended");
+    expect(modelCalls).toBe(1);
+    await runner.step(store.session(item!.id));
+    expect(jobs.get(item!.id)!.state).toBe("succeeded"); expect(modelCalls).toBe(1);
+  } finally { store.close(); }
+});
+test("a publication that produced no artifact is not treated as completion", async () => {
+  const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store), secrets = new SandboxSecrets("s".repeat(40));
+  const { published, exports } = fakeArtifacts(false);
+  const runner = new BlenderBatchRunner(jobs, async () => ({ decision: { action: "tool", tool: "export_scene", arguments: { format: "glb" } } as const, tokens: 100 }),
+    exports, { exportFile: async () => new Uint8Array() }, secrets);
+  try {
+    const [item] = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "a", label: "Table", prompt: "table" }], "build");
+    await runner.step(readySession(store, secrets, item!.id)); receipt(store, item!.id);
+    await expect(runner.step(store.session(item!.id))).rejects.toThrow("Export publication not confirmed");
+    expect(published).toEqual([]);
+    expect(jobs.get(item!.id)!.state).toBe("running");
+    expect(store.session(item!.id).stopReason).toBeNull();
+  } finally { store.close(); }
+});
+test("cancelling while the export is being published never completes the job", async () => {
+  const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store), secrets = new SandboxSecrets("s".repeat(40));
+  const { published, exports } = fakeArtifacts();
+  let release!: () => void; const publishing = new Promise<void>(resolve => { release = resolve; });
+  const delayed = { list: exports.list, commit: async (session: Session, operation: { id: string }) => { await publishing; return exports.commit(session, operation); } };
+  const runner = new BlenderBatchRunner(jobs, async () => ({ decision: { action: "tool", tool: "export_scene", arguments: { format: "glb" } } as const, tokens: 100 }),
+    delayed, { exportFile: async () => new Uint8Array() }, secrets);
+  try {
+    const [item] = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "a", label: "Table", prompt: "table" }], "build");
+    await runner.step(readySession(store, secrets, item!.id));
+    const operation = receipt(store, item!.id);
+    const work = runner.step(store.session(item!.id));
+    const job = jobs.get(item!.id)!; job.state = "cancelled"; jobs.save(job); store.stop(item!.id, "alice", "cancelled");
+    release(); await work;
+    // Published bytes cannot be un-uploaded, but a publication that lands after the
+    // cancellation must not rewrite the cancelled job, clear its operation or "end" it.
+    expect(published).toEqual([operation.id]);
+    expect(jobs.get(item!.id)).toMatchObject({ state: "cancelled", pendingOperation: operation.id, step: 0 });
+    expect(store.session(item!.id).stopReason).toBe("cancelled");
   } finally { store.close(); }
 });
 test("upgrading an older job database counts missing paid calls once", () => {

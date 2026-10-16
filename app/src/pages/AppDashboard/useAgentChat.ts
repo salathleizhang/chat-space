@@ -1110,7 +1110,8 @@ export function useAgentChat({
             task.status === "succeeded"
               ? `- ${taskSubjectLabel(task.subject)}: succeeded${modelTaskSuffix(task)}${task.workflowId === "blender-cloud"
                 ? `; cloud Blender sessionId=${(task.result as { blenderSessionId: string }).blenderSessionId}. The GLB is saved in cloud storage; use blender-session-action import if the original request asks for it.` : ""}`
-              : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
+              : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})${task.workflowId === "blender-cloud"
+                ? `; cloud Blender sessionId=${(task.result as { blenderSessionId: string }).blenderSessionId}. Query blender-session-action status for existing saved exports before suggesting any retry. A failed job can still have usable artifacts; import those if the original request asks for delivery, and report what remains incomplete. Do not restart, resume, retry or re-model automatically.` : ""}`,
           ),
           ...(highPoly
             ? [

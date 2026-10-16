@@ -515,3 +515,12 @@ blender/{ownerId}/{projectId}/{sessionId}/
 - 完整检查复跑退出 0：app 967 / chat 668 / Cloudflare 13 项通过，类型检查与生产构建成功。首次全量检查有一项既有看门狗测试失败（默认并发回归通过），负载记录为 4.51 / 21.38 / 21.38，按仓库纪律复跑后全部通过，没有修改看门狗代码。
 - Cloudflare 版本 `55fe8839-9675-47d2-9a6a-4a911676fce5` 已 immediate 发布，正式域名和 workers.dev 鉴权 GET 返回 `defaultConcurrency: 1`，并发上限仍为 global 100 / owner 10，运行预算仍为 owner 600 分钟。只读证据 `output/blender-service/default-concurrency-one-live-proof.json`，检查日志 `check-default-concurrency-one-final.log`。
 - 网站版本 `dpl_4BK4Kxs1uwxMYFN932g5r1yPsEuy` 构建成功，网站代理 GET 同样确认 defaultConcurrency 1 / global 100 / owner 10。网站 AI Worker 内的 schema 与说明同步更新；已有网页需刷新加载新工具。没有新建/恢复沙盒用于此轮验收。
+
+### 导出发布即任务收尾（2026-10-16，用户本地项目 p-mv3ctr2n 事故）
+
+- **事故**：本地项目 `p-mv3ctr2n` 的「桌子」实际已发布 GLB（`e0356de6…`，53,544 字节 / 972 三角面，TOS 与 manifest 都在），任务却以 `model_budget_exhausted` 结束，浏览器因此不再自动导入，用户看到的是"Blender 生成完了但没有办法导出保存"。根因是收尾顺序：导出发布后旧代码还要再买一次模型决策来听模型说 done，这第 13 次调用撞上单任务 12 次上限，把**已经导出成功**的任务判成失败。茶杯连导出都没走到（12 次决策全用在建模上），但两者的 Blender 工程都已保存。
+- **改动**（都在收尾路径上，最小面）：`chat/src/blenderService/batchRunner.ts` 把"导出已发布"当成完成凭据——发布确认后直接 `succeeded` + `stop(ended)`，不再复购一次决策，并在同一事务里落盘；发布是异步 I/O，之后复查 epoch / 停止原因 / 终态，被取消或换代就什么都不写；发布没有落进产物账就抛 `Export publication not confirmed`，交回调度器重试发布而不是当成完成。规划提示词写明"导出是最后动作、12 次决策要留给导出"。`CLOUD_BLENDER_INSTRUCTIONS` 补上 `model_budget_exhausted` 的口径（终态上限、不等于产物丢失、先查已存产物再谈重做，检查点不等于 GLB），`useAgentChat` 的失败任务行带上会话 id 与同一口径，`blenderImports` 对"该会话没有已发布导出"给出明确报错而不是让模型看起来丢了。
+- **回归**：chat 新增 3 条（导出发布即收尾且不复购决策、发布未确认不算完成、发布期间取消不覆盖取消）＋ creator 提示词断言 2 条；app 新增 4 条（空导出提示、清单错误不被掩盖、跨项目拒绝、失败任务上下文）。三条核心用例对修复前代码为红（负对照跑过）。
+- **完整 `BLENDER_ENABLED=0 bun run check` 退出 0**：app 1089 pass / 1 skip / 0 fail、chat 724 pass / 0 fail、Cloudflare 14 项通过，类型检查与生产构建成功。负载记录 69.10 / 144.33 / 113.99，属高负载但结果稳定。
+- **数据恢复**：两个会话的工程与导出已取回本机 `~/Downloads/ChatSpace-p-mv3ctr2n/`（`茶杯.blend` 1,512,237、`桌子.blend` 638,457、`桌子-e0356de6.glb` 53,544、重新导出的 `茶杯.glb` 425,724 与 `桌子.glb` 53,544；GLB 头、长度与 glTF 2.0 版本自校验通过）。茶杯在云端没有导出记录，是在本机 `csvol` 容器里用 Blender 5.2.2 从**已保存的工程**重新导出的，没有重新建模、没有再次付费。这两个文件可以经模型库的导入入口（`accept` 含 `.glb`）直接进项目。
+- **未做**：没有给茶杯补一条云端产物（服务没有"补登产物"的接口，写生产对象存储/库表不在授权范围内）；已确认的 12 次决策上限按提示词约束处理，本次没有改动数值。
