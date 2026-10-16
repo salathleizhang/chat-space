@@ -16,17 +16,30 @@ function rect(top: number, height: number, left = 100, width = 120): DOMRect {
   } as DOMRect;
 }
 
-/** 测试环境没有真实视口，按需钉住视口尺寸 */
+/**
+ * 测试环境没有真实视口，按需钉住视口尺寸。
+ *
+ * **必须写成可写、并在用完时把描述符还回去**：`bun test` 会在同一个进程里交错跑多个
+ * 测试文件，而 `Object.defineProperty(window, "innerWidth", { value })` 造出来的是**不可写**
+ * 的数据属性——它留在 window 上之后，别的文件里 `window.innerWidth = 420` 这种朴素赋值就会
+ * 抛 `TypeError: Attempted to assign to readonly property`（`FloatingWindow.test.tsx` 的
+ * `finally` 就这么炸过，单独跑那份文件却全绿）。这里改成 writable，并在 finally 里还原
+ * 原来的描述符；本来就是原型访问器时就把自有属性删掉，让 happy-dom 的访问器回来。
+ */
 function withViewport(width: number, height: number, run: () => void) {
-  const originalWidth = window.innerWidth;
-  const originalHeight = window.innerHeight;
-  Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
-  Object.defineProperty(window, "innerHeight", { value: height, configurable: true });
+  const original = {
+    innerWidth: Object.getOwnPropertyDescriptor(window, "innerWidth"),
+    innerHeight: Object.getOwnPropertyDescriptor(window, "innerHeight"),
+  };
+  Object.defineProperty(window, "innerWidth", { value: width, configurable: true, writable: true });
+  Object.defineProperty(window, "innerHeight", { value: height, configurable: true, writable: true });
   try {
     run();
   } finally {
-    Object.defineProperty(window, "innerWidth", { value: originalWidth, configurable: true });
-    Object.defineProperty(window, "innerHeight", { value: originalHeight, configurable: true });
+    for (const [key, descriptor] of Object.entries(original)) {
+      if (descriptor) Object.defineProperty(window, key, descriptor);
+      else delete (window as unknown as Record<string, unknown>)[key];
+    }
   }
 }
 
