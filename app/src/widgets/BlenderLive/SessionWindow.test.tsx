@@ -45,10 +45,10 @@ test("watching and a saved pause expose no business controls or mutations", asyn
   globalThis.fetch = mock(async (input: Parameters<typeof fetch>[0]) => { requests.push(String(input)); return Response.json({ url: "about:blank#desktop" }); }) as unknown as typeof fetch;
   const { container, update } = await render([session]);
   expect(container.querySelector('[aria-label="Blender 操作"]')).toBeNull();
-  expect(container.querySelectorAll("button").length).toBe(3);
+  expect(container.querySelectorAll("button").length).toBe(2);
   await update([{ ...session, state: "paused", stopReason: "ended", checkpoint: "saved" }]);
   expect(container.textContent).toContain("The project is saved; waiting to continue the task.");
-  expect(container.querySelectorAll("button").length).toBe(3);
+  expect(container.querySelectorAll("button").length).toBe(2);
   expect(requests).toEqual(["/api/blender/sessions/session-a/desktop"]);
 });
 

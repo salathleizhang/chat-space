@@ -45,11 +45,15 @@ test("closing and reopening a window reuses its vacancy without colliding with t
   expect(openBlenderWindow(reopened, "B")).toBe(reopened);
 });
 
-test("maximizing fills the viewport and restores geometry without replacing the desktop", async () => {
+test("enlarging takes one moderate step and restores geometry without replacing the desktop", async () => {
   const container = await render(); const frame = container.querySelector('[aria-label="Blender A"]') as HTMLElement;
   const iframe = frame.querySelector("iframe"), before = { width: frame.style.width, height: frame.style.height, left: frame.style.left };
-  await click(frame.querySelector('[aria-label="Maximize Blender window"]')!);
-  expect(frame.style.width).toBe("100vw"); expect(frame.style.height).toBe("100vh"); expect(frame.style.left).toBe("0px");
+  await click(frame.querySelector('[aria-label="Enlarge Blender window"]')!);
+  expect(frame.style.width).toBe("528px"); expect(frame.style.height).toBe("341px");
+  expect(parseFloat(frame.style.left)).toBeGreaterThan(0);
+  expect(parseFloat(frame.style.top)).toBeGreaterThan(0);
+  expect(document.fullscreenElement).toBeFalsy();
+  expect(frame.querySelector('[aria-label="Blender fullscreen"]')).toBeNull();
   expect(frame.querySelector("iframe")).toBe(iframe);
   await click(frame.querySelector('[aria-label="Restore Blender window"]')!);
   expect(frame.style.width).toBe(before.width); expect(frame.style.height).toBe(before.height); expect(frame.style.left).toBe(before.left);
@@ -58,6 +62,7 @@ test("maximizing fills the viewport and restores geometry without replacing the 
 
 test("drag and resize preserve both iframe nodes; blur cancels the gesture", async () => {
   const container = await render(); const frame = container.querySelector('[aria-label="Blender A"]') as HTMLElement;
+  await click(frame.querySelector('[aria-label="Enlarge Blender window"]')!);
   const iframes = [...container.querySelectorAll("iframe")];
   const before = { left: parseFloat(frame.style.left), top: parseFloat(frame.style.top) };
   const header = frame.querySelector("[data-blender-titlebar]") as HTMLElement; header.setPointerCapture = mock(() => {});
@@ -70,6 +75,31 @@ test("drag and resize preserve both iframe nodes; blur cancels the gesture", asy
   await act(async () => { pointer(resize, "pointerdown", 400, 300); pointer(resize, "pointermove", 340, 250); pointer(resize, "pointerup", 340, 250); });
   expect(parseFloat(frame.style.width)).toBe(Math.max(320, width - 60));
   expect([...container.querySelectorAll("iframe")]).toEqual(iframes);
+});
+
+test("enlarging and restoring after a viewport shrink keep the window inside the workbench", async () => {
+  const originalWidth = window.innerWidth, originalHeight = window.innerHeight;
+  try {
+    const container = await render(); const frame = container.querySelector('[aria-label="Blender A"]') as HTMLElement;
+    await click(frame.querySelector('[aria-label="Enlarge Blender window"]')!);
+    window.innerWidth = 420; window.innerHeight = 400;
+    await act(async () => { window.dispatchEvent(new Event("resize")); });
+    const assertFits = () => {
+      expect(parseFloat(frame.style.left)).toBeGreaterThanOrEqual(16);
+      expect(parseFloat(frame.style.top)).toBeGreaterThanOrEqual(16);
+      expect(parseFloat(frame.style.left) + parseFloat(frame.style.width)).toBeLessThanOrEqual(404);
+      expect(parseFloat(frame.style.top) + parseFloat(frame.style.height)).toBeLessThanOrEqual(320);
+    };
+    assertFits();
+    await click(frame.querySelector('[aria-label="Restore Blender window"]')!);
+    assertFits();
+    // The titlebar follows the same one-step enlargement, even on a small screen.
+    await act(async () => { frame.querySelector('[data-blender-titlebar]')!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+    assertFits();
+  } finally {
+    window.innerWidth = originalWidth; window.innerHeight = originalHeight;
+    await act(async () => { window.dispatchEvent(new Event("resize")); });
+  }
 });
 
 test("pressing a window control cannot start a drag", async () => {
