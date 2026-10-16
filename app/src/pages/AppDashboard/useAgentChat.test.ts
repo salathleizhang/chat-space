@@ -954,6 +954,21 @@ async function liveHarness(ready = true) {
 }
 
 describe("生成流程持续执行", () => {
+  test("cloud Blender waits without spinning plan turns, then wakes the same conversation to import the existing session", async () => {
+    const { h, pollTasks } = await liveHarness();
+    await act(async () => h.result.current.send("用 Blender 建模并导入"));
+    await act(async () => handlersOf(0).onToolResult("start-blender-batch", "b", undefined, ["blender-session-0"]));
+    await act(async () => handlersOf(0).onDone());
+    expect(h.result.current.messages.at(-1)?.pendingTaskIds).toEqual(["blender-session-0"]);
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    const callback = pollTasks.mock.calls[0]![1] as (value: unknown) => void;
+    await act(async () => callback({ tasks: [{ id: "blender-session-0", workflowId: "blender-cloud", projectSlug: "proj-a", subject: "Blender: Cube", status: "succeeded", result: { blenderSessionId: "real-session" } }] }));
+    await flush(20);
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(streamChat.mock.calls[1])).toContain("cloud Blender sessionId=real-session");
+    expect(JSON.stringify(streamChat.mock.calls[1])).toContain("blender-session-action import");
+    await h.unmount();
+  });
   test("提交后的回复结束仍保持运行，后台完成自动交付后才结束", async () => {
     const { h, settle } = await liveHarness();
     await act(async () => h.result.current.send("生成金毛的模型"));
@@ -1836,4 +1851,3 @@ describe("图片落盘自动续跑", () => {
     await h.unmount();
   });
 });
-

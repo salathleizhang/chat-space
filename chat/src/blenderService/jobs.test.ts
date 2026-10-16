@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { BlenderJobs } from "./jobs";
 import { BlenderStore } from "./store";
-import { BlenderBatchRunner, plannerReceipt } from "./batchRunner";
+import { BlenderBatchRunner, BlenderPlannerError, plannerReceipt } from "./batchRunner";
 import { BlenderArtifacts } from "./artifacts";
 import { SandboxSecrets } from "./secrets";
 import type { ObjectStore } from "./objects";
@@ -67,6 +67,19 @@ test("restart with a planning marker never automatically buys the same model cal
     const job = jobs.get(s!.id)!; job.state = "planning"; job.requests = 1; jobs.save(job);
     jobs.recoverPlanning();
     expect(jobs.get(s!.id)!.state).toBe("waiting-user"); expect(jobs.get(s!.id)!.requests).toBe(1);
+  } finally { store.close(); }
+});
+test("failed planner decisions persist their cause and usage without paying for an automatic retry", async () => {
+  const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store); let calls = 0;
+  const runner = new BlenderBatchRunner(jobs, async () => {
+    calls++; throw new BlenderPlannerError("planning_output_truncated", 4096);
+  }, new BlenderArtifacts(store, noObjects), { exportFile: async () => new Uint8Array() }, new SandboxSecrets("s".repeat(40)));
+  try {
+    const [item] = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "a", label: "Figurine", prompt: "figurine" }], "build");
+    const s = store.reserveNext()!; store.transition(s.id, s.epoch, ["allocating"], "ready", "sandbox");
+    await runner.step(store.session(item!.id)); await runner.step(store.session(item!.id));
+    expect(jobs.get(item!.id)).toMatchObject({ state: "waiting-user", error: "planning_output_truncated", tokens: 4096, requests: 1, step: 0 });
+    expect(calls).toBe(1); expect(store.hasQueuedOperations(item!.id)).toBe(false);
   } finally { store.close(); }
 });
 test("retry is a separately authorized idempotent attempt and leaves successful sibling untouched", () => {

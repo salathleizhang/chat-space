@@ -218,7 +218,7 @@ export function useTaskPolling({
           const model = (task.result as { model?: string } | undefined)?.model;
           const files = (task.result as { files?: string[] } | undefined)?.files;
           const messageId = pushAssistant(
-            `✅ ${taskSubjectLabel(task.subject)} completed${model ? `: ${model}` : files ? `: ${files.length + 1} files` : ""} (saved to the local project folder)`,
+            `✅ ${taskSubjectLabel(task.subject)} completed${model ? `: ${model}` : files ? `: ${files.length + 1} files` : ""} (${task.workflowId === "blender-cloud" ? "saved in cloud Blender; ready to import" : "saved to the local project folder"})`,
           );
           if (task.workflowId === "3d") {
             const modelPath = modelPathFromTaskResult(task.result);

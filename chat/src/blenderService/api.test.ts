@@ -3,7 +3,26 @@ import { createBlenderApi } from "./api";
 import { issueIdentity, verifyIdentity } from "./auth";
 import { SandboxSecrets } from "./secrets";
 import { BlenderStore } from "./store";
+import { BlenderJobs } from "./jobs";
 const secret = "service-secret-".repeat(4);
+test("batch viewers can join an intermediate save, while editor and final-save grants remain fenced", async () => {
+  const store = new BlenderStore(":memory:"), jobs = new BlenderJobs(store);
+  const api = createBlenderApi(store, { tick() {} }, { secret, build: "build", desktopOrigin: "https://desktop.example", pauseEnabled: true }, jobs);
+  const headers = { Authorization: "Bearer " + issueIdentity({ owner: "alice", scope: "api", expires: Date.now() + 60_000 }, secret) };
+  try {
+    const [s] = jobs.createBatch("alice", "project", crypto.randomUUID(), [{ id: "cube", label: "Cube", prompt: "Cube" }], "build");
+    store.reserveNext(); store.transition(s!.id, 1, ["allocating"], "ready", "sandbox-batch");
+    store.setEffect(s!.id, 1, "save-mode", "continue"); store.transition(s!.id, 1, ["ready"], "saving");
+    const grant = await api.request(`/v1/sessions/${s!.id}/desktop`, { method: "POST", headers });
+    expect(grant.status).toBe(200); expect(new URL((await grant.json() as { url: string }).url).searchParams.get("view_only")).toBe("1");
+    store.setEffect(s!.id, 1, "save-mode", "end");
+    expect((await api.request(`/v1/sessions/${s!.id}/desktop`, { method: "POST", headers })).status).toBe(409);
+    const editor = store.create("alice", "project", "build", 3_600_000); store.reserveNext();
+    store.transition(editor.id, 1, ["allocating"], "ready", "sandbox-editor");
+    store.setEffect(editor.id, 1, "save-mode", "continue"); store.transition(editor.id, 1, ["ready"], "saving");
+    expect((await api.request(`/v1/sessions/${editor.id}/desktop`, { method: "POST", headers })).status).toBe(409);
+  } finally { store.close(); }
+});
 test("service rejects forged/expired identities and desktop tokens used as API tokens", () => {
   const token = issueIdentity({ owner: "alice", scope: "api", expires: Date.now() + 60_000 }, secret);
   expect(verifyIdentity(token, secret, "api")?.owner).toBe("alice");

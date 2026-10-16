@@ -58,7 +58,7 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
     const summaries = Object.fromEntries(sessions.flatMap(s => { const job = jobs?.get(s.id); return job ? [[s.id, {
       label: job.label, state: job.state, step: job.step, requests: job.requests, tokens: job.tokens, error: job.error,
     }]] : []; }));
-    return c.json({ owner: c.get("owner"), sessions, jobs: summaries, limits: store.limits, defaultConcurrency: DEFAULT_BLENDER_CONCURRENCY, budget: store.budgets.summary(c.get("owner")),
+    return c.json({ owner: c.get("owner"), controllerRevision: "2026-10-16-live-viewport-v2", sessions, jobs: summaries, limits: store.limits, defaultConcurrency: DEFAULT_BLENDER_CONCURRENCY, budget: store.budgets.summary(c.get("owner")),
       notices: Object.fromEntries(sessions.flatMap(s => { const value = store.effect(s.id, s.epoch, "budget-wait"); return value ? [[s.id, value]] : []; })) });
   });
   app.post("/v1/sessions", async c => {
@@ -110,9 +110,11 @@ export function createBlenderApi(store: BlenderStore, scheduler: Pick<BlenderSch
   });
   app.post("/v1/sessions/:id/desktop", c => {
     const session = store.session(c.req.param("id"), c.get("owner"));
-    if (session.state !== "ready" || session.stopReason || session.deadline <= Date.now()) throw new BlenderConflict("Desktop lease unavailable");
+    const readOnly = Boolean(jobs?.get(session.id));
+    const viewable = session.state === "ready" || readOnly && session.state === "saving" && store.effect(session.id, session.epoch, "save-mode") === "continue";
+    if (!viewable || session.stopReason || session.deadline <= Date.now()) throw new BlenderConflict("Desktop lease unavailable");
     const token = issueIdentity({ owner: session.owner, scope: "desktop", session: session.id, epoch: session.epoch, expires: Date.now() + 60_000 }, settings.secret);
-    return c.json({ url: new URL(`/desktop/${session.id}/?ticket=${encodeURIComponent(token)}&resize=scale&path=desktop/${session.id}/websockify${jobs?.get(session.id) ? "&view_only=1" : ""}`, settings.desktopOrigin).href, expiresInSeconds: 60 });
+    return c.json({ url: new URL(`/desktop/${session.id}/?ticket=${encodeURIComponent(token)}&resize=scale&path=desktop/${session.id}/websockify${readOnly ? "&view_only=1" : ""}`, settings.desktopOrigin).href, expiresInSeconds: 60 });
   });
   app.post("/v1/batches", async c => {
     if (!settings.pauseEnabled || !jobs) return c.json({ error: "Batch service unavailable" }, 503);

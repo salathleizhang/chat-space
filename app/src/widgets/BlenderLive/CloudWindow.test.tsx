@@ -33,3 +33,16 @@ test("logo opens all project viewers; polling adds new AI work without reopening
   expect(requests.every(request => request.method === "GET")).toBe(true);
   expect(requests.every(request => ["/api/capabilities", "/api/blender/sessions"].includes(request.path))).toBe(true);
 });
+
+test("new AI work appears without a logo click, while old paused viewers stay closed", async () => {
+  let sessions = [session]; let tick!: () => void;
+  globalThis.setInterval = ((callback: () => void, delay: number) => { tick = callback; return originalInterval(() => {}, delay); }) as unknown as typeof setInterval;
+  globalThis.fetch = mock(async input => String(input) === "/api/capabilities" ? Response.json({ blenderCloud: true }) : Response.json({ sessions, jobs: {} })) as unknown as typeof fetch;
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  await act(async () => root!.render(<BlenderCloudWindow projectSlug="fixture" openRequest={0} />));
+  expect(document.querySelectorAll("[data-blender-window]").length).toBe(0);
+  sessions = [...sessions, { ...session, id: "new-task", state: "queued", stopReason: null }];
+  await act(async () => tick());
+  expect(document.querySelectorAll("[data-blender-window]").length).toBe(1);
+  expect(document.body.textContent).toContain("Blender new-ta");
+});

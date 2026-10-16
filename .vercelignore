@@ -5,6 +5,7 @@
 **/.env.*
 output
 .tmp
+tmp
 .pc-research
 blender/docker/vendor
 *.log

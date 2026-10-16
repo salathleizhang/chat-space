@@ -1,5 +1,7 @@
 # Vercel 浏览器本地版
 
+**日常发布只走 commit + push，由现有自动部署流程发布；禁止自行手动部署。以根目录 [DEPLOYMENT.md](../DEPLOYMENT.md) 为准。**
+
 公开地址： https://chat-space-app.vercel.app/app （自定义域名 https://www.junwei.cool）。
 Vercel 提供网页和无状态供应商转发 API；访问者不需要运行 Bun。
 项目、聊天、场景位置、任务回执、图片与模型全部保存在访问者当前浏览器的 IndexedDB。

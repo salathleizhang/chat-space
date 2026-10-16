@@ -63,3 +63,30 @@ test("resuming the same session uses the new epoch and leaves another window con
   expect(requests.length).toBe(3); expect(container.querySelectorAll("iframe")[1]).toBe(bStream);
   expect(container.querySelectorAll("iframe")[0]!.src).toBe("about:blank#grant-3");
 });
+
+test("a transient desktop grant failure recovers while the same session remains ready", async () => {
+  const originalTimer = globalThis.setTimeout; let wake!: () => void, requests = 0;
+  globalThis.setTimeout = ((callback: () => void, delay: number, ...args: unknown[]) => {
+    if (delay === 2_000) { wake = callback; return originalTimer(() => {}, 60_000); }
+    return originalTimer(callback, delay, ...args);
+  }) as typeof setTimeout;
+  try {
+    globalThis.fetch = mock(async () => ++requests === 1 ? Response.json({ error: "Temporary failure" }, { status: 503 }) : Response.json({ url: "about:blank#recovered" })) as unknown as typeof fetch;
+    const { container } = await render([session]);
+    expect(container.querySelector("iframe")).toBeNull(); expect(container.textContent).toContain("Temporary failure");
+    await act(async () => wake());
+    expect(requests).toBe(2); expect(container.querySelector("iframe")?.src).toBe("about:blank#recovered");
+  } finally { globalThis.setTimeout = originalTimer; }
+});
+
+test("the last real desktop frame remains visible after the cloud instance pauses", async () => {
+  globalThis.fetch = mock(async () => Response.json({ url: "https://desktop.example/live" })) as unknown as typeof fetch;
+  const { container, update } = await render([session]);
+  const frame = container.querySelector("iframe")!;
+  await act(async () => window.dispatchEvent(new MessageEvent("message", { origin: "https://desktop.example", source: frame.contentWindow,
+    data: { type: "chatspace-blender-display", session: session.id, status: "connected", preview: "data:image/jpeg;base64,YWJj" } })));
+  await update([{ ...session, state: "paused", stopReason: "ended", checkpoint: "saved" }]);
+  expect(container.querySelector("iframe")).toBeNull();
+  expect(container.querySelector('img[alt="Last frame from the cloud Blender desktop"]')?.getAttribute("src")).toBe("data:image/jpeg;base64,YWJj");
+  expect(container.textContent).toContain("The project is saved");
+});

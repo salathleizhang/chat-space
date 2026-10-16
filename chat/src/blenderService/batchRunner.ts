@@ -8,6 +8,7 @@ import type { Session } from "./storeCore";
 import type { BlenderArtifacts } from "./artifacts";
 import type { ManagedExecutor } from "./executor";
 import type { SandboxSecrets } from "./secrets";
+import { withBatchViewport } from "./viewport";
 
 const Decision = z.discriminatedUnion("action", [
   z.object({ action: z.literal("tool"), tool: z.enum(BLENDER_ALLOWED_TOOLS), arguments: z.record(z.string(), z.unknown()) }),
@@ -30,6 +31,10 @@ function boundedMessages(messages: Message[]): Message[] {
   return [...messages.slice(0, 2), { role: "user", content: "Earlier tool history has been trimmed. Verify the real current scene before the next change; do not repeat completed steps or exports." }, ...retained];
 }
 export type ModelDecision = { decision: z.infer<typeof Decision>; tokens: number };
+/** Safe to persist: never include provider bodies, prompts, credentials or reasoning. */
+export class BlenderPlannerError extends Error {
+  constructor(readonly code: string, readonly tokens = 0) { super(code); }
+}
 const INSTRUCTIONS = `You are a ChatSpace custom Blender modeler. Execute only one small step at a time, then continue based on the real tool results. Use only the eight MCP tools below; do not use paid model providers, asset marketplaces, network requests, or host environment variables. Do not make the user guess what a script does. Inspect the scene and the add-on first, and look up the bpy API when necessary. The execute_blender_code argument is a code string; each step must report object counts and geometry facts, and must not run long loops. read_factory_settings, read_homefile, and open_mainfile are forbidden because they unload the bridge add-on; clearing the scene only deletes objects. You may finish only after the export has succeeded and been saved. Do not read or output files, passwords, or keys. Do not save unpacked dependencies, linked libraries, or simulation caches.
 The actual argument names and types of each tool are listed below; do not guess aliases. user_prompt is injected by the service and does not need to be filled in:
 get_addon_status: {}.
@@ -47,14 +52,32 @@ export function volcanoPlanner(key: string, model: string, fetchFn: typeof fetch
   return async (messages: Message[]): Promise<ModelDecision> => cloudBudget(async signal => {
     const response = await fetchFn.call(globalThis, "https://ark.cn-beijing.volces.com/api/v3/chat/completions", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, signal, redirect: "manual",
-      body: JSON.stringify({ model, messages, stream: false, max_tokens: 4096, response_format: { type: "json_object" } }),
+      // GLM 5.3 Flash always thinks, defaulting to max effort. This planner chooses
+      // one small next step; max effort can exhaust its 120s budget before step 0.
+      body: JSON.stringify({ model, messages, stream: false, max_tokens: 4096,
+        ...(/^glm-5-3-flash-/.test(model) ? { reasoning_effort: "low" } : {}),
+        response_format: { type: "json_object" } }),
     });
-    const data = JSON.parse(new TextDecoder().decode(await boundedBody(response, 1024 * 1024)));
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content !== "string") throw new Error("Missing planner decision");
-    const tokens = data.usage?.total_tokens;
-    if (!Number.isInteger(tokens) || tokens < 1) throw new Error("Missing model usage receipt");
-    return { decision: Decision.parse(JSON.parse(content)), tokens };
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new BlenderPlannerError(`planning_http_${response.status}`);
+    }
+    const bytes = await boundedBody(response, 1024 * 1024);
+    let data;
+    try { data = JSON.parse(new TextDecoder().decode(bytes)); }
+    catch { throw new BlenderPlannerError("planning_invalid_response"); }
+    const tokens = data?.usage?.total_tokens;
+    const used = Number.isSafeInteger(tokens) && tokens > 0 ? tokens : 0;
+    const choice = data?.choices?.[0], content = choice?.message?.content;
+    if (choice?.finish_reason === "length") throw new BlenderPlannerError("planning_output_truncated", used);
+    if (typeof content !== "string" || !content.trim()) throw new BlenderPlannerError("planning_empty_response", used);
+    let parsed;
+    try { parsed = JSON.parse(content); }
+    catch { throw new BlenderPlannerError("planning_invalid_json", used); }
+    const decision = Decision.safeParse(parsed);
+    if (!decision.success) throw new BlenderPlannerError("planning_invalid_decision", used);
+    if (!used) throw new BlenderPlannerError("planning_usage_missing");
+    return { decision: decision.data, tokens: used };
   }, 120_000);
 }
 
@@ -104,10 +127,16 @@ export class BlenderBatchRunner {
     }
     let answer: ModelDecision;
     try { answer = await this.planner(messages); }
-    catch {
+    catch (error) {
       const current = this.jobs.get(session.id)!;
-      if (["cancelled", "failed", "succeeded"].includes(current.state) || store.session(session.id).stopReason) return;
-      job.state = "waiting-user"; job.error = "planning_result_unknown"; this.jobs.save(job); store.stop(session.id, session.owner, "waiting-user"); return;
+      // A rejected decision can still carry a real usage receipt. Keep it even
+      // when the user cancelled during the call, without replaying the request.
+      if (error instanceof BlenderPlannerError) current.tokens += error.tokens;
+      if (["cancelled", "failed", "succeeded"].includes(current.state) || store.session(session.id).stopReason) { this.jobs.save(current); return; }
+      current.state = "waiting-user";
+      current.error = error instanceof BlenderPlannerError ? error.code
+        : (error as { code?: string } | null)?.code === "blender_cloud_timeout" ? "planning_timeout_result_unknown" : "planning_result_unknown";
+      this.jobs.save(current); store.stop(session.id, session.owner, "waiting-user"); return;
     }
     const current = this.jobs.get(session.id)!, live = store.session(session.id);
     if (live.epoch !== session.epoch || live.stopReason || ["cancelled", "failed", "succeeded"].includes(current.state)) {
@@ -123,7 +152,9 @@ export class BlenderBatchRunner {
     job.state = "running";
     if (answer.decision.action === "tool") {
       const decision = answer.decision, id = randomUUID();
-      const args = decision.tool === "export_scene" ? { ...decision.arguments, format: "glb", filepath: `/workspace/.chatspace/exports/${id}/model.glb` } : decision.arguments;
+      const args = decision.tool === "export_scene" ? { ...decision.arguments, format: "glb", filepath: `/workspace/.chatspace/exports/${id}/model.glb` }
+        : decision.tool === "execute_blender_code" && typeof decision.arguments.code === "string"
+          ? { ...decision.arguments, code: withBatchViewport(decision.arguments.code) } : decision.arguments;
       // Use the persisted operation id for its export path, not the browser's selected session.
       store.db.transaction(() => {
         const operation = store.submit(session.owner, session.id, session.epoch, `agent-step-${session.epoch}-${job.step}`, decision.tool, args, id);

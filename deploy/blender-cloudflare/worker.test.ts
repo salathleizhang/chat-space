@@ -201,6 +201,42 @@ test.each(["HTTP", "WebSocket"])("desktop external RPC cancels stalled %s when J
   });
 });
 
+test("read-only batch sockets survive intermediate saves and are revoked at final save", async () => {
+  const stub = env.BLENDER_POOLS.getByName(env.BLENDER_POOL);
+  const id = await runInDurableObject<BlenderPool>(stub, async (_instance, state) => {
+    const store = new BlenderStore(new DurableSql(state.storage)), jobs = new BlenderJobs(store);
+    const [s] = jobs.createBatch("batch-viewer", "project", crypto.randomUUID(), [{ id: "cube", label: "Cube", prompt: "cube" }], env.BLENDER_SERVICE_BUILD);
+    const lease = store.reserveNext()!; store.transition(s!.id, lease.epoch, ["allocating"], "ready", "batch-view-instance");
+    const vault = new SandboxSecrets(env.BLENDER_SERVICE_SECRET);
+    store.saveCredentials(s!.id, lease.epoch, vault.seal(vault.generate(), s!.id, lease.epoch)); return s!.id;
+  });
+  const ticket = issueIdentity({ owner: "batch-viewer", session: id, epoch: 1, scope: "desktop", expires: Date.now() + 300_000 }, env.BLENDER_SERVICE_SECRET);
+  await runInDurableObject<BlenderDesktop>(env.BLENDER_DESKTOPS.getByName(id), async instance => {
+    let upstream: WebSocket | undefined;
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      expect(new Headers(init?.headers).get("authorization")).toMatch(/^Basic /);
+      const pair = new WebSocketPair(); upstream = pair[1]; upstream.binaryType = "arraybuffer"; upstream.accept();
+      upstream.addEventListener("message", event => upstream!.send(event.data));
+      return new Response(null, { status: 101, webSocket: pair[0] });
+    });
+    let socket: WebSocket | null = null;
+    try {
+      const response = await SELF.fetch(`https://blender.example/desktop/${id}/websockify`, { headers: { Upgrade: "websocket", Origin: "https://blender.example", Cookie: `__Host-cs-blender-${id}=${ticket}` } });
+      expect(response.status).toBe(101); socket = response.webSocket!; socket.binaryType = "arraybuffer"; socket.accept();
+      await runInDurableObject<BlenderPool>(env.BLENDER_POOLS.getByName(env.BLENDER_POOL), async (_pool, state) => {
+        const store = new BlenderStore(new DurableSql(state.storage));
+        store.setEffect(id, 1, "save-mode", "continue"); store.transition(id, 1, ["ready"], "saving");
+      });
+      await instance.revalidate();
+      const frame = new Promise<ArrayBuffer>(resolve => socket!.addEventListener("message", event => resolve(event.data as ArrayBuffer), { once: true }));
+      socket.send(new Uint8Array([1, 2, 3]).buffer); expect(new Uint8Array(await frame)).toEqual(new Uint8Array([1, 2, 3]));
+      await runInDurableObject<BlenderPool>(env.BLENDER_POOLS.getByName(env.BLENDER_POOL), async (_pool, state) => { new BlenderStore(new DurableSql(state.storage)).setEffect(id, 1, "save-mode", "end"); });
+      const closed = new Promise<void>(resolve => socket!.addEventListener("close", () => resolve(), { once: true }));
+      await instance.revalidate(); await closed;
+    } finally { try { socket?.close(); } catch {} try { upstream?.close(); } catch {} network.mockRestore(); }
+  });
+});
+
 test("Worker/DO HTTP transport carries a real binary socket and revokes it before saving", async () => {
   const id = await runInDurableObject<BlenderPool>(env.BLENDER_POOLS.getByName(env.BLENDER_POOL), async (_instance, state) => {
     const store = new BlenderStore(new DurableSql(state.storage));

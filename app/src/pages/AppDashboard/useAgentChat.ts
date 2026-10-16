@@ -77,6 +77,8 @@ function llmConfig(): LlmRequestConfig {
 
 /** 启动即返回、靠 useTaskPolling 逐个回报的生成任务工具 */
 const TASK_STARTING_TOOLS = new Set([
+  "start-blender-batch",
+  "blender-session-action",
   "start-scene-job",
   "revise-scene-job",
   "retry-scene-job-nodes",
@@ -1106,7 +1108,8 @@ export function useAgentChat({
           "[Background tasks finished]",
           ...tasks.map((task) =>
             task.status === "succeeded"
-              ? `- ${taskSubjectLabel(task.subject)}: succeeded${modelTaskSuffix(task)}`
+              ? `- ${taskSubjectLabel(task.subject)}: succeeded${modelTaskSuffix(task)}${task.workflowId === "blender-cloud"
+                ? `; cloud Blender sessionId=${(task.result as { blenderSessionId: string }).blenderSessionId}. The GLB is saved in cloud storage; use blender-session-action import if the original request asks for it.` : ""}`
               : `- ${taskSubjectLabel(task.subject)}: failed (${task.error ?? "Unknown error"})`,
           ),
           ...(highPoly

@@ -2,6 +2,8 @@
 
 给在本仓库工作的 AI agent 的入口与硬约束。**先读这一份。** 它只有一页，但下面每一条"不得"都是硬约束，不是建议。
 
+**发布约定（2026-10-16 用户明确要求）：完成检查后只通过 Git commit + push 发布，由现有 CI / 平台 Git 集成自动部署。不得自行运行 Vercel、Wrangler 等部署命令、调用部署 API、在控制台手动发布或使用临时目录发布。完整规则见 [DEPLOYMENT.md](DEPLOYMENT.md)；其它文档里的手动部署示例不构成执行授权。**
+
 仓库有 1000+ 行 WebGPU 文档，其中**只有 `WEBGPU_FINDINGS.md` 第 1 节的 16 条是当前可信的性能结论**。不要从别处推断性能数字。
 
 核对基准：2026-10-01，`bun run check` 退出码 0（app **675** pass / chat **371** pass）。增量来历：363 → 377 是 `VIEWPORT_REVIEW.md` §〇.1–0.3 那批回归测试（`animationLoop.test.ts` 6 条、`drawableContent.test.ts` 7 条、`WebGPUView.test.ts` 1 条）；377 → 382 是 §〇.9 的 ArrayCamera 那批（`paneViewports.test.ts` 5 条）；382 → **458** 是 PlayCanvas 迁移层带来的（边界守卫 4 条、设备/会话 18 条、窗格 19 条、材质与模型描述 20 条、截图与准入 15 条，见 §四之二）；**458 → 511** 里有 **39 条是窗格指针输入**（`playcanvas/paneInput.test.ts` 37 条 + `shared/lib/cameraRig.test.ts` 新增 2 条）；**511 → 542** 是拾取与变换 gizmo（`panePicking.test.ts` 15 条、`paneGizmo.test.ts` 9 条、`paneRegistry` 的 `extraLayerIds` 2 条、`paneInput` 的点击/让手势/聚焦口径 5 条）；**542 → 561** 里 **13 条**是 loader 身份（资源修订号）那批（`shared/lib/resourceRevisions.test.ts` 8 条、`pages/AppDashboard/useProjectState.test.ts` 4 条、`libraryApi.test.ts` 1 条）；**561 → 579** 里 **14 条**是地面网格（`paneGrid.test.ts`）；**579 → 594** 里 **13 条**是坐标轴球 HUD（`paneAxisHud.test.ts`）、**2 条**是输入层的被认领点击（`paneInput.test.ts`）；**594 → 615** 里 **10 条**是第一人称漫游（`walkRig.test.ts`）、**10 条**是相机飞行（`rigFlight.test.ts`）、**1 条**是 `animateFocus` 钩子（`paneInput.test.ts`）；**615 → 635** 里 **17 条**是多选整体变换（`selectionTransform.test.ts`，含**用 three 当真值**钉欧拉约定）、**3 条**是实体↔摆放适配（`panePlacement.test.ts`）；**635 → 653** 里 **7 条**是选中线框几何（`selectionBounds.test.ts`）、

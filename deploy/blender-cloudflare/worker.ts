@@ -12,6 +12,7 @@ import { BlenderBatchRunner, volcanoPlanner } from "../../chat/src/blenderServic
 import { issueIdentity, verifyIdentity } from "../../chat/src/blenderService/auth";
 import { boundedBody } from "../../chat/src/blenderService/objects";
 import { DESKTOP_ACTIVITY_SCRIPT, withDesktopActivity } from "../../chat/src/blenderService/desktopActivity";
+import { desktopDisplayScript, withDesktopDisplay } from "../../chat/src/blenderService/desktopDisplay";
 import { tickTaskPumps } from "../../chat/src/common/taskPump";
 import { cloudBudget } from "../../chat/src/models/cloudBudget";
 import { DurableSql } from "./sql";
@@ -48,7 +49,12 @@ export class BlenderPool extends DurableObject<Env> {
       sandboxes: new VolcanoSandboxes(config.volcano), executor, runner,
       checkpoints: { commit: async () => { throw new Error("Buffered checkpoint forbidden in Workers"); } },
       saveCheckpoint: (s, token, id) => files.save(s, token, id), restoreCheckpoint: (s, token, id) => files.restore(s, token, id), publishExport: publish,
-      beforeCheckpoint: async s => { await this.env.BLENDER_DESKTOPS.getByName(s.id).revoke(); },
+      beforeCheckpoint: async s => {
+        // A read-only batch viewer cannot race a save. Keep its framebuffer stream
+        // through intermediate checkpoints; editor inputs and final saves stay fenced.
+        if (jobs.get(s.id) && store.effect(s.id, s.epoch, "save-mode") === "continue") return;
+        await this.env.BLENDER_DESKTOPS.getByName(s.id).revoke();
+      },
     }, true);
     return { config, store, secrets, files, jobs, scheduler, runner };
   }
@@ -97,9 +103,9 @@ export class BlenderPool extends DurableObject<Env> {
     const identity = "ticket" in input ? verifyIdentity(input.ticket, config.secret, "desktop") : input;
     if (!identity?.owner || !identity.session || !identity.epoch) throw new Error("Desktop unauthorized");
     const s = store.session(identity.session, identity.owner);
-    // Saving closes input and denies new connections until the committed checkpoint is complete.
-    if (s.epoch !== identity.epoch || s.state !== "ready" || s.stopReason || s.deadline <= Date.now() || !s.instance) throw new Error("Desktop lease revoked");
     const readOnly = Boolean(jobs.get(s.id));
+    const viewable = s.state === "ready" || readOnly && s.state === "saving" && store.effect(s.id, s.epoch, "save-mode") === "continue";
+    if (s.epoch !== identity.epoch || !viewable || s.stopReason || s.deadline <= Date.now() || !s.instance) throw new Error("Desktop lease revoked");
     if (activity) { if (readOnly) throw new Error("Read-only desktop"); store.recordDesktopActivity(s.id, s.owner, s.epoch); }
     const value = secrets.open(store.credentials(s.id, s.epoch), s.id, s.epoch);
     return { owner: s.owner, session: s.id, epoch: s.epoch, instance: s.instance, target: config.target, desktop: value.desktop, deadline: s.deadline, readOnly };
@@ -134,6 +140,9 @@ async function desktopHTTP(request: Request, env: Env, signal: AbortSignal): Pro
       "Set-Cookie": `${scope.name}=${ticket}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=300`, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
   }
   if (activity || scope.path === "/__lease/renew") return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+  if (scope.path === "/__lease/display.js") return new Response(request.method === "HEAD" ? null : desktopDisplayScript(grant.session, env.BLENDER_FRAME_ORIGINS.split(/\s+/)), {
+    headers: { "Content-Type": "application/javascript", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  });
   if (scope.path === "/__lease/activity.js") {
     if (grant.readOnly) return unavailable(403);
     return new Response(request.method === "HEAD" ? null : DESKTOP_ACTIVITY_SCRIPT, { headers: { "Content-Type": "application/javascript", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
@@ -148,9 +157,10 @@ async function desktopHTTP(request: Request, env: Env, signal: AbortSignal): Pro
   // The binary display stream uses WebSockets, never this HTTP buffer.
   let body: BodyInit | null = request.method === "HEAD" ? null : await boundedBody(response, 4 * 1024 * 1024);
   headers.delete("Content-Length"); headers.delete("Content-Encoding");
-  if (!grant.readOnly && request.method === "GET" && response.status === 200 && headers.get("Content-Type")?.includes("text/html")) {
+  if (request.method === "GET" && response.status === 200 && headers.get("Content-Type")?.includes("text/html")) {
     if ((body as Uint8Array).byteLength > 2 * 1024 * 1024) return unavailable(502);
-    body = withDesktopActivity(new TextDecoder().decode(body as Uint8Array), grant.session);
+    body = withDesktopDisplay(new TextDecoder().decode(body as Uint8Array), grant.session);
+    if (!grant.readOnly) body = withDesktopActivity(body, grant.session);
     for (const key of ["Content-Length", "Content-Encoding", "ETag", "Last-Modified"]) headers.delete(key);
   }
   return new Response(body, { status: response.status, headers });

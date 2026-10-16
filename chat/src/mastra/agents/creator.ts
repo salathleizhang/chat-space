@@ -2,7 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { config } from "../../config";
 import type { LlmConfig } from "../../dto/chat";
 import { CREATOR_INSTRUCTIONS } from "../prompts/creator";
-import { BLENDER_SERVICE_TOOLS } from "../tools/blenderService";
+import { BLENDER_SERVICE_TOOLS, CLOUD_BLENDER_INSTRUCTIONS } from "../tools/blenderService";
 import {
   analyzeSceneTool,
   analyzeReferenceTool,
@@ -57,7 +57,7 @@ export function createCreatorAgent(llm: LlmConfig) {
     id: "chatspace-creator",
     name: "ChatSpace 3D Creator",
     description: "ChatSpace's 3D creation agent: Tripo3D models and World Labs scenes",
-    instructions: CREATOR_INSTRUCTIONS,
+    instructions: CREATOR_INSTRUCTIONS + (config.blender.cloudService ? "\n\n" + CLOUD_BLENDER_INSTRUCTIONS : ""),
     tools: {
       "ask-user": askUserTool,
       "update-plan": updatePlanTool,

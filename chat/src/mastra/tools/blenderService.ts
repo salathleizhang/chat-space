@@ -4,20 +4,13 @@ import { z } from "zod";
 import { getAssetStorage } from "../../services/assetStorage";
 import { requireCurrentProject } from "./requestContext";
 import { requireProject } from "./projectTools";
-import { cloudBudget } from "../../models/blenderCloud";
+import { blenderServiceRequest as request } from "../../models/blenderServiceApi";
+import { trackBlenderTask } from "../../services/blenderTasks";
 import { DEFAULT_BLENDER_LIMITS, DEFAULT_BLENDER_CONCURRENCY } from "../../blenderService/limits";
 
-async function request(path: string, body?: unknown): Promise<any> {
-  // Registered only in the browser runtime after server capabilities confirm deployment.
-  return cloudBudget(async signal => {
-    const origin = (globalThis as unknown as { location: { origin: string } }).location.origin;
-    const response = await fetch(new URL(`/api/blender/${path}`, origin), { credentials: "same-origin", signal,
-      ...(body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
-    const data = await response.json() as { error?: unknown };
-    if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Blender cloud service is temporarily unavailable");
-    return data;
-  }, 25_000);
-}
+export const CLOUD_BLENDER_INSTRUCTIONS = `Cloud Blender is available through the registered cloud session tools. It has a real Blender GUI: the Blender logo at the top of the workbench opens the current project's remote desktop windows, and newly submitted sessions appear automatically. Batch desktops are read-only while the server modeler controls them; a paused or preparing session cannot provide a live desktop. Never describe this service as headless or having no GUI. The main 3D viewport shows exported models only after import; it is separate from the remote desktop.
+Report the actual returned session and job states. planning means the model is deciding the next step, not that Blender has executed geometry changes. planning_result_unknown means the planning response was not recovered; it does not establish that the modeling requirements were too complex or that the model could not decide. planning_timeout_result_unknown means the planning request exceeded its time budget. Other planning_* errors identify an HTTP rejection, truncated/empty response, invalid JSON/decision or missing usage receipt. Do not invent an explanation or silently resubmit paid work. Existing waiting-user jobs can continue with answer after the user authorizes another planning attempt; retry is only for failed/cancelled jobs. Do not create a replacement session just to query or watch one.`;
+
 async function project(context: unknown): Promise<string> {
   const slug = requireCurrentProject(context as never); await requireProject(getAssetStorage(), slug); return slug;
 }
@@ -36,7 +29,9 @@ export const startBlenderBatchTool = createTool({
     const acceptedInput = JSON.parse(await storage.readText(path));
     if (JSON.stringify({ ...acceptedInput, id: "" }) !== JSON.stringify({ ...body, id: "" })) throw new Error("The same call identity cannot change the modeling requirements");
     const result = await request("batches", acceptedInput);
-    return { batchId: result.batchId, items: result.sessions.map((s: { id: string; itemId: string; state: string }) => ({ sessionId: s.id, itemId: s.itemId, state: s.state })), note: "Submitted; the cloud will continue executing. You can open the small window to watch. Use blender-sessions to query afterward, and blender-session-action to manage or import artifacts; do not ask the user to click action buttons." };
+    const tasks = await Promise.all(result.sessions.map((s: any) => trackBlenderTask(storage, s,
+      acceptedInput.items.find((item: { id: string }) => item.id === s.itemId)?.label ?? "Model")));
+    return { batchId: result.batchId, tasks, items: result.sessions.map((s: { id: string; itemId: string; state: string }) => ({ sessionId: s.id, itemId: s.itemId, state: s.state })), note: "Submitted; the cloud will continue executing. The workbench tracks these tasks and wakes this conversation after they finish. You can open the small window to watch. Use blender-session-action to import artifacts after completion; do not ask the user to click action buttons." };
   },
 });
 export const blenderBatchStatusTool = createTool({
@@ -115,10 +110,14 @@ export const blenderSessionActionTool = createTool({
       if (!["paused", "expired"].includes(session.state)) return { session };
       return request(`sessions/${input.sessionId}/resume`, {});
     }
-    if (input.action === "answer") return request(`sessions/${input.sessionId}/answer`, { message: input.message, discardUnknown: input.discardUnknown });
+    if (input.action === "answer") {
+      const result = await request(`sessions/${input.sessionId}/answer`, { message: input.message, discardUnknown: input.discardUnknown });
+      return { ...result, tasks: [await trackBlenderTask(getAssetStorage(), result.session, "Continued model")] };
+    }
     if (input.action === "retry") {
       const body = await durableAction(context, slug, { action: input.action, sessionId: input.sessionId, requestId: randomUUID() });
-      return request(`sessions/${input.sessionId}/retry`, { requestId: body.requestId });
+      const result = await request(`sessions/${input.sessionId}/retry`, { requestId: body.requestId });
+      return { ...result, tasks: [await trackBlenderTask(getAssetStorage(), result.session, "Retried model")] };
     }
     if (session.batchId) throw new Error("Batch tasks are exported automatically by the runner; manual scene commands cannot be inserted");
     const body = await durableAction(context, slug, { action: "export", sessionId: input.sessionId, epoch: session.epoch, key: randomUUID(), tool: "export_scene", arguments: {} });

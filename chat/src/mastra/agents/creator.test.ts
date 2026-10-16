@@ -5,6 +5,7 @@ import * as toolsIndex from "../tools";
 import { BLENDER_TOOLS } from "../tools/blenderOps";
 import { BLENDER_SERVICE_TOOLS } from "../tools/blenderService";
 import { createCreatorAgent } from "./creator";
+import { config } from "../../config";
 
 /**
  * 产品里所有工具 id 的词汇表（含配置开关控制、默认不注册的那些）。
@@ -39,6 +40,22 @@ function mentionsTool(text: string, id: string): boolean {
 }
 
 describe("creator 工具可用性", () => {
+  test("cloud tools and real desktop instructions share the same capability switch", async () => {
+    const original = config.blender.cloudService;
+    try {
+      for (const enabled of [false, true]) {
+        Object.assign(config.blender, { cloudService: enabled });
+        const agent = createCreatorAgent({ apiKey: "sk-test" });
+        const tools = await agent.listTools(), instructions = String(await agent.getInstructions());
+        expect(Boolean(tools["start-blender-batch"])).toBe(enabled);
+        expect(instructions.includes("real Blender GUI")).toBe(enabled);
+        if (enabled) {
+          expect(instructions).toContain("Batch desktops are read-only");
+          expect(instructions).toContain("does not establish that the modeling requirements were too complex");
+        }
+      }
+    } finally { Object.assign(config.blender, { cloudService: original }); }
+  });
   test("常驻工具与各自入参形状（含「提示词答应了的能力都挂上」的定点断言）", async () => {
     const tools = await createCreatorAgent({ apiKey: "sk-test" }).listTools();
     expect(tools["ask-user"]).toBeDefined();

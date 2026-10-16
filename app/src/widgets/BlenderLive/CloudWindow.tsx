@@ -11,14 +11,16 @@ export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: 
   const [notices, setNotices] = useState<Record<string, string>>({});
   const [opened, setOpened] = useState<BlenderWindowSlot[]>([]);
   const seen = useRef(new Set<string>());
+  const initialized = useRef(false);
   const [error, setError] = useState<string>(), [enabled, setEnabled] = useState<boolean>();
   const [loaded, setLoaded] = useState(false);
   async function refresh(signal: AbortSignal, showAll = false) {
     const data = await blenderService<{ sessions: CloudSession[]; jobs: Record<string, JobSummary>; notices?: Record<string, string> }>("sessions", undefined, signal);
     if (signal.aborted) return;
     const current = data.sessions.filter(s => s.project === projectSlug);
-    const toOpen = current.filter(s => showAll || !seen.current.has(s.id));
+    const toOpen = current.filter(s => showAll || !seen.current.has(s.id) && (initialized.current || !["paused", "expired"].includes(s.state)));
     current.forEach(s => seen.current.add(s.id));
+    initialized.current = true;
     setSessions(current); setJobs(data.jobs ?? {}); setNotices(data.notices ?? {}); setLoaded(true); setError(undefined);
     setOpened(windows => toOpen.reduce((result, session) => openBlenderWindow(result, session.id), windows));
   }
@@ -33,14 +35,14 @@ export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: 
     if (!enabled) return;
     const controller = new AbortController();
     const failed = () => { if (!controller.signal.aborted) setError("Cannot reach the Blender cloud service right now"); };
-    void refresh(controller.signal, true).catch(failed);
+    void refresh(controller.signal, openRequest > 0).catch(failed);
     // New AI sessions appear automatically; polling never reopens a dismissed viewer.
     const timer = setInterval(() => { void refresh(controller.signal).catch(failed); }, 5_000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [projectSlug, enabled, openRequest]);
   const message = error ?? (enabled === false ? "Cloud Blender is temporarily unavailable." : loaded && sessions.length === 0 ? "No Blender tasks yet; tell the AI in chat what you want to make." : undefined);
   return createPortal(<>
-    {message && <Panel role={error ? "alert" : "status"} className="fixed right-4 bottom-20 z-[10000] w-[22rem] max-w-[95vw] p-4 text-sm text-ink">{message}</Panel>}
+    {message && (openRequest > 0 || opened.length > 0) && <Panel role={error ? "alert" : "status"} className="fixed right-4 bottom-20 z-[10000] w-[22rem] max-w-[95vw] p-4 text-sm text-ink">{message}</Panel>}
     {opened.map(({ id, slot }) => {
       const session = sessions.find(s => s.id === id); if (!session) return null;
       return <BlenderSessionWindow key={id} session={session} job={jobs[id]} notice={notices[id]} index={slot}

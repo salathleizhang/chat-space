@@ -22,6 +22,7 @@ import { serverResumeKeys } from "../config";
 import { getAssetStorage, readJson, writeJson } from "./assetStorage";
 import { readCandidates } from "./candidateRegistry";
 import { mutateSceneJob, readSceneJob } from "./sceneJobs";
+import { refreshBlenderTasks, BLENDER_TASK_WORKFLOW } from "./blenderTasks";
 import {
   type GenerationObject,
 } from "./modelPublishing";
@@ -361,12 +362,13 @@ export async function listTasks(projectSlug?: string): Promise<GenerationTask[]>
         found.push(await readJson(storage, `${projectTasksDir(project)}/${name}`, GenerationTaskSchema));
       }
     }
-    const stale = found.filter((task) => task.status === "running" && Date.now() - Date.parse(task.updatedAt) > STALLED_TASK_WARN_MS);
+    const refreshed = await refreshBlenderTasks(storage, found);
+    const stale = refreshed.filter((task) => task.workflowId !== BLENDER_TASK_WORKFLOW && task.status === "running" && Date.now() - Date.parse(task.updatedAt) > STALLED_TASK_WARN_MS);
     if (stale.length) {
       const activeIds = await currentCloudContext()!.activeTaskIds?.() ?? new Set<string>();
       for (const task of stale) task.stall = { silentForMs: Date.now() - Date.parse(task.updatedAt), pumpActive: activeIds.has(task.id) };
     }
-    return found.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return refreshed.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   // **外部时钟**：工作台每 1 秒调一次这个接口（useTaskPolling），那条心跳来自浏览器进程，
   // 与本进程定时器的死活无关。生成链路的等待由它放行、超预算的在飞请求由它中止。
