@@ -79,6 +79,7 @@ test("隐藏的标签页不再轮询；回到前台立刻刷新，但不会重�
   const before = requests.length, scheduled = intervals.length;
   await act(async () => { setVisibility("hidden"); });
   expect(intervals.length).toBe(scheduled);              // 隐藏期间没有再安排任何一次轮询
+  expect(requests.length).toBe(before);                  // 也不补发那一次：隐藏的标签页一次都不发
   await act(async () => { setVisibility("visible"); });
   expect(intervals.length).toBe(scheduled + 1);          // 回到前台才重新排（立刻刷一次 + 继续轮询）
   expect(intervals[intervals.length - 1]).toBe(5_000);

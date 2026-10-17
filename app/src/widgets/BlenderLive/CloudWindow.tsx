@@ -44,6 +44,9 @@ export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: 
   const delay = blenderPollDelayMs(sessions, hidden);
   useEffect(() => {
     if (!enabled) return;
+    // 隐藏的标签页**一次都不发**：它看不到任何东西，而每次请求都要花掉服务的 Durable Object
+    // 读配额（2026-10-17 整服务 503 就是背景标签页按 5 秒轮询读爆的）。所以先判空、再发。
+    if (delay === null) return;
     const controller = new AbortController();
     const failed = () => { if (!controller.signal.aborted) setError("Cannot reach the Blender cloud service right now"); };
     // New AI sessions appear automatically; polling never reopens a dismissed viewer. Only a new
@@ -53,7 +56,6 @@ export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: 
     const showAll = openRequest > 0 && openedFor.current !== key;
     openedFor.current = key;
     void refresh(controller.signal, showAll).catch(failed);
-    if (delay === null) return () => controller.abort();
     const timer = setInterval(() => { void refresh(controller.signal).catch(failed); }, delay);
     return () => { controller.abort(); clearInterval(timer); };
   }, [projectSlug, enabled, openRequest, delay]);
