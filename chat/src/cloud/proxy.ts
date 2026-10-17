@@ -56,7 +56,7 @@ let healthCache: { at: number; value: ProviderHealth } | undefined;
 async function cachedProviderHealth(fetchFn: typeof fetch, ttl: number): Promise<ProviderHealth> {
   const now = Date.now();
   if (healthCache && now - healthCache.at < ttl) return healthCache.value;
-  const value = await probeProvider({ fetchFn });
+  const value = await probeProvider({ fetchFn, baseUrl: config.llm.defaultBaseUrl });
   if (healthCache?.value.ok !== value.ok) console.error("Provider health probe", JSON.stringify(value));
   healthCache = { at: now, value };
   return value;

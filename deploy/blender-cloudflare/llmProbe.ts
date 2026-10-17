@@ -1,5 +1,3 @@
-import type { ProviderHealth } from "../../chat/src/cloud/providerHealth";
-
 /**
  * 「Vercel 出口 → 火山」这条腿的定时巡检（2026-10-17）。
  *
@@ -11,6 +9,12 @@ import type { ProviderHealth } from "../../chat/src/cloud/providerHealth";
  * 判据是**端点自己的状态码**：200 = 可用，503 = 不通或不可用。5 分钟一次；
  * 故障期间每 30 分钟最多推一条，恢复时补一条"已恢复"（靠 Cache API 记住上一次判定，
  * 不在 Durable Object 里加状态——那会动到正在跑的池子）。
+ *
+ * ⚠️ **本模块不许 import `chat/` 下的任何东西，type-only 也不行。** worker 的 tsconfig
+ * 会把 import 到的文件整条依赖图拉进自己的程序：2026-10-17 试过 `import type` 引
+ * `chat/src/cloud/providerHealth.ts`，程序从 29 个文件涨到 68 个（一路带到
+ * `config → models/tripo → … → mastra/tools/skyboxGen`），把 chat 侧几条既有类型错误
+ * 带进 CI，**Vercel 构建当场失败**。这里只认"端点返回的那份 JSON"这个契约，接口自己声明。
  */
 
 export const LLM_PROBE_CRON = "*/5 * * * *";
@@ -28,7 +32,18 @@ declare global {
 }
 
 export interface ProbeState { ok: boolean; at: number }
-export interface LlmHealth extends Partial<ProviderHealth> { ok: boolean }
+/** `/api/health/llm` 返回体的形状（只声明这里真正读的字段）。 */
+export interface LlmHealth {
+  ok?: boolean;
+  reachable?: boolean;
+  verdict?: string;
+  provider?: string;
+  status?: number;
+  code?: string;
+  latencyMs?: number;
+  detail?: string;
+  checkedAt?: number;
+}
 
 export interface ProbeResult {
   ok: boolean;

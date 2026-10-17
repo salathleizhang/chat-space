@@ -1,5 +1,3 @@
-import { config } from "../config";
-
 /**
  * 「代理 → 供应商」这一跳的连通性探针。
  *
@@ -16,6 +14,14 @@ import { config } from "../config";
  *      注意"通"与"能用"是两件事：401/402/429/5xx 属于"通但不可用"，单独判成 degraded。
  *   ② **失败详情**：把 cause 的 `code` 与耗时一起带出来（`UND_ERR_CONNECT_TIMEOUT`、
  *      `ECONNRESET`、证书错误…），这是原来最缺的一条信息。
+ *
+ * ⚠️ **本模块不许 import 任何会拖出依赖图的东西**（`../config` 就在禁止之列）：
+ * `deploy/blender-cloudflare/llmProbe.ts` 要复用这里的类型，而 worker 的 tsconfig 会把
+ * 被 import 的文件整条图拉进自己的程序。2026-10-17 实测：加上 `../config` 后 worker 的
+ * TS 程序从 **29 个文件涨到 68 个**（`config → models/tripo → common/polling →
+ * cloud/context → services/tasks → mastra/tools/skyboxGen`），把 chat 侧几条既有类型
+ * 错误带进 CI，**Vercel 构建当场失败**。所以 baseURL 由调用方传入、只读 `process.env`，
+ * 类型层面也不从别的 workspace 借。
  */
 
 /** 探针模型名：必须永远不是一个真实模型 ID（撞上就等于开始按 token 计费了）。 */
@@ -84,16 +90,17 @@ export function providerHost(baseUrl: string): string {
 
 export interface ProbeOptions {
   fetchFn?: typeof fetch;
-  baseUrl?: string;
+  /** 由调用方给（见文件头：本模块不 import `../config`），生产传 `config.llm.defaultBaseUrl`。 */
+  baseUrl: string;
   apiKey?: string;
   timeoutMs?: number;
   now?: () => number;
 }
 
 /** 打一次真实请求（零成本），**永不抛错**：任何异常都折成 `verdict: "down"`。 */
-export async function probeProvider(options: ProbeOptions = {}): Promise<ProviderHealth> {
+export async function probeProvider(options: ProbeOptions): Promise<ProviderHealth> {
   const fetchFn = options.fetchFn ?? globalThis.fetch;
-  const baseUrl = (options.baseUrl ?? config.llm.defaultBaseUrl).replace(/\/+$/, "");
+  const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const apiKey = options.apiKey ?? process.env.VOLC_KEY;
   const now = options.now ?? Date.now;
   const provider = providerHost(baseUrl);
