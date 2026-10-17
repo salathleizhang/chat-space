@@ -59,6 +59,20 @@ describe("Cloudflare controller", () => {
     expect(list.status).toBe(200); expect(await list.json()).toMatchObject({ sessions: [] });
     await runInDurableObject<BlenderPool>(env.BLENDER_POOLS.getByName(env.BLENDER_POOL), async (_instance, state) => { expect(await state.storage.getAlarm()).not.toBeNull(); });
   });
+  test("a polled listing never arms the pool alarm; only a mutation does", async () => {
+    const stub = env.BLENDER_POOLS.getByName(env.BLENDER_POOL);
+    // 存储不保证按用例隔离（实测上一个用例的 POST 会留下 alarm），所以先把起点钉死。
+    await runInDurableObject<BlenderPool>(stub, async (_instance, state) => { await state.storage.deleteAlarm(); });
+    const list = await SELF.fetch("https://worker.example/v1/sessions", { headers: { Authorization: `Bearer ${token()}` } });
+    expect(list.status).toBe(200);
+    // 浏览器每几秒轮询一次列表：这条通路一旦顺手 arm，池子就被永久钉在 5 秒 alarm 上，
+    // 每次轮询额外付一次 getAlarm 读 + 一次 setAlarm 写（免费档 5M 读 / 10 万写每天）。
+    await runInDurableObject<BlenderPool>(stub, async (_instance, state) => { expect(await state.storage.getAlarm()).toBeNull(); });
+    const create = await SELF.fetch("https://worker.example/v1/sessions", { method: "POST", headers: { Authorization: `Bearer ${token()}`, "Content-Type": "application/json" }, body: JSON.stringify({ project: "project", requestId: crypto.randomUUID() }) });
+    expect(create.status).toBe(503);
+    // 变更请求仍然要在改动之前把 alarm 放好：崩在「受理」与「唤醒」之间不能把排队任务丢掉。
+    await runInDurableObject<BlenderPool>(stub, async (_instance, state) => { expect(await state.storage.getAlarm()).not.toBeNull(); });
+  });
   test("actual DO SQLite supports nested admission transactions, quotas and rollback", async () => {
     await runInDurableObject<BlenderPool>(pool(), async (_instance, state) => {
       const store = new BlenderStore(new DurableSql(state.storage), { global: 4, owner: 3, queued: 100 }), jobs = new BlenderJobs(store);

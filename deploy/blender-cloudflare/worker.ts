@@ -28,6 +28,8 @@ function settings(env: Env) {
 }
 function unavailable(status = 503) { return Response.json({ error: "Blender service unavailable" }, { status, headers: { "Cache-Control": "no-store" } }); }
 function configured(env: Env) { return Boolean(env.BLENDER_SERVICE_SECRET?.length >= 32 && env.VOLC_ACCESSKEY && env.VOLC_SECRETKEY && env.TOS_ACCESS_KEY && env.TOS_SECRET_KEY && env.VOLC_KEY); }
+/** Cannot enqueue or advance work, so they must not pull the pool alarm in (see `dispatch`). */
+const READ_ONLY_METHODS = new Set(["GET", "HEAD"]);
 
 /** One bounded regional capacity pool coordinates admission across its sandbox slots.
  * Desktop HTTP/binary traffic bypasses it; individual desktop sockets have their own DO.
@@ -63,7 +65,11 @@ export class BlenderPool extends DurableObject<Env> {
   async dispatch(request: Request): Promise<Response> {
     const runtime = this.getRuntime();
     // Arm before mutation; a crash between receipt and wake cannot strand a queued task.
-    await this.arm();
+    // Reads must not arm. The workbench polls the session list every few seconds, and each arm is a
+    // DO row read (`getAlarm`) plus a row written (`setAlarm`) *and* pins this pool to the 5-second
+    // alarm that the alarm handler deliberately backs off from when idle — enough, on the free tier,
+    // to exhaust both the 5M rows-read and the 100k rows-written daily allowance with no work running.
+    if (!READ_ONLY_METHODS.has(request.method)) await this.arm();
     const response = await createBlenderApi(runtime.store, { tick: () => { /* platform Alarm owns work */ } },
       { ...runtime.config, desktopOrigin: new URL(request.url).origin }, runtime.runner ? runtime.jobs : undefined, runtime.files, runtime.secrets).fetch(request);
     return response;

@@ -3,6 +3,13 @@ import type { SqlDatabase } from "./sql";
 export interface BudgetLimits { ownerRunMs: number; globalRunMs: number; ownerModelCalls: number; globalModelCalls: number }
 export const TRIAL_BUDGETS: BudgetLimits = { ownerRunMs: 3 * 3_600_000, globalRunMs: 12 * 3_600_000, ownerModelCalls: 36, globalModelCalls: 144 };
 export type BudgetKind = "runtime" | "model-call";
+/**
+ * Personal-usage query, deliberately a named constant: `budgets.test.ts` runs `EXPLAIN QUERY PLAN`
+ * over **this exact string** to pin the read amplification. Drop the `owner` predicate and the plan
+ * loses the full index key, the test fails, and a polled list endpoint goes back to reading every
+ * owner's rows for the day.
+ */
+export const OWNER_USAGE_SQL = "SELECT COALESCE(SUM(quantity),0) total FROM blender_budget_entries WHERE day=? AND owner=? AND kind=?";
 type Entry = { id: string; owner: string; kind: BudgetKind; day: string; quantity: number; startedAt: number; settled: number };
 /** UTC-day admission caps, persisted before a potentially billed external request. Not an invoice. */
 export class BlenderBudgets {
@@ -44,7 +51,17 @@ export class BlenderBudgets {
     return { owner: row.personal, global: row.total };
   }
   summary(owner: string) {
-    return { day: new Date().toISOString().slice(0, 10), timezone: "UTC", runtime: { usedAndReservedMs: this.usage(owner, "runtime").owner, limitMs: this.limits.ownerRunMs },
-      modelCalls: { used: this.usage(owner, "model-call").owner, limit: this.limits.ownerModelCalls } };
+    return { day: new Date().toISOString().slice(0, 10), timezone: "UTC", runtime: { usedAndReservedMs: this.ownerUsage(owner, "runtime"), limitMs: this.limits.ownerRunMs },
+      modelCalls: { used: this.ownerUsage(owner, "model-call"), limit: this.limits.ownerModelCalls } };
+  }
+  /**
+   * Personal usage only. `usage()` above deliberately also computes the **global** total, so it has no
+   * owner predicate and reads every owner's rows for that day — correct for admission, ruinous for a
+   * list endpoint that a browser polls. Durable Objects bill rows read (free tier 5M/day), so a
+   * 5-second poll against the global aggregate costs the whole day's ledger per call. Keeping the
+   * owner predicate walks only this owner's slice of the index instead.
+   */
+  ownerUsage(owner: string, kind: BudgetKind, day = new Date().toISOString().slice(0, 10)): number {
+    return this.db.query<{ total: number }, [string, string, string]>(OWNER_USAGE_SQL).get(day, owner, kind)!.total;
   }
 }

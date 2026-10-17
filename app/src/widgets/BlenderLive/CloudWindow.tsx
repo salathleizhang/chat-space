@@ -4,6 +4,7 @@ import { Panel } from "../../shared/ui";
 import { blenderService, type CloudSession, type JobSummary } from "./service";
 import { BlenderSessionWindow } from "./SessionWindow";
 import { openBlenderWindow, type BlenderWindowSlot } from "./FloatingWindow";
+import { blenderPollDelayMs } from "./pollCadence";
 
 /** The logo opens every viewer directly. Accepted work belongs to the service. */
 export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: string; openRequest: number }) {
@@ -12,6 +13,9 @@ export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: 
   const [opened, setOpened] = useState<BlenderWindowSlot[]>([]);
   const seen = useRef(new Set<string>());
   const initialized = useRef(false);
+  /** Which `project:openRequest` already opened every viewer, so a cadence change never reopens a dismissed one. */
+  const openedFor = useRef<string | null>(null);
+  const [hidden, setHidden] = useState(() => document.visibilityState === "hidden");
   const [error, setError] = useState<string>(), [enabled, setEnabled] = useState<boolean>();
   const [loaded, setLoaded] = useState(false);
   async function refresh(signal: AbortSignal, showAll = false) {
@@ -32,14 +36,27 @@ export function BlenderCloudWindow({ projectSlug, openRequest }: { projectSlug: 
     return () => controller.abort();
   }, [projectSlug]);
   useEffect(() => {
+    const update = () => setHidden(document.visibilityState === "hidden");
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  // `blenderPollDelayMs` 说明节奏为什么不是固定 5 秒：每次轮询都要花掉服务的 Durable Object 读配额。
+  const delay = blenderPollDelayMs(sessions, hidden);
+  useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
     const failed = () => { if (!controller.signal.aborted) setError("Cannot reach the Blender cloud service right now"); };
-    void refresh(controller.signal, openRequest > 0).catch(failed);
-    // New AI sessions appear automatically; polling never reopens a dismissed viewer.
-    const timer = setInterval(() => { void refresh(controller.signal).catch(failed); }, 5_000);
+    // New AI sessions appear automatically; polling never reopens a dismissed viewer. Only a new
+    // logo click or project opens every viewer — a cadence change (idle↔active, hidden↔visible)
+    // must not, or a dismissed window would come back every time the tab regains focus.
+    const key = `${projectSlug}:${openRequest}`;
+    const showAll = openRequest > 0 && openedFor.current !== key;
+    openedFor.current = key;
+    void refresh(controller.signal, showAll).catch(failed);
+    if (delay === null) return () => controller.abort();
+    const timer = setInterval(() => { void refresh(controller.signal).catch(failed); }, delay);
     return () => { controller.abort(); clearInterval(timer); };
-  }, [projectSlug, enabled, openRequest]);
+  }, [projectSlug, enabled, openRequest, delay]);
   const message = error ?? (enabled === false ? "Cloud Blender is temporarily unavailable." : loaded && sessions.length === 0 ? "No Blender tasks yet; tell the AI in chat what you want to make." : undefined);
   return createPortal(<>
     {message && (openRequest > 0 || opened.length > 0) && <Panel role={error ? "alert" : "status"} className="fixed right-4 bottom-20 z-[10000] w-[22rem] max-w-[95vw] p-4 text-sm text-ink">{message}</Panel>}

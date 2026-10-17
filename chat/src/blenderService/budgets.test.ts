@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { BlenderBudgets } from "./budgets";
+import { BlenderBudgets, OWNER_USAGE_SQL } from "./budgets";
 import { BlenderStore } from "./store";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,6 +48,23 @@ test("restart retains quota reservations and settled usage", () => {
     db = new Database(path); b = new BlenderBudgets(db, limits);
     expect(b.usage("alice", "runtime", "2026-10-11").owner).toBe(600_000); db.close();
   } finally { rmSync(directory, { recursive: true }); }
+});
+test("session-list budget summary reads only its own owner's rows, not the day's whole ledger", () => {
+  const db = new Database(":memory:"), b = new BlenderBudgets(db, { ownerRunMs: 10 ** 9, globalRunMs: 10 ** 9, ownerModelCalls: 1000, globalModelCalls: 1000 });
+  try {
+    const today = Date.now();
+    for (let i = 0; i < 40; i++) expect(b.reserve(`bob-${i}`, "bob", "model-call", 1, today)).toBe(true);
+    b.reserve("alice-call", "alice", "model-call", 1, today);
+    b.reserve("alice-runtime", "alice", "runtime", 600_000, today);
+    expect(b.summary("alice")).toMatchObject({ modelCalls: { used: 1, limit: 1000 }, runtime: { usedAndReservedMs: 600_000, limitMs: 10 ** 9 } });
+    // 准入闸门要的全局口径不能跟着变：admission 必须仍然看得见别的 owner。
+    expect(b.usage("alice", "model-call", new Date(today).toISOString().slice(0, 10))).toEqual({ owner: 1, global: 41 });
+    // 钉住读放大：跑的是**实现自己那条 SQL**。少了 owner 谓词，计划里就没有完整的索引键——
+    // 每 5 秒一次的列表轮询会把这个差值放大成每天数百万行（免费档上限是 5M/天）。
+    const plan = db.query<{ detail: string }, [string, string, string]>(`EXPLAIN QUERY PLAN ${OWNER_USAGE_SQL}`)
+      .all(new Date(today).toISOString().slice(0, 10), "alice", "model-call").map(row => row.detail).join(" ");
+    expect(plan).toMatch(/USING (COVERING )?INDEX blender_budget_day \(day=\? AND owner=\? AND kind=\?\)/);
+  } finally { db.close(); }
 });
 test("quota-limited owner stays queued while a different owner can be admitted", () => {
   const store = new BlenderStore(":memory:", { global: 4, owner: 3, queued: 100 }, limits);
