@@ -1,23 +1,25 @@
 /**
- * 备份 ZIP 的**流式**读取（BackupPanel 的导入侧）。
+ * 备份 ZIP 的**流式**读写（BackupPanel 的导入侧与导出侧）。
  *
- * 三条硬约束，改之前先读：
+ * 四条硬约束，改之前先读：
  *
- * 1. **不把包读进 JS 堆。** 只读中央目录拿"文件名 + 压缩方式 + 偏移"，真正取数时
- *    `Blob.slice()` 出一段交给 IndexedDB——STORE 档零拷贝。这是本文件存在的**唯一**理由：
+ * 1. **不把包读进 JS 堆。** 读只碰中央目录 + `Blob.slice()`；写只用 `Blob` 分片拼装
+ *    （每个文件的内容直接把**原 Blob** 当分片塞进去，不复制）。这是本文件存在的**唯一**理由：
  *    2026-10-17 本机实测（真 Chrome，用户那份 454 MB / 816 个文件的备份，全部 STORE），
- *    旧的 JSZip 路径 `loadAsync()` + 逐项 `async("blob")` + 一次性事务
- *    **63 分钟写入 0 个文件、不报错、也不崩**（同一份包用这里的流式路径 1.0 s 写完、
- *    8 项校验全过）。别再退回 JSZip。
+ *    旧的 JSZip 读取路径 `loadAsync()` + 逐项 `async("blob")` + 一次性事务
+ *    **63 分钟写入 0 个文件、不报错、也不崩**（同一份包用这里的流式路径 1.0–2.3 s 写完、
+ *    12 项端到端判据全过）。别再退回 JSZip。测试里仍然用 JSZip **造夹具与交叉校验**——
+ *    它是独立实现，正好当"我写的字节对不对"的真值。
  * 2. **`.json` 必须落成字符串。** 应用里有 `JSON.parse(entry.value as string)` 这类读取路径
  *    （`browser/client.ts` 的 `.jobs/` 续跑、`browser/jobs.ts`），存成 Blob 会让任务轮询当场抛错。
  *    二进制才是 Blob。
  * 3. **`chatspace-backup.json` 是清单本身，不进工作区。** 应用自己的导入也跳它
  *    （旧 BackupPanel 的 filter 就是这么写的），否则工作区会多出一个应用永远不会产生的文件。
+ * 4. **不产出 ZIP64。** 单个文件或整包超过 4 GiB 时明确报错，而不是写出一个"4 GiB 以上
+ *    才需要、而下场是偏移读错"的包——读侧同样明确拒绝 ZIP64，两边口径一致。
  *
- * 支持 STORE(0) 与 deflate(8) 两档：应用导出的包固定 STORE（`compression: "STORE"`），
- * deflate 是给手工/第三方打的包留的路（浏览器用 `DecompressionStream("deflate-raw")`）。
- * ZIP64 明确报错而不是静默读错——本仓库的备份到不了 4 GB/65535 项，但别的工具打的包可能。
+ * 支持 STORE(0) 与 deflate(8) 两档：应用导出的包固定 STORE（未压缩，所以才能零拷贝落库），
+ * deflate 是给手工/第三方打的包留的读路径（浏览器用 `DecompressionStream("deflate-raw")`）。
  */
 
 /** 备份清单的文件名：BackupPanel 导出时写它，导入时用它校验版本。 */
@@ -176,4 +178,134 @@ export function planBackupImport(entries: BackupEntry[], existing: Iterable<stri
   }
   const inBackup = new Set(entries.map((entry) => entry.name));
   return { conflicts, missing, extra: [...have].filter((path) => !inBackup.has(path)), bytes, existing: have.size };
+}
+
+// ---------------------------------------------------------------------------
+// 写：STORE + 真实 CRC32，内容以原 Blob 作为分片进最终 Blob（见文件头第 1 条）
+// ---------------------------------------------------------------------------
+
+/** 4 GiB 边界：UINT32 能表示的最后一个字节。越过它就得上 ZIP64，而读写两侧都不支持。 */
+const MAX_ZIP_BYTES = 0xffffffff;
+const LOCAL_SIGNATURE = 0x04034b50;
+const CENTRAL_WRITE_SIGNATURE = 0x02014b50;
+/** bit 11 = 文件名是 UTF-8。项目里的源图名可能是中文，所以固定声明。 */
+const UTF8_NAME_FLAG = 0x0800;
+const ZIP_VERSION = 20;
+
+/** 标准 CRC32（多项式 0xEDB88320）。ZIP 头里的 crc32 字段就是它——算错的话解压方会拒收。 */
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+/**
+ * 流式算 CRC32：一次只持有一个分片（默认 64 KiB 级），454 MB 的模型也不会进 JS 堆。
+ * 数据仍要**读一遍**——CRC 是写在文件头之前的，绕不开；但读的是分片，不是整块。
+ */
+async function crc32Of(blob: Blob): Promise<number> {
+  let crc = 0xffffffff;
+  const reader = blob.stream().getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (let index = 0; index < value.length; index += 1) crc = CRC_TABLE[(crc ^ value[index]!) & 0xff]! ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** MS-DOS 时间戳（zip 本地头/中央目录里的 16 位字段），2 秒粒度、1980 起算。 */
+function dosStamp(date: Date): { time: number; date: number } {
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1),
+    date: ((Math.max(date.getFullYear(), 1980) - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+  };
+}
+
+export interface BackupFile {
+  path: string;
+  value: Blob | string;
+}
+
+export interface BackupWriteOptions {
+  /** 清单里的 `savedAt`；也用作每个条目的时间戳。 */
+  savedAt?: string;
+  /** 每写完一个条目的头部/校验就报一次，用来给大工作区显示进度。 */
+  onProgress?: (done: number, total: number) => void;
+}
+
+/**
+ * 打一个备份 ZIP。返回的 `Blob` 由"小头部字节 + 原文件 Blob"拼成：Chrome 会把大 Blob 落到磁盘，
+ * 所以整包不会驻留内存（旧 JSZip 路径会把每个文件都读成 `Uint8Array`）。
+ *
+ * 清单 `chatspace-backup.json` 由这里写（版本 1，`files` 是**实际写进去的文件数**——
+ * 旧实现写的是 `localEntries()` 的总数，把被排除的 `.uploads/`/`.downloads/` 也算进去了，
+ * 于是同一份备份"清单说 1076、包里只有 816"）。
+ */
+export async function writeBackupZip(files: BackupFile[], options: BackupWriteOptions = {}): Promise<Blob> {
+  const stamp = dosStamp(options.savedAt ? new Date(options.savedAt) : new Date());
+  const encoder = new TextEncoder();
+  const entries = [...files, { path: BACKUP_MANIFEST, value: JSON.stringify({ version: 1, savedAt: options.savedAt ?? new Date().toISOString(), files: files.length }) }];
+  const parts: BlobPart[] = [];
+  // 显式写成 `Uint8Array<ArrayBuffer>`：TS 5.9 的 `BlobPart` 只收 ArrayBuffer 背后的视图，
+  // 默认的 `Uint8Array<ArrayBufferLike>`（含 SharedArrayBuffer 分支）会被拒。
+  const central: Uint8Array<ArrayBuffer>[] = [];
+  let offset = 0;
+
+  for (const [index, file] of entries.entries()) {
+    const data = typeof file.value === "string" ? new Blob([file.value]) : file.value;
+    const name = encoder.encode(file.path);
+    if (data.size > MAX_ZIP_BYTES) throw new Error(`"${file.path}" is larger than 4 GiB; export it in parts`);
+    if (offset + data.size > MAX_ZIP_BYTES) throw new Error("This workspace is larger than 4 GiB; export it in parts (ZIP64 is not supported)");
+    const crc = await crc32Of(data);
+    const local = new Uint8Array(LOCAL_HEADER_BYTES + name.length);
+    const view = new DataView(local.buffer);
+    view.setUint32(0, LOCAL_SIGNATURE, true);
+    view.setUint16(4, ZIP_VERSION, true);
+    view.setUint16(6, UTF8_NAME_FLAG, true);
+    view.setUint16(8, 0, true); // STORE：读侧因此可以零拷贝落库
+    view.setUint16(10, stamp.time, true);
+    view.setUint16(12, stamp.date, true);
+    view.setUint32(14, crc, true);
+    view.setUint32(18, data.size, true);
+    view.setUint32(22, data.size, true);
+    view.setUint16(26, name.length, true);
+    view.setUint16(28, 0, true);
+    local.set(name, LOCAL_HEADER_BYTES);
+    parts.push(local, data);
+
+    const record = new Uint8Array(46 + name.length);
+    const recordView = new DataView(record.buffer);
+    recordView.setUint32(0, CENTRAL_WRITE_SIGNATURE, true);
+    recordView.setUint16(4, ZIP_VERSION, true);
+    recordView.setUint16(6, ZIP_VERSION, true);
+    recordView.setUint16(8, UTF8_NAME_FLAG, true);
+    recordView.setUint16(10, 0, true);
+    recordView.setUint16(12, stamp.time, true);
+    recordView.setUint16(14, stamp.date, true);
+    recordView.setUint32(16, crc, true);
+    recordView.setUint32(20, data.size, true);
+    recordView.setUint32(24, data.size, true);
+    recordView.setUint16(28, name.length, true);
+    recordView.setUint32(42, offset, true);
+    record.set(name, 46);
+    central.push(record);
+
+    offset += local.length + data.size;
+    options.onProgress?.(index + 1, entries.length);
+  }
+
+  const centralSize = central.reduce((total, record) => total + record.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, EOCD_SIGNATURE, true);
+  endView.setUint16(8, entries.length, true);
+  endView.setUint16(10, entries.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end]);
 }

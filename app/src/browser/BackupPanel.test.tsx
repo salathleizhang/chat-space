@@ -194,3 +194,36 @@ test("选错文件不当成备份：只显示原因，不写工作区", async ()
     await unmount(rendered);
   }
 });
+
+test("导出真的把工作区打成合法 zip：跳过 .uploads/.downloads，清单数量与实际一致", async () => {
+  existing = [
+    { path: "projects/p-a/project.json", value: PROJECT, updatedAt: 1 },
+    { path: "projects/p-a/assets/x.glb", value: new Blob([GLB]) as unknown as string, updatedAt: 1 },
+    { path: ".uploads/6f1c-staged", value: "staged-bytes", updatedAt: 1 },   // 暂存件：不进备份
+    { path: ".downloads/tmp.bin", value: "download-bytes", updatedAt: 1 },  // 同上
+  ];
+  // happy-dom 没有 createObjectURL：拦住它，把组件真正生成的那个 Blob 取出来自己验。
+  const realCreate = URL.createObjectURL;
+  const realRevoke = URL.revokeObjectURL;
+  let captured: Blob | undefined;
+  URL.createObjectURL = ((blob: Blob) => { captured = blob; return "blob:test"; }) as typeof URL.createObjectURL;
+  URL.revokeObjectURL = (() => {}) as typeof URL.revokeObjectURL;
+  const rendered = await render();
+  try {
+    await act(async () => { button(rendered.container, "Export backup")?.click(); });
+    await settle();
+    expect(captured).toBeInstanceOf(Blob);
+    // 用独立实现（JSZip，带 CRC32 校验）读回来：字节不是自己说了算
+    const zip = await JSZip.loadAsync(captured!, { checkCRC32: true });
+    expect(Object.keys(zip.files).sort()).toEqual(["chatspace-backup.json", "projects/p-a/assets/x.glb", "projects/p-a/project.json"]);
+    expect(await zip.file("projects/p-a/project.json")!.async("string")).toBe(PROJECT);
+    expect([...new Uint8Array(await zip.file("projects/p-a/assets/x.glb")!.async("uint8array"))]).toEqual([...GLB]);
+    // 清单的 files 必须等于包里实际的文件数（旧实现写的是 localEntries() 总数，把 .uploads 也算进去了）
+    expect(JSON.parse(await zip.file("chatspace-backup.json")!.async("string")).files).toBe(2);
+    expect(rendered.container.querySelector("[role=status]")?.textContent ?? "").toContain("Backup exported: 2 files");
+  } finally {
+    URL.createObjectURL = realCreate;
+    URL.revokeObjectURL = realRevoke;
+    await unmount(rendered);
+  }
+});

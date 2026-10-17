@@ -72,6 +72,15 @@ bun run check                        # typecheck + test + build
 
 19. **服务不要用 `bun --hot` 长跑。** 事故就发生在这样的进程里（`chat/package.json` 的 `dev` 脚本是 `bun run --hot src/index.ts`，本机另跑的是 `bun run src/index.ts`）。真要热重载，用 `--watch`（重启进程，语义干净），并且知道重启对任务是安全的——第 17 条会把它接上。
 
+### 浏览器本地版的数据出入（`app/src/browser/`）
+
+20. **导入不许再要求"工作区为空"。** 2026-10-17 之前的口径是"任何一个路径撞上就整包拒绝"（`BackupPanel.tsx` 的 `existing.has(entry.name)` → throw）。应用既没有删除项目的接口、也没有清空本地数据的入口，而 `.jobs/`、`sessions/` 的残留清不掉 ⇒ **同一个域名用过一次，备份就永远进不来**（用户报的 `The backup conflicts with the current project`，而唯一的找回路径就是它）。现在：选包之后先算计划（同名冲突/缺失/只在这里各多少，**只读不写**），再由用户选 **Merge**（只补缺失，已有同名文件一律不动）/ **Overwrite**（写备份里的全部文件、同名覆盖、本地多出来的保留）/ **Replace**（先删备份里没有的文件再写全部）。三种语义都要能在界面上看到各自"会动哪些文件"。
+21. **读写 zip 都不许用 JSZip 走全内存。** 一律走 `app/src/browser/backupZip.ts`：读只碰中央目录 + `Blob.slice()`，写用 STORE + 真实 CRC32、并把**原 Blob 当分片**拼进最终 Blob。实测（真 Chrome，用户那份 454 MB / 816 个文件、全 STORE）：旧 JSZip 读取路径 `loadAsync()` 全内存 + 一次性事务 **63 分钟写 0 个文件**（不报错、也不崩），流式写入 **1.0–4.1 s**。测试里 JSZip 仍要用——它是造夹具与 `checkCRC32` 交叉校验的**独立真值**，别顺手删掉。
+22. **`.json` 落字符串、二进制落 Blob。** 应用里有 `JSON.parse(entry.value as string)` 的读取路径（`browser/client.ts` 的 `.jobs/` 续跑、`browser/jobs.ts`），把 JSON 存成 Blob 会让任务轮询当场抛错。清单 `chatspace-backup.json` 不进工作区；清单里的 `files` 必须是**实际写进去的文件数**（旧实现写 `localEntries()` 总数，把被排除的 `.uploads/`/`.downloads/` 也算上，于是同一份备份"清单说 1076、包里只有 816"）。
+23. **不产出也不接受 ZIP64。** 整包或单文件超过 4 GiB 时明确报错、让用户分批导出，而不是按 32 位字段读出一个偏移错误的包。读写两侧口径必须一致。
+
+   验收口径（2026-10-17 都跑过）：`backupZip.test.ts` 10 条 + `BackupPanel.test.tsx` 7 条；真机 12/12（本地浏览器本地版构建，454 MB 的包 + 预置同名残留）；线上 `https://www.junwei.cool` 10/10（同一份包，计划先出、Merge 4.1 s 写完 816 个文件、7 个项目全部列出）；导出侧 454 MB 落盘后由 **python `zipfile.testzip()`** 逐条 CRC 校验通过、包内 817 条目、payload 清单与源包逐项一致。
+
 ---
 
 ## 三、文档地图：哪些能引用

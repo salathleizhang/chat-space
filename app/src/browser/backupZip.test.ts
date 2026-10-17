@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import JSZip from "jszip";
-import { backupErrorMessage, parseBackupZip, planBackupImport, readBackupManifest, readBackupValue } from "./backupZip";
+import { backupErrorMessage, parseBackupZip, planBackupImport, readBackupManifest, readBackupValue, writeBackupZip } from "./backupZip";
 
 /**
  * 这套用例守的是**导入侧的数据通路**，不是"函数返回了数组"：
@@ -109,4 +109,58 @@ test("错误文案：配额与已知失败给可行动的句子，未知错误�
   expect(backupErrorMessage(new Error("That is not a zip file"), "Import failed")).toBe("That is not a zip file");
   expect(backupErrorMessage(new Error("boom"), "Import failed")).toBe("boom");
   expect(backupErrorMessage(new Error(""), "Import failed")).toBe("Import failed");
+});
+
+/* ---------------------------------------------------------------------------
+ * 写侧：`writeBackupZip` 的字节必须被**独立实现**认下来。
+ * 真值用 JSZip（`checkCRC32: true`）——它有自己的 CRC32 与解析器，所以这条能抓到
+ * "自己写自己读、两边一起错"的假绿（本仓库在 `entityWorldBounds` 上踩过这种坑）。
+ * ------------------------------------------------------------------------- */
+
+const GLB_BYTES = new Uint8Array(2048).map((_, index) => (index * 7) % 256);
+
+test("写出来的包能被 JSZip 按 CRC32 校验通过（字节不是自己说了算）", async () => {
+  const zip = await writeBackupZip([
+    { path: "projects/p-a/project.json", value: PROJECT },
+    { path: "projects/p-a/assets/x.glb", value: new Blob([GLB_BYTES]) },
+    { path: "source/0-小场景.png", value: new Blob([new Uint8Array([9, 9, 9])]) }, // 非 ASCII 名：UTF-8 标记必须对
+  ], { savedAt: "2026-10-17T02:00:00.000Z" });
+
+  const parsed = await JSZip.loadAsync(zip, { checkCRC32: true });
+  expect(await parsed.file("projects/p-a/project.json")!.async("string")).toBe(PROJECT);
+  expect([...new Uint8Array(await parsed.file("projects/p-a/assets/x.glb")!.async("uint8array"))]).toEqual([...GLB_BYTES]);
+  expect(await parsed.file("source/0-小场景.png")!.async("string")).toBe("\t\t\t");
+  const manifest = JSON.parse(await parsed.file("chatspace-backup.json")!.async("string"));
+  expect(manifest).toMatchObject({ version: 1, savedAt: "2026-10-17T02:00:00.000Z", files: 3 });
+  expect(manifest.savedAt).toBe("2026-10-17T02:00:00.000Z");
+});
+
+test("自己写的包自己读：条目/字节/清单一致，且导出的是 STORE（读侧才能零拷贝）", async () => {
+  const zip = await writeBackupZip([
+    { path: "projects/p-a/project.json", value: PROJECT },
+    { path: ".jobs/task-1.json", value: JOB },
+    { path: "projects/p-a/assets/x.glb", value: new Blob([GLB_BYTES]) },
+  ]);
+  const archive = await parseBackupZip(zip);
+  expect(archive.entries.map((entry) => entry.name)).toEqual(["projects/p-a/project.json", ".jobs/task-1.json", "projects/p-a/assets/x.glb"]);
+  expect(archive.entries.every((entry) => entry.method === 0)).toBe(true); // 全 STORE：File.slice → Blob 直接落库
+  expect(archive.entries.find((entry) => entry.name.endsWith("x.glb"))!.uncompressedSize).toBe(GLB_BYTES.length);
+  expect(await readBackupManifest(archive)).toMatchObject({ version: 1, files: 3 });
+  const binary = await readBackupValue(archive, archive.entries.find((entry) => entry.name.endsWith("x.glb"))!);
+  expect([...new Uint8Array(await (binary as Blob).arrayBuffer())]).toEqual([...GLB_BYTES]);
+  const text = await readBackupValue(archive, archive.entries.find((entry) => entry.name.endsWith("task-1.json"))!);
+  expect(typeof text).toBe("string"); // `.jobs/` 的续跑读 string，不能在导出侧变成 Blob
+  expect(planBackupImport(archive.entries, ["projects/p-a/project.json"]).conflicts.size).toBe(1);
+});
+
+test("进度回调按条目报，最后一条是 total/total", async () => {
+  const seen: number[] = [];
+  await writeBackupZip([{ path: "a.json", value: "{}" }, { path: "b.json", value: "{}" }], { onProgress: (done) => seen.push(done) });
+  expect(seen).toEqual([1, 2, 3]); // 两条 + 清单本身
+});
+
+test("超过 4 GiB 明确报错（读写两侧都不支持 ZIP64，宁可让用户分批）", async () => {
+  const huge = { size: 5 * 1024 ** 3, stream: () => new Blob([]).stream() } as unknown as Blob;
+  const message = await writeBackupZip([{ path: "projects/p-a/big.glb", value: huge }]).then(() => "no error", (error: Error) => error.message);
+  expect(message).toContain("4 GiB");
 });

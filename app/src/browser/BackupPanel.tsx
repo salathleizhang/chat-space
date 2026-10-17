@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "../shared/ui";
 import { commitLocal, localEntries, type LocalEntry } from "./storage";
 import { ensureBrowserLocal } from "./client";
-import { backupErrorMessage, parseBackupZip, planBackupImport, readBackupManifest, readBackupValue, type BackupArchive, type BackupPlan } from "./backupZip";
+import { backupErrorMessage, parseBackupZip, planBackupImport, readBackupManifest, readBackupValue, writeBackupZip, type BackupArchive, type BackupPlan } from "./backupZip";
 
 /**
  * 浏览器本地版的**唯一逃生口**，放在设置对话框里。
@@ -21,9 +21,10 @@ import { backupErrorMessage, parseBackupZip, planBackupImport, readBackupManifes
  *   "The backup conflicts with the current project"）。现在选包之后先给计划，再让用户在
  *   Merge / Overwrite / Replace 之间选。三种语义见 `apply()`。
  * - 导入走**流式**（`backupZip.ts`），不是 JSZip：旧实现是 `loadAsync()` 全内存 + 一次性事务，
- *   2026-10-17 实测 454 MB 的包**63 分钟写 0 个文件**（不报错、不崩），流式 1.0 s 写完。
- * - 导出仍是 `localEntries()` + JSZip 全内存打包。真实工作区量级（本机一份项目 2.1 GB / 935 个文件、
- *   单个 GLB 40 MB+）会顶不住；这里没有做成流式，别把它当成能撑大工作区的备份。
+ *   2026-10-17 实测 454 MB 的包**63 分钟写 0 个文件**（不报错、不崩），流式 1.0–4.1 s 写完。
+ * - 导出也走同一份流式实现（`writeBackupZip`：STORE + 真实 CRC32，内容以原 Blob 作分片）。
+ *   剩下的边界只有一个：**整包或单文件超过 4 GiB 时明确报错**，因为读写两侧都不支持 ZIP64——
+ *   与其写出一个偏移会读错的包，不如让用户分批导出。
  */
 
 /** 每个事务写多少个文件。小批量既能让进度条动起来，也让配额不足时不会一次性丢光进度。 */
@@ -45,17 +46,16 @@ export function BackupPanel() {
     setBusy(true); setMessage("");
     try {
       await ensureBrowserLocal();
-      const { default: JSZip } = await import("jszip");
-      const zip = new JSZip();
-      const files = await localEntries();
-      for (const file of files) if (!file.path.startsWith(".uploads/") && !file.path.startsWith(".downloads/")) zip.file(file.path, file.value);
-      zip.file("chatspace-backup.json", JSON.stringify({ version: 1, savedAt: new Date().toISOString(), files: files.length }));
-      const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+      const files = (await localEntries()).filter(file => !file.path.startsWith(".uploads/") && !file.path.startsWith(".downloads/"));
+      setMessage(`Packing ${files.length} files…`);
+      // 流式打包（`backupZip.ts`）：内容以原 Blob 作分片进最终 Blob，不把工作区读进 JS 堆。
+      // 只有 CRC32 必须逐分片过一遍字节——那是 zip 头里的字段，绕不开。
+      const blob = await writeBackupZip(files, { onProgress: (done, total) => { if (done % 25 === 0 || done === total) setMessage(`Packing ${done}/${total}…`); } });
       if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
       const url = URL.createObjectURL(blob); downloadUrl.current = url;
       const link = document.createElement("a"); link.href = url; link.download = `chatspace-${new Date().toISOString().slice(0, 10)}.zip`; link.click();
       // Retain it until the next backup/unmount; starting a download is asynchronous.
-      setMessage("Backup exported");
+      setMessage(`Backup exported: ${files.length} files · ${megabytes(blob.size)}`);
     } catch (error) { setMessage(backupErrorMessage(error, "Backup failed")); }
     finally { setBusy(false); }
   }
