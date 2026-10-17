@@ -81,6 +81,12 @@ bun run check                        # typecheck + test + build
 
    验收口径（2026-10-17 都跑过）：`backupZip.test.ts` 10 条 + `BackupPanel.test.tsx` 7 条；真机 12/12（本地浏览器本地版构建，454 MB 的包 + 预置同名残留）；线上 `https://www.junwei.cool` 10/10（同一份包，计划先出、Merge 4.1 s 写完 816 个文件、7 个项目全部列出）；导出侧 454 MB 落盘后由 **python `zipfile.testzip()`** 逐条 CRC 校验通过、包内 817 条目、payload 清单与源包逐项一致。
 
+### AI 链路的可观测性与巡检（`chat/src/cloud/`、`deploy/blender-cloudflare/`）
+
+24. **`The AI forwarding service is temporarily unavailable` 是代理函数自己的兜底文案，不是供应商报错。** 出处是 `chat/src/cloud/proxy.ts` 最外层 `catch`（上游真报错反而原样透传状态与 body）；前端再包一层 `AI request failed (502): …`（`app/src/browser/agentCompat.ts`），而它把 ≥500 当可重试，所以看到时通常已经自动重试过。**判据**：函数活着（`/api/health` 200）+ 别的供应商通（Tripo/World Labs）+ 只有火山这条腿固定 ~16.5 秒后 502 ⇒ 是「Vercel 出口 → 火山」整条链路不通。2026-10-15 出在香港 `hkg1`，10-17 出在大阪 `kix1`——**换区域只是把风险推迟，重试没有意义**。
+25. **这条腿只能在函数自己的出口上测，而且必须零成本。** `chat/src/cloud/providerHealth.ts` 发一个**不存在的模型名**，火山立刻回 `InvalidEndpointOrModel.NotFound`（实测 0.2–0.3 s、**不产生 token**）——拿到任何 HTTP 响应就算这一跳通；401/402/429/5xx 单独判 `degraded`（通但不可用）。排查时从本机、Cloudflare 或 CI 测都不作数（那几条路一直是通的）。对外只有两个口：`GET /api/health/llm`（200/503，15 秒缓存）与 Cloudflare Worker 的**五分钟 Cron** 巡检（`deploy/blender-cloudflare/llmProbe.ts`，故障期间每 30 分钟最多一条告警、恢复时补一条，去重状态放 Cache API，**不往正在跑的 Durable Object 里加状态**）。告警 webhook 是可选 secret `LLM_ALERT_WEBHOOK`（POST `{"text":…}`，Telegram/Slack 通用），没配就只写日志。
+26. **代理失败的日志必须带 cause 与耗时。** 旧写法 `console.error("Stateless provider proxy failed", error.name)` 只会打印 `Error`——2026-10-15 / 10-17 两次故障都因此看不出是超时、reset 还是证书问题，只能现场重测。现在打一行 JSON（`route` / `ms` / `name` / `message` / `code` / `causeName` / `causeMessage`，**白名单字段**，不落 body 与凭据，前缀不变所以历史日志过滤仍可用）。回归：`providerHealth.test.ts` 5 条 + `proxy.test.ts` 3 条（自检端点 200/503、透传、502 日志形状）+ `deploy/blender-cloudflare/llmProbe.test.ts` 6 条。
+
 ---
 
 ## 三、文档地图：哪些能引用

@@ -17,6 +17,7 @@ import { tickTaskPumps } from "../../chat/src/common/taskPump";
 import { cloudBudget } from "../../chat/src/models/cloudBudget";
 import { DurableSql } from "./sql";
 import { StreamingFiles } from "./transfers";
+import { runLlmProbe, scheduledKind } from "./llmProbe";
 
 const pool = (env: Env) => env.BLENDER_POOLS.getByName(env.BLENDER_POOL, { locationHint: "apac" });
 type Grant = { owner: string; session: string; epoch: number; instance: string; desktop: string; target: string; deadline: number; readOnly: boolean };
@@ -269,5 +270,11 @@ export default {
       return await pool(env).dispatch(request);
     } catch { return unavailable(); }
   },
-  async scheduled(_event: ScheduledController, env: Env): Promise<void> { if (configured(env)) await pool(env).wake(); },
+  // 两条 Cron：分钟级那条唤醒资源池；五分钟那条**额外**做"出口 → 火山"的链路巡检
+  // （见 llmProbe.ts）。第 0/5/10… 分钟两条都会触发，资源池的唤醒对每条事件都做一次，
+  // 这样不必依赖平台是否把同一分钟的两次触发合并成一次。
+  async scheduled(event: ScheduledController, env: Env): Promise<void> {
+    if (scheduledKind(event.cron) === "llm-probe") await runLlmProbe(env);
+    if (configured(env)) await pool(env).wake();
+  },
 } satisfies ExportedHandler<Env>;
