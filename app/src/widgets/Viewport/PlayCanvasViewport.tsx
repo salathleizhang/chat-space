@@ -952,14 +952,30 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
       if (rig && rigEntity) applyRig(rigEntity, rig, applyOptions);
       return;
     }
-    // 进入：从当前台架派生人的位置与朝向（眼高锁 1.6）
+    /*
+      进入：从**当前台架**派生人的位置与朝向（眼高锁 1.6）。
+
+      平面位置必须接上当前机位（与 three 侧同一条规则，见 `widgets/Viewport/firstPersonEntry.ts`）：
+      角色刚体就建在同一个 XZ 上（`characterSpawn`），否则一进第一人称就跳到一个固定位置——
+      用户报过的现象。高度**不**照抄台架：台架通常在半空，照抄就是"进场先从天而降"；
+      人在 `CHARACTER_SPAWN_Y`（眼高 + 0.2 m 余量）上，交给重力落到地面。
+    */
     const rig = rigsRef.current.get(paneId);
-    if (rig) {
-      const [px, py, pz] = rigPosition(rig);
+    const rigAt = rig ? rigPosition(rig) : null;
+    const characterSpawn: [number, number, number] = rigAt
+      ? [rigAt[0], CHARACTER_SPAWN_Y, rigAt[2]]
+      : [0, CHARACTER_SPAWN_Y, 3];
+    if (rig && rigAt) {
       walkRef.current.state = createWalkState({
-        position: [px, Math.max(py, EYE_HEIGHT), pz],
+        position: [rigAt[0], EYE_HEIGHT, rigAt[2]],
         yaw: rig.azimuth,
-        pitch: Math.max(-1.2, Math.min(1.2, Math.PI / 2 - rig.polar)),
+        /*
+          俯仰要写成 **`polar − π/2`**（= 负的"高出角"）：`walkForward` 里 pitch > 0 是**抬头**，
+          而台架在目标上方时视线是向下的。这里以前写成 `π/2 − polar`，于是进场先仰视——
+          真机实测默认台架下它是 **+0.56675**，而同一机位在 three 侧是 **−0.56675**
+          （`firstPersonEntry.ts` 的读数），差了一个正负号。夹 ±1.2 是原本就有的量程限制。
+        */
+        pitch: Math.max(-1.2, Math.min(1.2, rig.polar - Math.PI / 2)),
       });
       walkRef.current.steps = 0;
     }
@@ -1031,7 +1047,8 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
     /*
       角色刚体：**动态胶囊 + 禁转**。禁转不是可选项——胶囊撞到东西会像滚筒一样翻滚、
       相机跟着翻（three 侧同一个坑，那边用 `enabledRotations`）。
-      出生点：眼高 + 0.2 余量，让重力把它放到地面上（地面在 y=0 是结构性的：
+      出生点：**接当前机位的 XZ**（见上面 `characterSpawn`），眼高 + 0.2 余量，
+      让重力把它放到地面上（地面在 y=0 是结构性的：
       世界 collider 的 `groundPlaneOffset` 语义就是"把地面抬到 0"）。
     */
     void (async () => {
@@ -1046,11 +1063,11 @@ export function PlayCanvasViewport(props: ViewportProps & { layout?: 1 | 2 | 4 }
         // 禁转：Vec3 零向量，胶囊永远不会翻滚
         angularFactor: new pc.Vec3(0, 0, 0),
       });
-      entity2.setPosition(0, CHARACTER_SPAWN_Y, 3);
+      entity2.setPosition(characterSpawn[0], characterSpawn[1], characterSpawn[2]);
       (app as { root: { addChild(c: unknown): void } }).root.addChild(entity2);
       character = entity2 as unknown as CharacterLike;
       makeVec3 = (x, y, z) => new pc.Vec3(x, y, z);
-      syncCamera(CHARACTER_SPAWN_Y, 0, 3);
+      syncCamera(characterSpawn[1], characterSpawn[0], characterSpawn[2]);
 
       /*
         准星抓取：**kinematic 锚点 + 球形关节**（与 three 侧 `useObjectGrab` 同构，

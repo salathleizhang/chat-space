@@ -19,9 +19,12 @@ import {
   characterCapsule,
   horizontalVelocity,
 } from "./physics";
+import { DEFAULT_FIRST_PERSON_ENTRY, type FirstPersonEntry } from "./firstPersonEntry";
 import { isForcedLocked } from "./physicsDebug";
 
 const _direction = new THREE.Vector3();
+/** 进场时写朝向用的临时欧拉（每次新建也无所谓，但没必要在 effect 里分配） */
+const _entryEuler = new THREE.Euler(0, 0, 0, "YXZ");
 
 /**
  * 「焦点在输入框里」判定：与 G/R/S 契约（`transformKeys.ts`）同一口径。
@@ -56,12 +59,16 @@ function isEditableTarget(target: EventTarget | null): boolean {
  */
 export function FirstPersonRig({
   lockSelector,
-  spawn = [0, CHARACTER_EYE_OFFSET, 3],
+  entry = DEFAULT_FIRST_PERSON_ENTRY,
 }: {
   /** 指针锁定的点击选择器（见 `FIRST_PERSON_LOCK_SELECTOR`） */
   lockSelector: string;
-  /** 出生点（**刚体中心**）。世界存在时要抬到地面之上，见 index.tsx 的 firstPersonSpawn */
-  spawn?: [number, number, number];
+  /**
+   * 进场状态：出生点（**刚体中心**）+ 初始朝向。进模式那一刻由当前透视窗格的机位推出
+   * （见 `firstPersonEntry.ts`），所以"进去"是从用户刚才看的地方、朝刚才那个方向续上，
+   * 而不是跳到一个固定位置。
+   */
+  entry?: FirstPersonEntry;
 }) {
   const camera = useThree((state) => state.camera);
   const invalidate = useThree((state) => state.invalidate);
@@ -71,10 +78,21 @@ export function FirstPersonRig({
   const keys = useRef<Set<string>>(new Set());
   const jumpQueued = useRef(false);
   const capsule = useMemo(characterCapsule, []);
+  const { spawn, yaw, pitch } = entry;
 
   useEffect(() => {
     camera.position.set(spawn[0], spawn[1], spawn[2]);
-  }, [camera, spawn]);
+    /*
+      朝向也要在这里写一次。`PointerLockControls` **自己不留**视角状态：它每次鼠标移动都
+      从相机当前四元数反解再叠加（`_euler.setFromQuaternion(camera.quaternion)`），所以
+      只要进场时把相机摆成"当前机位那个朝向"，进去之后转头的起点就是连续的。
+      `up` 显式写回 (0,1,0)：这台根画布相机上一轮可能被别的模式动过，而 YXZ 分解要求上方向
+      是 +Y，否则会出现滚转。
+    */
+    camera.up.set(0, 1, 0);
+    camera.quaternion.setFromEuler(_entryEuler.set(pitch, yaw, 0, "YXZ"));
+    invalidate();
+  }, [camera, spawn, yaw, pitch, invalidate]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

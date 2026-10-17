@@ -30,6 +30,11 @@ import { ResettableErrorBoundary } from "../../shared/lib/ResettableErrorBoundar
 import type { CameraTarget } from "./CameraRig";
 import { CloseupInspectionRig } from "./CloseupInspectionRig";
 import { FirstPersonRig } from "./FirstPersonRig";
+import {
+  DEFAULT_FIRST_PERSON_ENTRY,
+  firstPersonEntryFromControls,
+  type FirstPersonEntry,
+} from "./firstPersonEntry";
 import { HandPreview } from "./HandPreview";
 import { HandRig } from "./HandRig";
 import { createHandTrackingStore, type HandPointer } from "./handTrackingStore";
@@ -60,7 +65,7 @@ import WorldColliderMesh from "./WorldColliderMesh";
 import { PhysicalAsset } from "./PhysicalAsset";
 import { PhysicsDebugBridge } from "./PhysicsDebugBridge";
 import { PhysicsGround } from "./PhysicsGround";
-import { PHYSICS_GRAVITY, CHARACTER_EYE_OFFSET, physicsEnabledFromSearch } from "./physics";
+import { PHYSICS_GRAVITY, physicsEnabledFromSearch } from "./physics";
 import { physicsDebugEnabled, setGrabHandles } from "./physicsDebug";
 import { useObjectGrab } from "./useObjectGrab";
 
@@ -640,15 +645,17 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
     [],
   );
   /**
-   * 第一人称出生点（**刚体中心**）。地面在 y=0 是**结构性的**：有 world 时
-   * `ground_plane_offset` 的语义就是把地面抬到 0，没有 world 时由 `PhysicsGround` 的
-   * 平板兜住。所以这里不能再加 `groundPlaneOffset`——加了就是"进第一人称先空降 1 米"
-   * （实测某项目 offset = 1.0636）。多给 0.2 m 余量，让重力把角色放到真正的地面上。
+   * 第一人称的进场状态（**刚体中心 + 初始朝向**）。
+   *
+   * 不再是一个固定的出生点：进模式的那一刻从**当前透视窗格的相机**接过来（位置取它的 XZ、
+   * 朝向取它这一帧的视线），见 `firstPersonEntry.ts`。高度不照抄相机——地面在 y=0 是
+   * **结构性的**（有 world 时 `ground_plane_offset` 的语义就是把地面抬到 0，没有 world 时由
+   * `PhysicsGround` 的平板兜住），所以这里不能再加 `groundPlaneOffset`——加了就是"进第一人称
+   * 先空降 1 米"（实测某项目 offset = 1.0636）。
+   *
+   * 读不到窗格控制器时用默认出生点（`DEFAULT_FIRST_PERSON_ENTRY`，就是改造前那个固定位）。
    */
-  const firstPersonSpawn = useMemo<[number, number, number]>(
-    () => [0, CHARACTER_EYE_OFFSET + 0.2, 3],
-    [],
-  );
+  const [firstPersonEntry, setFirstPersonEntry] = useState<FirstPersonEntry>(DEFAULT_FIRST_PERSON_ENTRY);
   const layout = useMemo(() => computeSceneLayout(assets, transforms), [assets, transforms]);
   const skyboxAsset = selectProjectSkybox(assets, currentSkybox);
   const skyboxUrl = skyboxAsset?.hdrPath
@@ -975,7 +982,7 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
             {firstPerson && (
               <>
                 <FirstPersonView />
-                <FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} spawn={firstPersonSpawn} />
+                <FirstPersonRig lockSelector={FIRST_PERSON_LOCK_SELECTOR} entry={firstPersonEntry} />
                 <FirstPersonGrab
                   enabled={physicsEnabled}
                   /* 手势模式开着时，捏合就是"按下/松开"；射线换成相机 → 捏合点 */
@@ -1063,11 +1070,18 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
         } : null}
         firstPerson={hasContent ? {
           active: firstPerson,
-          onToggle: () => setMode((m) => {
-            const next = m === "orbit" ? "firstPerson" : "orbit";
-            if (next === "firstPerson") setPaneLayout(1);
-            return next;
-          }),
+          /*
+            进模式必须**在切换之前**读一次当前机位：`mode` 一变成 firstPerson，窗格整棵就
+            卸载了（`perspControlsRef` 被 effect 的 cleanup 清空），那时再读只会拿到 null ⇒
+            又退回固定出生点。所以这里不用函数式 `setMode`——更新器里读到的时机不受控。
+          */
+          onToggle: () => {
+            if (!firstPerson) {
+              setFirstPersonEntry(firstPersonEntryFromControls(perspControlsRef.current));
+              setPaneLayout(1);
+            }
+            setMode(firstPerson ? "orbit" : "firstPerson");
+          },
         } : null}
         handTracking={hasContent ? {
           active: handMode,
