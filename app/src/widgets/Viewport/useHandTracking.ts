@@ -297,10 +297,20 @@ export function useHandTracking({
         return;
       }
       /*
-        **预热**：`detectForVideo` 的第一次调用要把 wasm 的着色器编译出来，
-        本机实测 **8–52 秒**（GPU 委托；见 `.tmp/hand-verify/ask-handedness.mjs` 的读数）。
+        **预热**：`detectForVideo` 的第一次调用要把 wasm 的着色器编译出来。
         放在这里冻的是"Loading hand model…"这一屏——用户预期就是在等；
         放进循环里冻的就是"Tracking 中"的实时交互，看起来完全像坏了。
+
+        实测（2026-10-17，load≈5.8，`.tmp/hand-verify/warmup-delegate.mjs`，读数留档在
+        `.tmp/hand-verify/warmup-report-20261017.json`）：
+        - **冷启动**（本次页面第一次、含 wasm 下载与编译）：GPU 建任务 2.1–2.3 s + 首帧 **6.5–9.9 s**，
+          加起来 8.5–12.2 s——以前注释里写的"8–52 秒"只对这一次成立（52 s 是机器更忙时的旧读数）；
+        - **热启动**（同一浏览器里再开一次手势）：GPU 首帧 **1.0–2.6 s**（两次跑 1.03/1.05 与
+          2.42/2.57，同一份代码差 2.4×，所以只当量级用）；
+        - **CPU 委托**首帧只要 **66–190 ms**，但它稳态每帧 **49 ms（≈20 fps）** 且同步阻塞主线程，
+          而 GPU 是 **7–10 ms（100–143 fps）**——摄像头本身 30 fps，换 CPU 会让检测跟不上摄像头。
+          **所以维持 GPU**：省的是一次性的那几秒，赔的是每帧手感（代码里 1/60 的检测间隔与
+          40 ms 的降级阈值都是按 GPU 那个量级定的）。
       */
       try {
         const warmup = document.createElement("canvas");

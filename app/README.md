@@ -76,6 +76,20 @@ const materials = await (await import('/src/shared/rendering/materials.browser.t
 - MediaPipe JS 固定 `0.10.17`。**wasm 与模型都随产物同源发出**（`/mediapipe/0.10.17/...`，`vercel.json` 给这条路径配了 `immutable` 长缓存），不再默认从 jsDelivr / Google bucket 下载——模型那个 URL 实测**不压缩且只缓存 1 小时**（7.82 MB 每次过期都重下），是"开启手势模式要等很久"的最大一项。版本号、两个 sha256 钉子与兜底地址集中在 `src/widgets/Viewport/handAssets.ts`。
 - wasm **不入库**：`app/scripts/sync-hand-assets.ts` 在 `dev` / `build` 之前从 `node_modules/@mediapipe/tasks-vision/wasm/` 复制（只复制 SIMD 那一套），并校验依赖版本与 sha256。模型 `hand_landmarker.task`（7.82 MB）**提交进仓库**；来源、更新步骤与"升级时要改哪几处"见 [资产说明](public/mediapipe/README.md)。
 - 同源加载失败（资产漏部署、非 SIMD 环境下的 404）会**自动兜底**到 jsDelivr 的 wasm + Google 的模型；面板上的 `source` 显示的是**实际**生效的那一份。`?handWasm=<目录>&handModel=<URL>` 仍可显式指定来源，显式指定时**不**兜底。Three 保持项目固定版本与 WebGPU-only 渲染器。
+
+### 预热与委托（GPU 是刻意的）
+
+开启手势模式时要等一段（面板显示 `Loading hand model…`）——那是 `detectForVideo` 的**第一次调用**在编译 wasm 的着色器。实测（2026-10-17，load≈5.8，探针 `.tmp/hand-verify/warmup-when-quiet.mjs` + `warmup-delegate.mjs`，读数 `.tmp/hand-verify/warmup-report-20261017.json`）：
+
+| | GPU（现用） | CPU（兜底） |
+| --- | --- | --- |
+| 冷启动（本次页面第一次，含 wasm 下载/编译） | 建任务 2.1–2.3 s + 首帧 **6.5–9.9 s** | — |
+| 热启动（再开一次）首帧 | **1.0–2.6 s**（同代码两次跑差 2.4×） | **66–190 ms** |
+| 稳态每帧（640×640） | **7–10 ms**（100–143 fps） | **49 ms（≈20 fps）**，同步阻塞主线程 |
+
+**所以维持 GPU**：换 CPU 只省掉热启动那 1–2.6 s（冷启动那次是一次性的），代价是每帧 49 ms——摄像头本身 30 fps，检测会跟不上，手会明显发粘。`delegate: "CPU"` 仍然是 GPU 建不起来时的兜底路径（显卡被占用 / 无头容器）。
+
+旧注释里的"8–52 秒"只有**冷启动**那一次成立，热启动不是；引用时别再用那个数。复测机器必须安静（`load` < 8 连续三次）——`warmup-when-quiet.mjs` 就是干这个的。
 - 开启时切单窗格。图像关键点确定手的屏幕位置和距离，骨骼姿态取原始三维关键点。
 - 手模与抓取射线每帧跟随实际交互相机：第三人称从透视窗格的 OrbitControls 读取当前相机，第一人称使用根画布相机。更新排在相机移动之后、核心场景渲染之前；切换投影时读取新相机，屏幕范围计入相机 zoom。
 - 预览叠加 2D 关键点与检测帧数，用于区分摄像头、检测与显示问题。
