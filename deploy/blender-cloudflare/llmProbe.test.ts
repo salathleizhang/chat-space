@@ -1,5 +1,5 @@
 import { beforeEach, expect, test, vi } from "vitest";
-import { ALERT_REPEAT_MS, LLM_PROBE_CRON, runLlmProbe, scheduledKind } from "./llmProbe";
+import { ALERT_REPEAT_MS, LLM_PROBE_CRON, alertFormatFor, alertPayload, runLlmProbe, scheduledKind } from "./llmProbe";
 import worker from "./worker";
 
 const HEALTH_URL = "https://chatspace.test/api/health/llm";
@@ -99,6 +99,50 @@ test("告警去重状态确实存在 Cache API 里（不是靠进程内变量兜
   const hit = await caches.default.match(url);
   expect(hit).toBeDefined();
   expect(await hit?.json()).toEqual({ ok: false, at: 42 });
+});
+
+test("告警 body 按 webhook 域名选形状，且钉钉/飞书的拒收要被看见", async () => {
+  expect(alertFormatFor("https://oapi.dingtalk.com/robot/send?access_token=x")).toBe("dingtalk");
+  expect(alertFormatFor("https://open.feishu.cn/open-apis/bot/v2/hook/x")).toBe("feishu");
+  expect(alertFormatFor("https://api.telegram.org/botX/sendMessage?chat_id=1")).toBe("text");
+  expect(alertFormatFor("https://oapi.dingtalk.com/robot/send?access_token=x", "text")).toBe("text");
+  expect(JSON.parse(alertPayload("dingtalk", "hi"))).toEqual({ msgtype: "text", text: { content: "hi" } });
+  expect(JSON.parse(alertPayload("feishu", "hi"))).toEqual({ msg_type: "text", content: { text: "hi" } });
+  expect(JSON.parse(alertPayload("text", "hi"))).toEqual({ text: "hi" });
+});
+
+/** 自检端点回 503、webhook 回指定 body；返回 webhook 收到的请求便于断言形状与拒收。 */
+function downRun(webhookBody: unknown) {
+  const hooks: RequestInit[] = [];
+  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/api/health/llm")) return Response.json(down, { status: 503 });
+    hooks.push(init ?? {});
+    return Response.json(webhookBody);
+  }) as unknown as typeof fetch;
+  return { hooks, fetchFn };
+}
+
+test("钉钉机器人：发出去的是它认识的形状，关键词模式下也能被受理", async () => {
+  const { hooks, fetchFn } = downRun({ errcode: 0, errmsg: "ok" });
+  const webhook = "https://oapi.dingtalk.com/robot/send?access_token=fixture";
+  expect((await runLlmProbe({ LLM_HEALTH_URL: HEALTH_URL, LLM_ALERT_WEBHOOK: webhook } as Env, { fetchFn, now: tick() })).alerted).toBe("down");
+  const body = JSON.parse(String(hooks[0]?.body)) as { msgtype: string; text: { content: string } };
+  expect(body.msgtype).toBe("text");
+  // 钉钉的"自定义关键词"模式要求消息里含设定的词，所以文案里始终带 ChatSpace。
+  expect(body.text.content).toContain("ChatSpace");
+  expect(body.text.content).toContain("ECONNRESET");
+});
+
+test("钉钉/飞书拒收时回的是 HTTP 200 + errcode——这种静默失败必须写进日志", async () => {
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { fetchFn } = downRun({ errcode: 310000, errmsg: "keywords not in content" });
+    const webhook = "https://oapi.dingtalk.com/robot/send?access_token=fixture";
+    expect((await runLlmProbe({ LLM_HEALTH_URL: HEALTH_URL, LLM_ALERT_WEBHOOK: webhook } as Env, { fetchFn, now: tick() })).alerted).toBe("down");
+    const reject = logged.mock.calls.find(call => String(call[0]).includes("rejected by webhook"));
+    expect(reject).toBeDefined();
+    expect(String(reject?.[1])).toContain("keywords not in content");
+  } finally { logged.mockRestore(); }
 });
 
 test("Cron 分派：五分钟那条做巡检，分钟级那条不动巡检", async () => {
