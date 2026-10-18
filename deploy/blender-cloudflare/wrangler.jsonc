@@ -14,9 +14,7 @@
     { "name": "BLENDER_DESKTOPS", "class_name": "BlenderDesktop" }
   ] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BlenderPool", "BlenderDesktop"] }],
-  // 分钟级：唤醒资源池。五分钟级：巡检网站出口到火山的链路（llmProbe.ts），
-  // 不通就往 LLM_ALERT_WEBHOOK 推一条（未配置时只写日志）。
-  "triggers": { "crons": ["* * * * *", "*/5 * * * *"] },
+  "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "BLENDER_POOL": "cn-beijing-trial-v1",
     "BLENDER_AGENT_MODEL": "glm-5-3-flash-260828",

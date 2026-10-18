@@ -2,7 +2,6 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { config, configuredEnvLlmProviders, configuredProviders } from "../config";
 import { workspaceIdentity } from "./identity";
 import { forwardBlender, serviceConfigured } from "./blenderProxy";
-import { failureDetail, probeProvider, type ProviderHealth } from "./providerHealth";
 
 /** Stateless credential proxy. No project, conversation, task or asset is stored here. */
 export function allowedProviderUrl(value: string): URL | undefined {
@@ -45,45 +44,9 @@ function limited(visitor: string) {
   if (rates.size > 10_000) for (const [key, value] of rates) if (now - value.since > 60_000) rates.delete(key);
   return ++rate.count > 120;
 }
-/**
- * 探针结果缓存窗口。巡检是每 5 分钟一次，这个窗口只需要挡住"有人拿这个端点刷量"；
- * 太大会把刚断掉的链路报成健康，所以取 15 秒。
- */
-const HEALTH_CACHE_MS = 15_000;
-let healthCache: { at: number; value: ProviderHealth } | undefined;
-
-/** 近 `ttl` 毫秒内已经探过的结果直接复用；判定发生变化（而不是每次探测）才写日志。 */
-async function cachedProviderHealth(fetchFn: typeof fetch, ttl: number): Promise<ProviderHealth> {
-  const now = Date.now();
-  if (healthCache && now - healthCache.at < ttl) return healthCache.value;
-  const value = await probeProvider({ fetchFn, baseUrl: config.llm.defaultBaseUrl });
-  if (healthCache?.value.ok !== value.ok) console.error("Provider health probe", JSON.stringify(value));
-  healthCache = { at: now, value };
-  return value;
-}
-
-export interface ProxyDeps {
-  /** 测试注入点；生产一律走全局 fetch。 */
-  fetchFn?: typeof fetch;
-  /** 自检端点结果缓存窗口；测试传 0 表示每次真探。 */
-  healthCacheMs?: number;
-}
-
-export async function proxyFetch(request: Request, deps: ProxyDeps = {}): Promise<Response> {
+export async function proxyFetch(request: Request): Promise<Response> {
   const address = new URL(request.url);
-  const fetchFn = deps.fetchFn ?? fetch;
-  const startedAt = Date.now();
   if (address.pathname === "/api/health") return Response.json({ ok: true, service: "chatspace-chat", storage: "browser-local" });
-  /*
-    链路自检：在**这个函数自己的出口**上打一次零成本的火山请求。
-    这是唯一能测到"Vercel 出口 → 火山"这一跳的位置——从用户电脑、从 Cloudflare
-    或从 CI 测都不作数（那几条路一直是通的，坏的正是这一条）。
-    可用返回 200、不可用返回 503，body 里带判定与 cause。
-  */
-  if (address.pathname === "/api/health/llm") {
-    const health = await cachedProviderHealth(fetchFn, deps.healthCacheMs ?? HEALTH_CACHE_MS);
-    return Response.json(health, { status: health.ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
-  }
   if (address.pathname === "/api/capabilities") return Response.json({ llmProviders: configuredEnvLlmProviders, providers: configuredProviders, blenderCloud: serviceConfigured() });
   const origin = request.headers.get("origin");
   if (origin && origin !== address.origin) return Response.json({ error: { message: "AI forwarding is only allowed for this site" } }, { status: 403 });
@@ -131,7 +94,7 @@ export async function proxyFetch(request: Request, deps: ProxyDeps = {}): Promis
           body = JSON.stringify(input);
         } else body = await request.arrayBuffer();
       }
-      const upstream = await fetchFn(target, { method: request.method, headers, body, redirect: "error", signal: request.signal });
+      const upstream = await fetch(target, { method: request.method, headers, body, redirect: "error", signal: request.signal });
       if (upstream.headers.get("content-type")?.includes("application/json")) {
         const payload = await upstream.json() as Record<string, unknown>;
         const tickets = downloadsIn(payload, secret);
@@ -142,13 +105,7 @@ export async function proxyFetch(request: Request, deps: ProxyDeps = {}): Promis
     if (identity.setCookie) response.headers.append("Set-Cookie", identity.setCookie);
     return response;
   } catch (error) {
-    /*
-      这条兜底文案曾经把排查拖了很久：它只记 `error.name`（结果永远是 "Error"），
-      看不出是连接超时、reset 还是证书问题，也看不出耗时——2026-10-15 / 10-17 两次
-      "出口到火山整体不通"因此只能靠现场重测定位。现在把白名单字段与耗时一起打成
-      一行 JSON（前缀保持不变，历史日志过滤还能用）。
-    */
-    console.error("Stateless provider proxy failed", JSON.stringify({ route: address.pathname, ms: Date.now() - startedAt, ...failureDetail(error) }));
+    console.error("Stateless provider proxy failed", error instanceof Error ? error.name : "Error");
     return Response.json({ error: { message: "The AI forwarding service is temporarily unavailable, please try again later" } }, { status: 502 });
   }
 }
