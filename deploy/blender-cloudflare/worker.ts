@@ -17,6 +17,7 @@ import { tickTaskPumps } from "../../chat/src/common/taskPump";
 import { cloudBudget } from "../../chat/src/models/cloudBudget";
 import { DurableSql } from "./sql";
 import { StreamingFiles } from "./transfers";
+import { relayArk, relayCors } from "./llmRelay";
 
 const pool = (env: Env) => env.BLENDER_POOLS.getByName(env.BLENDER_POOL, { locationHint: "apac" });
 type Grant = { owner: string; session: string; epoch: number; instance: string; desktop: string; target: string; deadline: number; readOnly: boolean };
@@ -260,6 +261,21 @@ export default {
     try {
       const path = new URL(request.url).pathname;
       if (path === "/health") return Response.json({ service: "chatspace-blender", platform: "cloudflare", durable: true, configured: configured(env), pauseEnabled: String(env.BLENDER_PAUSE_ENABLED) === "1" });
+      /*
+        AI 中继：浏览器直连这里，再由 Cloudflare 的出口转发到火山。
+        2026-10-15 / 10-17 / 10-18 三次实测都指向同一条：坏的是「Vercel 函数出口 → 火山」
+        这一跳（固定 ~16.5 秒后失败），换 Cloudflare 的出口就把这一跳整个换掉（见 llmRelay.ts）。
+        票据是网站签的短期票据（scope `llm`），跨域只放行网站自己的源。
+      */
+      if (path.startsWith("/v1/llm/")) {
+        const cors = relayCors(env, request.headers.get("origin"));
+        if (!cors) return unavailable(403);
+        if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+        if (request.method !== "POST") return unavailable(405);
+        const ticket = verifyIdentity(request.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "", env.BLENDER_SERVICE_SECRET ?? "", "llm");
+        if (!ticket) return Response.json({ error: { message: "AI ticket is invalid or expired" } }, { status: 401, headers: cors });
+        return await relayArk(request, env, ticket);
+      }
       if (path.startsWith("/desktop/")) {
         return await env.BLENDER_DESKTOPS.getByName(scoped(request).id).fetch(request);
       }

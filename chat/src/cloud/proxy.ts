@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config, configuredEnvLlmProviders, configuredProviders } from "../config";
+import { issueIdentity } from "../blenderService/auth";
 import { workspaceIdentity } from "./identity";
 import { forwardBlender, serviceConfigured } from "./blenderProxy";
 
@@ -54,7 +55,24 @@ export async function proxyFetch(request: Request): Promise<Response> {
   try {
     const identity = workspaceIdentity(request.headers.get("cookie"), secret);
     let response: Response;
-    if (address.pathname.startsWith("/api/blender/")) {
+    /*
+      AI 中继的票据：浏览器拿这张短期票据直连 Cloudflare 的 `/v1/llm/*`，
+      由 Cloudflare 的出口转发到火山——**不经过这个函数的出口**
+      （2026-10-15 / 10-17 / 10-18 三次实测：坏的就是这一跳）。
+      票据用网站已有的 `issueIdentity` 签，作用域 `llm`，4 分钟有效
+      （`verifyIdentity` 只接受 5 分钟内的票据）；允许的模型清单签在票据里，
+      Cloudflare 侧据此归一，所以中继不是开放代理。
+    */
+    if (address.pathname === "/api/llm/ticket" && request.method === "GET") {
+      const service = process.env.BLENDER_SERVICE_URL, serviceSecret = process.env.BLENDER_SERVICE_SECRET ?? "";
+      if (!service || serviceSecret.length < 32) return Response.json({ error: { message: "AI relay is not configured" } }, { status: 503 });
+      if (limited(identity.id)) return Response.json({ error: { message: "Too many requests, please try again later" } }, { status: 429 });
+      const expires = Date.now() + 4 * 60_000;
+      const ticket = issueIdentity({ owner: identity.id, scope: "llm", expires,
+        models: [config.llm.glmModel, config.llm.deepseekModel, config.llm.evolvingModel, config.llm.proModel],
+        defaultModel: config.llm.defaultModel }, serviceSecret);
+      response = Response.json({ url: new URL("v1/llm/", service).href, ticket, expiresAt: expires });
+    } else if (address.pathname.startsWith("/api/blender/")) {
       response = await forwardBlender(request, identity.id);
     } else if (address.pathname === "/api/download" && ["GET", "HEAD"].includes(request.method)) {
       let target = verifiedDownload(address.searchParams.get("ticket") ?? "", secret);

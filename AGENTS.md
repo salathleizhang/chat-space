@@ -81,6 +81,10 @@ bun run check                        # typecheck + test + build
 
    验收口径（2026-10-17 都跑过）：`backupZip.test.ts` 10 条 + `BackupPanel.test.tsx` 7 条；真机 12/12（本地浏览器本地版构建，454 MB 的包 + 预置同名残留）；线上 `https://www.junwei.cool` 10/10（同一份包，计划先出、Merge 4.1 s 写完 816 个文件、7 个项目全部列出）；导出侧 454 MB 落盘后由 **python `zipfile.testzip()`** 逐条 CRC 校验通过、包内 817 条目、payload 清单与源包逐项一致。
 
+### AI 链路：浏览器直连 Cloudflare，不走 Vercel 出口（`app/src/browser/network.ts` + `deploy/blender-cloudflare/llmRelay.ts`）
+
+24. **火山方舟的调用不许再走 Vercel 函数的出口。** 2026-10-15（香港 hkg1）、10-17 16:10（大阪 kix1）、10-18 13:54（大阪 kix1）三次同形态故障：**「Vercel 函数出口 → 火山」这一跳整体不通**——函数本身健康、别的供应商（Tripo 0.67 s / World Labs 1.64 s）都通、火山自己也健康（本机直连 0.10 s），但每个 LLM 调用都在**固定 ~16.5 秒**后落到兜底 502；而且它**会自己好**（10-17 19:20 与 10-18 14:0x 复测都恢复，10-18 13:54 又断）。**换区域只是换一条会坏的远路**（香港坏过、大阪也坏过）。现在的口径：浏览器（含浏览器里的 Worker）拿网站签的**短期票据**（`GET /api/llm/ticket`，`issueIdentity` 的 `llm` 作用域、4 分钟有效）直连 `BLENDER_SERVICE_URL` 的 `/v1/llm/*`，由 **Cloudflare 的出口**转发到火山。三条纪律：**票据里签着允许的模型清单**（清单外落回默认模型，与原来 `/api/provider` 的口径一致——票据谁都能拿，不归一就等于开放任意模型）；**中继只放行方舟那几条路径、跨域只放行 `BLENDER_FRAME_ORIGINS`**（不做开放代理）；**workerd 的 fetch 不接受 `redirect: "error"`**（实测报 `Invalid redirect value`，要用 `"manual"` 并自己把 3xx 当失败）。回归：`llmRelay.test.ts` 7 条 + `proxy.test.ts` 的票据用例（票据能被对端 `verifyIdentity` 验过）+ `network.test.ts` 2 条。
+
 ---
 
 ## 三、文档地图：哪些能引用

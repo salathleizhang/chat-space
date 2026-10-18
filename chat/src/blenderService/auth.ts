@@ -1,5 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-export interface ServiceIdentity { owner: string; expires: number; scope: "api" | "desktop"; session?: string; epoch?: number }
+export interface ServiceIdentity {
+  owner: string; expires: number; scope: "api" | "desktop" | "llm"; session?: string; epoch?: number;
+  /** 只对 `llm` 票据有意义：这条票据允许的模型清单与默认模型（见 llmRelay.ts）。 */
+  models?: string[]; defaultModel?: string;
+}
 export function issueIdentity(value: ServiceIdentity, secret: string): string {
   if (secret.length < 32) throw new Error("Blender service secret must have 32 characters");
   const payload = Buffer.from(JSON.stringify(value)).toString("base64url");
