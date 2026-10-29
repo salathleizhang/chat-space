@@ -2,21 +2,17 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import type { GenerationPhase } from "../../dto/tasks";
 import { SlugSchema } from "../../dto/library";
-import { TRIPO_DECIMATE_FACES } from "../../models/tripo";
 import { getAssetStorage } from "../../services/assetStorage";
+import { LOCAL_RETOPO_FACES, runLocalRetopology } from "../../services/localRetopo";
 import { startCustomTask } from "../../services/tasks";
 import { runWithGeneratedModelInfo } from "./modelInfo";
 import {
   requireContextString,
   requireCurrentProject,
 } from "./requestContext";
-import {
-  runTripoAnimationRetarget,
-  runTripoRetopology,
-  runTripoRig,
-} from "./tripoOps";
+import { runTripoAnimationRetarget, runTripoRig } from "./tripoOps";
 
-/** 模型后处理统一使用 Tripo v3；UV 展开是唯一保留的混元能力。 */
+/** 绑定/动画仍走 Tripo v3；减面已改成本地 meshoptimizer（不调任何 API）。UV 展开是唯一保留的混元能力。 */
 
 export type MeshOperation = "retopo" | "rig" | "animation";
 
@@ -48,38 +44,41 @@ function startTripoTask(
 export const retopologizeTool = createTool({
   id: "retopologize",
   description:
-    "Decimation tool: intelligently retopologize/decimate a model in the asset library via Tripo v3 (paid operation — user consent is required before starting; after a high-poly model is generated, proactively ask once with ask-user). Triangle target 500–20000, quad target 500–10000; when targetPolycount is omitted, Tripo adapts automatically. The output is a **new generation** (the original high-poly model is kept, and the viewport and placement automatically use the latest generation), so you do not need to regenerate if the decimation looks bad. Returns a task",
+    "Decimate a model in the asset library **locally** (meshoptimizer in-process — no API key, no credits, no cost; do not ask for payment consent). You choose the target face count. Triangle target 40–40000; when targetPolycount is omitted the system picks a size-aware default (roughly sqrt(triangles)×3, capped at 2,000). Practical guidance for furniture/props: 5,000–20,000 keeps the model looking identical and keeps its texture; 1,000–3,000 is a usable LOD; 300–800 starts to lose shape; below 300 thin parts (legs, handles) collapse and the result no longer reads as the same object. The output is a **new generation** (the original high-poly is kept, and the viewport and placement switch to the latest generation automatically), so a bad result costs nothing to redo with a different number. Returns a task",
   inputSchema: z.object({
     assetSlug: SlugSchema,
+    /** 省略时按资产面数自适应；Agent 可以按用途自己给数 */
     targetPolycount: z
       .number()
       .int()
-      .min(TRIPO_DECIMATE_FACES.triangle.min)
-      .max(TRIPO_DECIMATE_FACES.triangle.max)
+      .min(LOCAL_RETOPO_FACES.min)
+      .max(LOCAL_RETOPO_FACES.max)
       .optional(),
-    topology: z.enum(["quad", "triangle"]).default("triangle"),
-    tripoModel: z.enum(["v2.0", "v1.0"]).optional(),
-    /** Tripo v2 专用：把纹理烘焙到低模 */
-    bake: z.boolean().optional(),
   }),
-  execute: async (input, context) =>
-    startTripoTask(context, "retopo", `Retopology: ${input.assetSlug}`, input, (projectSlug, apiKey, onPhase) =>
-      // 结果里也带 modelInfo：交付时能如实报出"现在多少面"（降面任务本身不再触发降面卡片）
-      runWithGeneratedModelInfo(getAssetStorage(), projectSlug, input.assetSlug, () =>
-        runTripoRetopology(
-          getAssetStorage(),
-          {
+  execute: async (input, context) => {
+    const projectSlug = requireCurrentProject(context as never);
+    const task = startCustomTask(
+      "retopo",
+      projectSlug,
+      `Decimation: ${input.assetSlug}`,
+      (task) =>
+        // 结果里带 modelInfo：交付时能如实报出"现在多少面"
+        runWithGeneratedModelInfo(getAssetStorage(), projectSlug, input.assetSlug, () =>
+          runLocalRetopology(getAssetStorage(), {
             projectSlug,
             assetSlug: input.assetSlug,
-            faceLimit: input.targetPolycount,
-            quad: input.topology === "quad",
-            model: input.tripoModel,
-            bake: input.bake,
-          },
-          { apiKey, onPhase },
+            targetPolycount: input.targetPolycount,
+            onPhase: (phase) => task.setPhase(phase),
+          }),
         ),
-      ),
-    ),
+      {
+        assetSlug: input.assetSlug,
+        // 浏览器本地版把这个操作丢给 Worker 执行（同一个函数，WebIO 替换 NodeIO）
+        cloudOperation: { operation: "retopo", input },
+      },
+    );
+    return { task: { id: task.id, subject: task.subject, status: task.status } };
+  },
 });
 
 export const rigModelTool = createTool({

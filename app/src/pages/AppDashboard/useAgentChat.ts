@@ -1115,7 +1115,7 @@ export function useAgentChat({
           ),
           ...(highPoly
             ? [
-                "At least one finished 3D model is high-poly. Before delivering it, ask the user once with ask-user whether to run the decimation tool (the Auto low-poly options plus a keep-high-poly option), and only call retopologize if they agree — see the high-poly rule in your instructions.",
+                "At least one finished 3D model is high-poly. Before delivering it, ask the user once with ask-user whether to run the decimation tool (the low-poly options plus a keep-high-poly option) and let them pick the target, then call retopologize for each asset they agreed to — decimation is local and free, so only the number matters. See the high-poly rule in your instructions.",
               ]
             : []),
           "Continue the original request automatically: check the finished outputs, then deliver the result. Only call inspect if the user asked for a check or raised a question about the result — a finished single-model generation is delivered without a self-check. A finished complete-scene job ends with one whole-scene check (inspect with target=\"scene\"). Do not ask the user to check back or repeat successful paid generation. Continue the existing plan without recreating it.",

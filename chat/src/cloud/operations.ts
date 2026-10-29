@@ -41,12 +41,19 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
     return capture.executor(execution);
   }
   const assetSlug = String(input.assetSlug);
-  const { runTripoTexture, runTripoSegmentation, runTripoRetopology, runTripoRig, runTripoCharacter, runTripoAnimationRetarget } = await import("../mastra/tools/tripoOps");
+  const { runTripoTexture, runTripoSegmentation, runTripoRig, runTripoCharacter, runTripoAnimationRetarget } = await import("../mastra/tools/tripoOps");
   if (job.operation === "texture") return runTripoTexture(storage, { projectSlug, assetSlug,
     prompt: input.stylePrompt as string, pbr: input.enablePbr as boolean, textureQuality: input.textureQuality as never, delight: input.delight as boolean | undefined }, tripo);
   if (job.operation === "segment") return runTripoSegmentation(storage, { projectSlug, assetSlug }, tripo);
-  if (job.operation === "retopo") return runTripoRetopology(storage, { projectSlug, assetSlug,
-    faceLimit: input.targetPolycount as number | undefined, quad: input.topology === "quad", model: input.tripoModel as never, bake: input.bake as boolean | undefined }, tripo);
+  if (job.operation === "retopo") {
+    const { runLocalRetopology } = await import("../services/localRetopo");
+    return runLocalRetopology(storage, {
+      projectSlug,
+      assetSlug,
+      targetPolycount: input.targetPolycount as number | undefined,
+      onPhase: execution.setPhase,
+    });
+  }
   if (job.operation === "rig") return runTripoRig(storage, { projectSlug, assetSlug,
     rigType: input.rigType as never, spec: input.spec as never, model: input.tripoRigModel as never }, tripo);
   if (job.operation === "animation") return runTripoAnimationRetarget(storage, { projectSlug, assetSlug,

@@ -67,6 +67,8 @@ export async function runBrowserJob(id: string) {
     storage.onSidecar = context.onSidecar;
     const execution = { id, setPhase: (phase: GenerationTask["phase"]) => patch({ phase }), setAssetSlug: (assetSlug: string) => patch({ assetSlug }) };
     try {
+      // 纯本地操作（减面）：不花钱、可重入，中断后直接重跑，不走"供应商收据"那套续跑逻辑
+      const LOCAL_OPERATIONS = new Set(["retopo"]);
       const result = await withAssetStorage(storage, () => withCloudContext(context, () => runWithTaskPump(id, task.projectSlug, async () => {
         if (Date.now() - Date.parse(task.createdAt) > 90 * 60_000) throw new Error("The task exceeded 90 minutes; resume with the provider receipt");
         if (!job.started) {
@@ -74,6 +76,7 @@ export async function runBrowserJob(id: string) {
           job.started = true; await storage.writeText(localJobPath(id), JSON.stringify(job));
           return executeCloudOperation(task, job.descriptor, execution);
         }
+        if (LOCAL_OPERATIONS.has(job.descriptor.operation)) return executeCloudOperation(task, job.descriptor, execution);
         if (!job.receipts.length && !["scene-job", "resume"].includes(job.descriptor.operation)) {
           throw new Error("The previous run was interrupted with no provider receipt; to avoid paying twice it was not resubmitted. Check the provider records and try again");
         }
@@ -84,7 +87,7 @@ export async function runBrowserJob(id: string) {
           resumed = await resumeGeneration(storage, path, serverResumeKeys(), execution.setPhase);
         }
         if (["scene-job", "resume"].includes(job.descriptor.operation)) return executeCloudOperation(task, job.descriptor, execution);
-        const required: Record<string, string> = { segment: "v3/mesh/segment", rig: "/animations/rig", animation: "/animations/retarget", retopo: "/mesh/decimate", texture: "/models/texture", character: "/animations/rig" };
+        const required: Record<string, string> = { segment: "v3/mesh/segment", rig: "/animations/rig", animation: "/animations/retarget", texture: "/models/texture", character: "/animations/rig" };
         if (required[job.descriptor.operation]) {
           const receipts = await Promise.all(job.receipts.map(path => readJson(storage, path, RequestSidecarSchema)));
           if (!receipts.some(receipt => receipt.model === required[job.descriptor.operation])) {
