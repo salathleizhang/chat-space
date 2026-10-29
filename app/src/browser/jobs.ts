@@ -67,8 +67,9 @@ export async function runBrowserJob(id: string) {
     storage.onSidecar = context.onSidecar;
     const execution = { id, setPhase: (phase: GenerationTask["phase"]) => patch({ phase }), setAssetSlug: (assetSlug: string) => patch({ assetSlug }) };
     try {
-      // 纯本地操作（减面）：不花钱、可重入，中断后直接重跑，不走"供应商收据"那套续跑逻辑
-      const LOCAL_OPERATIONS = new Set(["retopo"]);
+      // 本地编排的操作（减面 / 生图贴图）：可重入，中断后直接重跑，不走"供应商收据"那套续跑逻辑。
+      // 贴图会在火山那边再出一张图（很便宜），但比让用户看到"没有供应商收据"的报错更合理。
+      const LOCAL_OPERATIONS = new Set(["retopo", "texture"]);
       const result = await withAssetStorage(storage, () => withCloudContext(context, () => runWithTaskPump(id, task.projectSlug, async () => {
         if (Date.now() - Date.parse(task.createdAt) > 90 * 60_000) throw new Error("The task exceeded 90 minutes; resume with the provider receipt");
         if (!job.started) {
@@ -87,7 +88,7 @@ export async function runBrowserJob(id: string) {
           resumed = await resumeGeneration(storage, path, serverResumeKeys(), execution.setPhase);
         }
         if (["scene-job", "resume"].includes(job.descriptor.operation)) return executeCloudOperation(task, job.descriptor, execution);
-        const required: Record<string, string> = { segment: "v3/mesh/segment", rig: "/animations/rig", animation: "/animations/retarget", texture: "/models/texture", character: "/animations/rig" };
+        const required: Record<string, string> = { segment: "v3/mesh/segment", rig: "/animations/rig", animation: "/animations/retarget", character: "/animations/rig" };
         if (required[job.descriptor.operation]) {
           const receipts = await Promise.all(job.receipts.map(path => readJson(storage, path, RequestSidecarSchema)));
           if (!receipts.some(receipt => receipt.model === required[job.descriptor.operation])) {

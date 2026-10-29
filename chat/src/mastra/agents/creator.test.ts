@@ -118,16 +118,16 @@ describe("creator 工具可用性", () => {
     ) as { properties?: Record<string, unknown> };
     expect(textureSchema.properties).not.toHaveProperty("model");
     expect(textureSchema.properties).not.toHaveProperty("channel");
-    const segmentSchema = z.toJSONSchema(
-      (tools["segment-parts"] as unknown as { inputSchema: z.ZodType }).inputSchema,
-      { io: "input" },
-    ) as { properties?: Record<string, unknown> };
-    expect(segmentSchema.properties).toHaveProperty("assetSlug");
-    expect(segmentSchema.properties).not.toHaveProperty("channel");
     expect(tools["retopologize"]).toBeDefined();
-    expect(tools["rig-model"]).toBeDefined();
-    expect(tools["generate-animation"]).toBeDefined();
-    expect(tools["generate-character"]).toBeDefined();
+    /*
+      分件 / 绑骨 / 动画 / 角色生成**暂时不注册**（Tripo 积分用尽、本地无替代）。
+      工具表本身就是给模型的信号：挂上去它就会去承诺一个必然失败的能力。
+      开关在 config.tripo.segment / config.tripo.rigging，恢复时只改 env、不改代码。
+    */
+    const toolTable = tools as Record<string, unknown>;
+    for (const id of ["segment-parts", "rig-model", "generate-animation", "generate-character"]) {
+      expect(toolTable[id]).toBeUndefined();
+    }
     // 提示词点名了 unwrap-uv（"only unwrap-uv uses Hunyuan"），它就必须真的在工具表里：
     // 2026-09-26 e0d5f27 只挂了 Tripo 那几个，把这条漏了，用户要 UV 只会拿到 Unknown tool。
     expect(tools["unwrap-uv"]).toBeDefined();

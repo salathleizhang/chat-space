@@ -15,7 +15,6 @@ import {
   writeJson,
 } from "../../services/assetStorage";
 import { clearTasks, listTasks } from "../../services/tasks";
-import { generateTextureTool } from "./textureOps";
 import { generateAnimationTool } from "./meshOps";
 import { createProject, getProjectState } from "./projectTools";
 import {
@@ -305,63 +304,6 @@ describe("Tripo 任务的阶段推进", () => {
     const sidecar = await readJson(storage, result.sidecar, RequestSidecarSchema);
     expect(sidecar.status).toBe("succeeded");
   });
-});
-
-describe("generateTextureTool 的任务接线", () => {
-  test(
-    "贴图任务不再停在 queued：阶段随轮询推进并最终成功",
-    async () => {
-      setAssetStorage(storage);
-      const dir = assetDir("tp", "tool-crate");
-      await writeJson(storage, assetIdentityFile("tp", "tool-crate"), AssetIdentitySchema, {
-        schemaVersion: 1,
-        slug: "tool-crate",
-        kind: "model",
-        name: "Tool crate",
-        intent: "A crate for the tool-level wiring test",
-        sourceImages: [],
-        createdAt: new Date().toISOString(),
-      });
-      await storage.writeBytes(`${dir}/0-tool-crate.glb`, GLB_BYTES);
-
-      // 第一次轮询回 running，第二次才 success。**故意不注入测试专用的轮询间隔**：
-      // Tripo 默认 10 秒，所以这一条比其它测试慢——它钉住的正是"忘了把 setPhase 接上"
-      // 这个静默缺陷（2026-10-02 的绿色贴图就是这么全程停在 queued 的）。
-      const { fetchFn } = makeFakeTripoFetch({ pendingPolls: 1 });
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = fetchFn;
-      try {
-        const started = (await generateTextureTool.execute!(
-          { assetSlug: "tool-crate", stylePrompt: "medium green fabric", enablePbr: true },
-          {
-            requestContext: new Map([
-              ["projectSlug", "tp"],
-              ["tripo3dApiKey", "tsk-1"],
-            ]),
-          } as never,
-        )) as { task: { id: string } };
-
-        const phases = new Set<string>();
-        let task = (await listTasks("tp")).find((entry) => entry.id === started.task.id);
-        const deadline = Date.now() + 25_000;
-        while (task && task.status === "running") {
-          phases.add(task.phase);
-          if (Date.now() > deadline) throw new Error("贴图任务在 25 秒内没有收敛");
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          task = (await listTasks("tp")).find((entry) => entry.id === started.task.id);
-        }
-
-        expect(phases.has("generating")).toBe(true);
-        expect(task?.status).toBe("succeeded");
-        expect(task?.phase).toBe("completed");
-      } finally {
-        globalThis.fetch = originalFetch;
-        clearTasks();
-        setAssetStorage(undefined);
-      }
-    },
-    { timeout: 40_000 },
-  );
 });
 
 afterAll(() => rm(root, { recursive: true, force: true }));

@@ -41,9 +41,19 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
     return capture.executor(execution);
   }
   const assetSlug = String(input.assetSlug);
-  const { runTripoTexture, runTripoSegmentation, runTripoRig, runTripoCharacter, runTripoAnimationRetarget } = await import("../mastra/tools/tripoOps");
-  if (job.operation === "texture") return runTripoTexture(storage, { projectSlug, assetSlug,
-    prompt: input.stylePrompt as string, pbr: input.enablePbr as boolean, textureQuality: input.textureQuality as never, delight: input.delight as boolean | undefined }, tripo);
+  const { runTripoSegmentation, runTripoRig, runTripoCharacter, runTripoAnimationRetarget } = await import("../mastra/tools/tripoOps");
+  if (job.operation === "texture") {
+    // 贴图 = 火山生图 + 本地盒式投影（不再走 Tripo /models/texture）
+    const { runLocalTexture } = await import("../services/localTexture");
+    return runLocalTexture(storage, {
+      projectSlug,
+      assetSlug,
+      prompt: String(input.stylePrompt ?? ""),
+      tiles: input.textureScale as number | undefined,
+      volcengineApiKey: keys.seed3dApiKey ?? "",
+      onPhase: execution.setPhase,
+    });
+  }
   if (job.operation === "segment") return runTripoSegmentation(storage, { projectSlug, assetSlug }, tripo);
   if (job.operation === "retopo") {
     const { runLocalRetopology } = await import("../services/localRetopo");

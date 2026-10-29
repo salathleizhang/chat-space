@@ -2,48 +2,50 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { SlugSchema } from "../../dto/library";
 import { getAssetStorage } from "../../services/assetStorage";
+import { TEXTURE_TILES, runLocalTexture } from "../../services/localTexture";
 import { startCustomTask } from "../../services/tasks";
 import { requireContextString, requireCurrentProject } from "./requestContext";
-import { runTripoTexture } from "./tripoOps";
 
+/**
+ * 贴图改由火山生图引擎（Seedream）出图 + 本地盒式投影写入 GLB —— 不再调用 Tripo
+ * `/models/texture`。生图计费在火山那边，与聊天里选的图片模型无关。
+ */
 export const generateTextureTool = createTool({
   id: "generate-texture",
   description:
-    "Regenerate the material texture of an existing 3D model in the current project via Tripo v3 /models/texture, using the latest texture model v3.5-20260815 by default. It only uses Tripo and is unrelated to the image model selected in the chat. textureQuality=fast is faster but has fewer details (same texture size and credit cost as standard). Before calling, explain the Tripo paid operation and obtain the user's consent. Returns a task; follow up with list-generation-tasks.",
+    "Regenerate the material of an existing 3D model **locally**: Volcano Engine Seedream draws one seamless tileable material image from your prompt, then the tool box-projects it onto the model and writes a new GLB generation (no Tripo, no UV unwrap step). Use it when the user wants a different material (wood, fabric, leather, paint) or the generated model's texture looks wrong. `stylePrompt` describes the material only — colour, grain, finish — not the object. textureScale = how many times the tile repeats along the model's longest edge (default 4; lower for a big pattern, higher for fine grain). Note it produces a generic material, not a repaint of the reference photo, and box projection leaves a slight seam at hard edges. Returns a task; follow up with list-generation-tasks.",
   inputSchema: z.object({
     assetSlug: SlugSchema,
+    /** 材质描述，例如 "warm oak wood, matte finish" */
     stylePrompt: z.string().min(1).max(600),
-    enablePbr: z.boolean().default(true),
-    /** 贴图质量档；fast 只比 standard 少细节，尺寸与积分相同。 */
-    textureQuality: z.enum(["fast", "standard", "detailed", "extreme"]).optional(),
-    /** 是否在贴图前去除参考图里的烘焙光照（Tripo v3.5 贴图模型，默认 true）。 */
-    delight: z.boolean().optional(),
+    textureScale: z
+      .number()
+      .int()
+      .min(TEXTURE_TILES.min)
+      .max(TEXTURE_TILES.max)
+      .optional(),
   }),
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
-    const tripoKey = requireContextString(
+    const volcengineApiKey = requireContextString(
       context,
-      "tripo3dApiKey",
-      "TRIPO_KEY is not configured in the local chat/.env",
+      "volcengineApiKey",
+      "VOLC_KEY is not configured in the local chat/.env",
     );
     const task = startCustomTask(
       "texture",
       projectSlug,
-      `Texture generation (Tripo): ${input.assetSlug}`,
-      (task) => runTripoTexture(
-        getAssetStorage(),
-        {
+      `Material (Seedream): ${input.assetSlug}`,
+      (task) =>
+        // 阶段必须落盘：生图 + 写入 GLB 都要能被看板看见，否则全程停在 queued
+        runLocalTexture(getAssetStorage(), {
           projectSlug,
           assetSlug: input.assetSlug,
           prompt: input.stylePrompt,
-          pbr: input.enablePbr,
-          textureQuality: input.textureQuality,
-          delight: input.delight,
-        },
-        // 阶段必须落盘：贴图是「提交 → 轮询 → 下载几十 MB」，不报阶段时任务全程停在 queued、
-        // updatedAt 一动不动，看板上与卡死无法区分（2026-10-02 就是这么挂掉一次）。
-        { apiKey: tripoKey, onPhase: (phase) => task.setPhase(phase) },
-      ),
+          tiles: input.textureScale,
+          volcengineApiKey,
+          onPhase: (phase) => task.setPhase(phase),
+        }),
       { assetSlug: input.assetSlug, cloudOperation: { operation: "texture", input } },
     );
     return { task: { id: task.id, subject: task.subject, status: task.status } };

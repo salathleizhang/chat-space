@@ -24,7 +24,7 @@ bun run dev
 | 本机变量 | 用途 |
 | --- | --- |
 | `VOLC_KEY` | 火山方舟 GLM 5.3 Flash / DeepSeek V4.1 Flash / Doubao-Seed-Evolving / Doubao-Seed-2.1-pro 对话、Seedream 4.5 / 5.0 / 5.0 Pro 图片 |
-| `TRIPO_KEY` | Tripo3D 单图/多视角模型生成、多角度参考图、贴图、分割、重拓扑与绑骨 |
+| `TRIPO_KEY` | Tripo3D 单图/多视角模型生成与多角度参考图；贴图、分割、绑骨/动画已改为本地或暂时关闭，不再消耗它 |
 | `TRIPO_IMAGE_MODEL` | 界面「Tripo 3.1」项提交的几何模型 ID，默认 `v3.1-20260211`（v3 接口必填；P 系列在菜单里单独选，不受这个变量影响） |
 | `HUNYUAN_KEY` | 腾讯混元 UV 展开专用，格式为 `SecretId:SecretKey` |
 | `WORLDLABS_KEY` | World Labs Marble 场景 |
@@ -33,9 +33,11 @@ World Labs 单步任务有两种模式：`direct` 直接用最新源图和可选
 
 Tripo3D 支持单图与多视角模型生成。`generate-reference-images(mode=multiview)` 可把目标已有的一张干净参考图扩展为前、左、后、右四视图并绑定视角元数据；之后 `start-3d-batch(provider=tripo-direct)` 默认自动使用多视角接口，也可用 `tripoGenerationMode=single|multiview` 显式选择。
 
-Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度版本，P 系列的 `P2-20260801`（四边面输出，Preview）与 `P1-20260311` 面向低多边形、干净拓扑的游戏与移动端资产，面数上限分别为 48–50,000（四边面 48–25,000）与 50–20,000。生成请求固定带 `texture_version=v3.5-20260815`（最新的贴图模型；`v2.5` 几何仍配 `v2.5-20250123` 贴图），不再落到官方默认的 `v3.0` 贴图。贴图后处理 `generate-texture` 同样用 v3.5，并可用 `textureQuality=fast|standard|detailed|extreme` 与 `delight` 控制细节档位和参考图烘焙光照。
+Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度版本，P 系列的 `P2-20260801`（四边面输出，Preview）与 `P1-20260311` 面向低多边形、干净拓扑的游戏与移动端资产，面数上限分别为 48–50,000（四边面 48–25,000）与 50–20,000。生成请求固定带 `texture_version=v3.5-20260815`（最新的贴图模型；`v2.5` 几何仍配 `v2.5-20250123` 贴图），不再落到官方默认的 `v3.0` 贴图。贴图后处理 `generate-texture` **已不再调用 Tripo**：改用火山生图引擎（Seedream）出一张无缝平铺的材质图，再由本地盒式投影写入 GLB（`chat/src/services/localTexture.ts`）。它只吃材质描述（颜色/纹理/光泽），不会按参考图重绘，硬边处有一条轻微接缝；UV 展开仍可用 `unwrap-uv`（混元）。
 
 模型后处理：`retopologize` 已改为**本地减面**（`chat/src/services/localRetopo.ts`，meshoptimizer 在进程内跑，不调任何 API、不需要 `TRIPO_KEY`、不产生费用，浏览器本地版在 Worker 里执行同一个函数），产物是新的 `N-slug.glb` 一代、原高模保留；`rig-model` 使用 Tripo `/animations/rig`；`generate-animation` 已向 Agent 注册，使用 `/animations/retarget` 将官方预设动作应用到最近一次成功的 Tripo 绑骨结果，输出含模型与烘焙动画的 GLB（可选原地播放）；须先完成 `rig-model` 或 `generate-character`，不会自动绑骨。绑骨与动画均使用 `TRIPO_KEY`，各自是付费任务。默认 v1.0 人形使用 `preset:biped:walk` 等动作标识，v2.5 人形使用 `preset:walk` 等，动作须匹配骨架与版本。`generate-character` 组合“图生 3D → biped 绑骨”（会产生两次付费任务）。Tripo 当前没有为已有模型单独执行 UV 展开的端点，因此只有 `unwrap-uv` 保留混元实现；Tripo P 系列生成接口的 UV 开关只在新模型生成时生效，不能替代后处理 UV 展开。
+
+**绑定 / 动画 / 角色生成 / 语义分件暂时关闭**：Tripo 积分用尽，本地没有替代实现，工具表里不注册这几个工具（`config.tripo.rigging` / `config.tripo.segment`，默认 0；改 env 即可恢复，代码路径没删）。Agent 被要求在被问到时直说"暂时不可用"，不要承诺。
 
 **高模生成完先问一次要不要降面**（不是自动减、也不是静默交付）：每个 3D 生成任务的 result 里都带 `modelInfo`——`faces` 是**实测三角面数**（读 GLB 的 JSON chunk，不解码几何，见 `chat/src/common/glb.ts`；OBJ/FBX 之类读不出来则是 `null`），`highPoly` 是服务端按 **10 万面**阈值给出的判定（`chat/src/mastra/tools/modelInfo.ts`）。工作台的“生成完成”通知里也带上面数，所以 Agent 在结算那一轮就能决定，不必为此多调一次工具。`highPoly` 为真时 Agent 用 `ask-user` 弹一次卡片：选项是「Auto low-poly · 2 000 面」（recommended）、「Light proxy · 500 面」与「保持高模，不减面」，`allowOther` 让用户自己填目标面数；**用户确认后才调 `retopologize`**（本地减面，不产生费用，产物是新的一代、原高模保留，视口与摆放自动用低模——`latestModel()` 按索引取最新）。目标面数由 Agent 决定：省略时按面数自适应（`sqrt(三角面数)×3`，落在 300–2 000），实测 1.49 M 面降到 2 000 面约 1 s（保 UV/贴图），降到 400–500 面时细长结构开始塌、模型不再是原样。低模（例如 Tripo P 系列约 5 千面）不问；`highPoly` 为假或者根本没有 `modelInfo` 的旧任务都不会触发卡片。一批里多个高模只问一次；完整场景 SceneJob 跑的过程中不逐个问（那条 DAG 的付费计划与键集是单独一份），等整场景交付、用户提出面数或性能问题时再按需调用 `retopologize`。
 

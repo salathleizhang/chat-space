@@ -76,11 +76,20 @@ export function createCreatorAgent(llm: LlmConfig) {
       "revise-scene-job": reviseSceneJobTool,
       "retry-scene-job-nodes": retrySceneJobNodesTool,
       "get-scene-job": getSceneJobTool,
-      "segment-parts": segmentPartsTool,
+      /*
+        分件 / 绑骨 / 动画 / 角色生成**暂时关闭**（Tripo 积分用尽，本地没有替代实现）。
+        开关在 config.tripo.segment / config.tripo.rigging，默认 false：工具表里不出现，
+        模型就不会去承诺一个必然失败的能力。恢复只需把 env 改成 1，代码路径没删。
+      */
+      ...(config.tripo.segment ? { "segment-parts": segmentPartsTool } : {}),
       "retopologize": retopologizeTool,
-      "rig-model": rigModelTool,
-      "generate-animation": generateAnimationTool,
-      "generate-character": generateCharacterTool,
+      ...(config.tripo.rigging
+        ? {
+            "rig-model": rigModelTool,
+            "generate-animation": generateAnimationTool,
+            "generate-character": generateCharacterTool,
+          }
+        : {}),
       /*
         unwrap-uv 以前只写在提示词里、没挂进来，正是"提示词点名但工具表里没有"的另一个
         实例（用户说"给小熊展个 UV"，模型只会拿到 `Unknown tool: unwrap-uv`）。

@@ -19,6 +19,10 @@ const EnvSchema = z.object({
   TRIPO_KEY: z.string().min(1).optional(),
   HUNYUAN_KEY: z.string().min(1).optional(),
   TRIPO_IMAGE_MODEL: z.string().min(1).default(DEFAULT_TRIPO_IMAGE_MODEL),
+  // 绑定/动画/分件目前整体关闭：Tripo 积分用尽，且没有可替代的本地实现。
+  // 打开只影响"工具是否注册"，不改变代码路径（TRIPO_RIGGING=1 即可恢复）。
+  TRIPO_RIGGING: z.enum(["0", "1"]).default("0"),
+  TRIPO_SEGMENT: z.enum(["0", "1"]).default("0"),
   WORLDLABS_KEY: z.string().min(1).optional(),
   VOLC_LLM_BASE_URL: z.url().default("https://ark.cn-beijing.volces.com/api/v3"),
   VOLC_LLM_MODEL: z.string().min(1).optional(),
@@ -135,6 +139,10 @@ export const config = {
   },
   tripo: {
     imageModel: env.TRIPO_IMAGE_MODEL,
+    /** 绑骨 / 动画 / 角色（image→3D+绑骨）是否注册给 Agent */
+    rigging: env.TRIPO_RIGGING === "1",
+    /** 语义分件（/mesh/segment）是否注册给 Agent */
+    segment: env.TRIPO_SEGMENT === "1",
   },
   /**
    * 本机 Blender 的 addon 地址。火山沙箱另外使用 blenderCloud.ts 的 HTTPS

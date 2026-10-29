@@ -208,7 +208,7 @@ function simplifyPrimitive(
  * "在 400 面上再减到 800"（直接拒绝），想换个大一点的数字都回不去。Tripo 时代也是
  * 从原始 task 往下减的，这里保持同一语义。
  */
-async function pickSource(
+export async function pickHighestPolyModel(
   storage: AssetStorage,
   dir: string,
 ): Promise<{ path: string; bytes: Uint8Array; triangles: number }> {
@@ -236,7 +236,7 @@ export async function runLocalRetopology(
   params: LocalRetopoParams,
 ): Promise<LocalRetopoResult> {
   const dir = assetDir(params.projectSlug, params.assetSlug);
-  const source = await pickSource(storage, dir);
+  const source = await pickHighestPolyModel(storage, dir);
 
   await params.onPhase?.("generating");
   const doc = await new NodeIO().readBinary(source.bytes);
