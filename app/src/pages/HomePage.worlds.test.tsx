@@ -228,3 +228,17 @@ test("渲染所有特性段落，录屏和静态图左右交替", async () => {
     expect(article.querySelectorAll("ul")).toHaveLength(0);
   }
 });
+
+test("中文特性段落保留海报上的四条黑底白字点睛句", async () => {
+  await renderHome(["zh-CN"]);
+
+  // 易拉宝的四条反白横条是这版首页的记号，少一条就退回"黑字 + 灰字"的普通排版
+  const bars = Array.from(container!.querySelectorAll(".home-poster-knock")).map((node) =>
+    node.textContent?.trim(),
+  );
+  expect(bars).toEqual(["一句话搞定", "全部可交互", "同时为你工作", "不用鼠标键盘"]);
+  // 反白句必须在黑色块里，不能只是白字（白字在白底页面上等于没有）
+  for (const bar of container!.querySelectorAll(".home-poster-knock")) {
+    expect(bar.firstElementChild?.tagName).toBe("SPAN");
+  }
+});

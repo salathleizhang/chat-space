@@ -1,4 +1,4 @@
-import { PRODUCT_FEATURES, SHOWCASE_WORLDS } from "./homeShowcase";
+import { PRODUCT_FEATURES, SHOWCASE_WORLDS, type FeaturePoster } from "./homeShowcase";
 
 export type HomeLocale = "en" | "zh-CN";
 export const HOME_LOCALE_KEY = "chatspace.homeLanguage:v1";
@@ -123,16 +123,32 @@ export const HOME_ACTIONS = {
   "zh-CN": ["建模", "展 UV", "拓扑", "贴图", "绑骨", "动画"],
 };
 
-const ZH_FEATURE_COPY: Record<string, { title: string; tagline: string }> = {
-  "model-generation": { title: "言出法随", tagline: "一句话，建模、编辑全搞定" },
-  "world-generation": { title: "一句话生成一个世界", tagline: "场景里的道具，生成后随手摆放" },
+const ZH_FEATURE_COPY: Record<string, { title: string; tagline: string; poster?: FeaturePoster }> = {
+  "model-generation": {
+    title: "言出法随",
+    tagline: "一句话，建模、编辑全搞定",
+    poster: { sub: ["建模，贴图，展 UV", "拓扑，绑定，动画"], knock: "一句话搞定" },
+  },
+  "world-generation": {
+    title: "一句话生成一个世界",
+    tagline: "场景里的道具，生成后随手摆放",
+    poster: { sub: ["场景里的道具"], knock: "全部可交互" },
+  },
   "batch-editing": { title: "一整套，同时开工", tagline: "批量生成，一起移动、旋转、换材质" },
   "auto-retopology": { title: "拓扑，一句话搞定", tagline: "复杂模型，理出清晰结构" },
   "auto-animation": { title: "绑骨、动画，开口就行", tagline: "让这个小人，走起来" },
   "shader-editing": { title: "换张贴图，换个模样", tagline: "材质怎么改，你说了算" },
-  "remote-blender": { title: "云端沙盒", tagline: "Blender 在云端，为你工作" },
+  "remote-blender": {
+    title: "云端沙盒",
+    tagline: "Blender 在云端，为你工作",
+    poster: { sub: ["100 个 Blender"], knock: "同时为你工作" },
+  },
   "first-person-editing": { title: "走进你创造的世界", tagline: "拿起、摆好，场景里的道具亲手放" },
-  "gesture-control": { title: "伸手，就能摆放", tagline: "手势追踪，VR 里也能用" },
+  "gesture-control": {
+    title: "手势追踪，语音输入",
+    tagline: "手势追踪，VR 里也能用",
+    poster: { knock: "不用鼠标键盘", knockFirst: true, sub: ["VR 里也能用"] },
+  },
 };
 
 const ZH_WORLD_COPY: Record<string, { name: string; setting: string }> = {

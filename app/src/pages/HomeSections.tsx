@@ -121,11 +121,31 @@ export function FeatureShowcase({ features, copy = HOME_COPY.en }: { features: P
               <div className={`home-feature-copy ${mediaFirst ? "" : "lg:order-1"}`}>
                 <h3
                   id={`feature-${feature.id}`}
-                  className="home-feature-title"
+                  className={`home-feature-title ${feature.poster ? "home-poster-title" : ""}`}
                 >
                   {feature.title}
                 </h3>
-                <p className="home-feature-tagline">{feature.tagline}</p>
+                {feature.poster ? (
+                  <>
+                    {feature.poster.knock && feature.poster.knockFirst && (
+                      <p className="home-poster-knock">
+                        <span>{feature.poster.knock}</span>
+                      </p>
+                    )}
+                    {feature.poster.sub?.map((line) => (
+                      <p key={line} className="home-poster-sub">
+                        {line}
+                      </p>
+                    ))}
+                    {feature.poster.knock && !feature.poster.knockFirst && (
+                      <p className="home-poster-knock">
+                        <span>{feature.poster.knock}</span>
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="home-feature-tagline">{feature.tagline}</p>
+                )}
               </div>
             </article>
           );

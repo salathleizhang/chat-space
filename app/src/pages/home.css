@@ -226,6 +226,38 @@
   line-height: 1.12;
   text-wrap: balance;
 }
+
+/* 海报式三段标题：黑字主标 → 灰字副标 → 黑底白字点睛句。
+   点睛句用行内块包住，左右对齐跟着所在行的 text-align 走，
+   所以右侧文案行的黑条也会贴着右边。 */
+.home-poster-title { margin-bottom: 4px; }
+.home-poster-sub {
+  margin-top: 2px;
+  font-family: var(--home-display);
+  font-weight: 900;
+  font-size: clamp(22px, 2.3vw, 30px);
+  letter-spacing: -0.04em;
+  line-height: 1.14;
+  color: var(--home-gray);
+}
+/* 黑底白字横条：海报里「一句话搞定」「不用鼠标键盘」「同时为你工作」
+   「全部可交互」都是同一手法，字要白、条要黑、上下留一点呼吸。 */
+.home-poster-knock {
+  margin-top: 6px;
+  font-family: var(--home-display);
+  font-weight: 900;
+  font-size: clamp(24px, 2.5vw, 34px);
+  letter-spacing: -0.03em;
+  line-height: 1.18;
+}
+.home-poster-knock > span {
+  display: inline-block;
+  padding: 0.2em 0.18em 0.01em;
+  background: var(--home-black);
+  color: var(--home-paper);
+}
+.home-poster-knock + .home-poster-sub { margin-top: 6px; }
+
 .home-cases { margin-top: 112px; border-top: 1px solid var(--home-line); padding-top: 34px; }
 
 @media (min-width: 1024px) {

@@ -28,11 +28,28 @@ export interface ShowcaseWorld {
   projectSlug?: string;
 }
 
+/**
+ * 海报上的三段式标题：黑字主标 → 灰字副标 → 黑底白字点睛句。
+ *
+ * 点睛句是易拉宝最显眼的记号（「一句话搞定」「同时为你工作」「全部可交互」），
+ * 只给中文文案配；英文版仍是普通标题 + 灰色副标。
+ */
+export interface FeaturePoster {
+  /** 灰色副标，数组里每一项单独占一行 */
+  sub?: readonly string[];
+  /** 黑底白字横条（海报里的「一句话搞定」「不用鼠标键盘」） */
+  knock?: string;
+  /** 横条排在第一行副标之前（手势那段就是「黑条 → 灰字」） */
+  knockFirst?: boolean;
+}
+
 export interface ProductFeature {
   id: string;
   title: string;
   /** 标题下面那行小字 */
   tagline: string;
+  /** 海报式三段标题；缺省时退回 title + tagline 的普通排版 */
+  poster?: FeaturePoster;
   /** 原始预览素材存档；有录屏时是同一录屏的首帧，展示封面由 cover 指定 */
   image: string;
   /** 天空静态封面上叠加的海报素材；录屏只在交互时播放。 */
