@@ -1296,14 +1296,14 @@ describe("AgentDock LLM 能力筛选", () => {
 });
 
 describe("AgentDock 图片生成模型选择", () => {
-  test("未保存偏好时显示 DeepSeek、Tripo P2 和 Seedream 5 默认组合", async () => {
+  test("未保存偏好时显示 DeepSeek、Seed3D 2.0 和 Seedream 5 默认组合", async () => {
     globalThis.fetch = mock(async () =>
       Response.json({ llmProviders: ["volcengine"] }),
     ) as unknown as typeof fetch;
     const { container } = await render();
     for (const [label, model] of [
       ["Choose chat model", "DeepSeek V4.1 Flash"],
-      ["Choose 3D generation model", "Tripo P2"],
+      ["Choose 3D generation model", "Seed3D 2.0"],
       ["Choose image generation model", "Seedream 5.0"],
     ]) {
       const select = container.querySelector(`button[aria-label="${label}"]`);
@@ -1342,33 +1342,33 @@ describe("AgentDock 3D 模型选择", () => {
     ) as HTMLButtonElement;
 
     await act(async () => threeDSelect.click());
-    for (const label of ["Tripo 3.1", "Tripo P1", "Tripo P2"]) {
+    for (const label of ["Seed3D 2.0", "Hyper3D Gen-2", "Hi3D 2.0"]) {
       expect(document.body.textContent).toContain(label);
     }
-    for (const label of ["Seed3D 2.0", "Hyper3D Gen-2", "Hi3D 2.0"]) {
+    for (const label of ["Tripo 3.1", "Tripo P1", "Tripo P2"]) {
       expect(document.body.textContent).not.toContain(label);
     }
-    const tripo = Array.from(document.body.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("Tripo P1"),
+    const hyper3d = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Hyper3D Gen-2"),
     ) as HTMLButtonElement;
-    await act(async () => tripo.click());
+    await act(async () => hyper3d.click());
 
-    expect(threeDSelect.textContent).toContain("Tripo P1");
+    expect(threeDSelect.textContent).toContain("Hyper3D Gen-2");
     expect(JSON.parse(localStorage.getItem("chatspace.threeDModelSettings:v1")!)).toEqual({
-      model: "tripo-p1",
+      model: "hyper3d-gen2",
     });
   });
 
   test("旧版渠道偏好按该渠道默认模型回显", async () => {
     localStorage.setItem(
       "chatspace.threeDProviderSettings:v1",
-      JSON.stringify({ provider: "tripo-direct" }),
+      JSON.stringify({ provider: "seed3d-direct" }),
     );
     const { container } = await render();
     const threeDSelect = container.querySelector(
       'button[aria-label="Choose 3D generation model"]',
     ) as HTMLButtonElement;
-    expect(threeDSelect.textContent).toContain("Tripo 3.1");
+    expect(threeDSelect.textContent).toContain("Seed3D 2.0");
   });
 });
 

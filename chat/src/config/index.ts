@@ -23,6 +23,9 @@ const EnvSchema = z.object({
   // 打开只影响"工具是否注册"，不改变代码路径（TRIPO_RIGGING=1 即可恢复）。
   TRIPO_RIGGING: z.enum(["0", "1"]).default("0"),
   TRIPO_SEGMENT: z.enum(["0", "1"]).default("0"),
+  // 完整场景（SceneJob）的模型节点仍走 Tripo：积分用尽后整条链路不可用，
+  // 默认关闭以免先花钱生成参考图再在模型节点上失败。SCENE_JOB=1 恢复。
+  SCENE_JOB: z.enum(["0", "1"]).default("0"),
   WORLDLABS_KEY: z.string().min(1).optional(),
   VOLC_LLM_BASE_URL: z.url().default("https://ark.cn-beijing.volces.com/api/v3"),
   VOLC_LLM_MODEL: z.string().min(1).optional(),
@@ -137,6 +140,7 @@ export const config = {
     hyper3dModel: env.VOLC_HYPER3D_MODEL,
     hi3dModel: env.VOLC_HI3D_MODEL,
   },
+  sceneJob: env.SCENE_JOB === "1",
   tripo: {
     imageModel: env.TRIPO_IMAGE_MODEL,
     /** 绑骨 / 动画 / 角色（image→3D+绑骨）是否注册给 Agent */

@@ -12,7 +12,7 @@ import type {
   ChatStreamRequest,
 } from "../dto/chat";
 import { createCreatorAgent } from "../mastra/agents/creator";
-import { threeDModelFor } from "../models/threeD";
+import { generationModelFor } from "../models/threeD";
 import { getProjectState } from "../mastra/tools/projectTools";
 import { askUserQuestionFromToolResult } from "../mastra/tools/askUser";
 import {
@@ -410,7 +410,8 @@ export async function* streamChat(
     request.sessionStartedAt,
   );
   const currentPlan = request.plan ?? state.plan;
-  const threeDSelection = threeDModelFor(request.threeDModel);
+  // 已下线的选择（旧客户端存的 Tripo）回退到当前默认模型，别让整个会话在构造上下文时失败
+  const threeDSelection = request.threeDModel ? generationModelFor(request.threeDModel).entry : undefined;
   const conversationImages = conversationImagePaths(request.messages);
   const assetNamesBySlug = new Map(
     state.assets.map((asset) => [
@@ -477,7 +478,7 @@ export async function* streamChat(
             `The user explicitly selected a 3D generation model in the UI: ${threeDSelection.label} (model ID ` +
               `${threeDSelection.model}, channel ${threeDSelection.provider}). The channel and model ` +
               "ID of start-3d-batch are pinned by the server to this selection, so you do not need to make a separate choice in the provider parameter; when explaining the paid plan to the user, report it for this model." +
-              "The model nodes of start-scene-job use the same Tripo selection, persisted for background execution.",
+              "Full-scene generation (start-scene-job) is temporarily unavailable while the model pipeline is migrated.",
           ]
         : []),
       ...(request.imageGenerateModel

@@ -10,7 +10,7 @@ const IMAGE_SETTINGS_KEY = "chatspace.imageGenerateModelSettings:v1";
 
 // 未保存偏好时使用编辑器默认组合；显式选择的 Auto（空字符串）仍然保留。
 const DEFAULT_LLM_MODEL = "deepseek-v4-1-flash-260910";
-const DEFAULT_THREE_D_MODEL = "tripo-p2";
+const DEFAULT_THREE_D_MODEL = "seed3d-2";
 const DEFAULT_IMAGE_MODEL = "seedream-5";
 
 function readObject(key: string): Record<string, unknown> | null {
@@ -99,12 +99,12 @@ export interface ThreeDModelSettings { model: string }
  */
 export const THREE_D_MODEL_PRESETS = [
   { value: "", label: "Auto" },
-  { value: "seed3d-2", label: "Seed3D 2.0", hidden: true },
-  { value: "hyper3d-gen2", label: "Hyper3D Gen-2", hidden: true },
-  { value: "hi3d-2", label: "Hi3D 2.0", hidden: true },
-  { value: "tripo-3-1", label: "Tripo 3.1" },
-  { value: "tripo-p1", label: "Tripo P1" },
-  { value: "tripo-p2", label: "Tripo P2" },
+  { value: "seed3d-2", label: "Seed3D 2.0" },
+  { value: "hyper3d-gen2", label: "Hyper3D Gen-2" },
+  { value: "hi3d-2", label: "Hi3D 2.0" },
+  { value: "tripo-3-1", label: "Tripo 3.1", hidden: true },
+  { value: "tripo-p1", label: "Tripo P1", hidden: true },
+  { value: "tripo-p2", label: "Tripo P2", hidden: true },
 ].filter((preset) => !preset.hidden);
 
 /** 旧版渠道偏好 → 该渠道的默认模型；已隐藏的模型由 savedThreeDModel 回退到 Auto。 */

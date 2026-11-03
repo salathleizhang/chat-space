@@ -3,13 +3,14 @@ import { z } from "zod";
 import { ChatServiceError } from "../../common/errors";
 import { assetIdentityFile } from "../../common/libraryPaths";
 import { AssetIdentitySchema, LogicalPathSchema, SlugSchema } from "../../dto/library";
-import { tripoModelFor } from "../../models/threeD";
+import { generationModelFor, threeDProviderKeyEnv, threeDProviderKeyName } from "../../models/threeD";
 import { getAssetStorage, readJson } from "../../services/assetStorage";
 import type { GenerationObject } from "../../services/modelPublishing";
 import { listTasks, resolve3dObjects, startWorldTask } from "../../services/tasks";
 import {
   currentSessionStartedAt,
   currentThreeDModel,
+  optionalContextString,
   requireContextString,
   requireCurrentProject,
 } from "./requestContext";
@@ -17,7 +18,7 @@ import {
   ReferenceReuseConsentError,
   resolveSessionReferenceImage,
 } from "./referenceResolution";
-import { startTripo3dBatch } from "./tripoOps";
+import { start3dBatch } from "./threeDBatch";
 
 /** creator agent 的生成任务工具：启动即返回任务 id，不阻塞对话流 */
 
@@ -108,7 +109,10 @@ export function resolveWorldSourceImage(input: {
 /** 整批统一的生成选项（与 dto/tasks.ts 的 HTTP 契约对齐） */
 export const Batch3dOptionsSchema = z.object({
   assetSlugs: z.array(SlugSchema).optional(),
-  provider: z.literal("tripo-direct").default("tripo-direct"),
+  /** 生成渠道；真正的模型 ID 由界面选择（或 Auto 的默认模型）钉住 */
+  provider: z.enum(["seed3d-direct", "hyper3d-volc", "hi3d-volc", "tripo-direct"]).default("seed3d-direct"),
+  /** Seed3D 专用细分档：high/medium/low 约 100 万 / 50 万 / 10 万面 */
+  subdivisionLevel: z.enum(["high", "medium", "low"]).optional(),
   /** Tripo：auto 会在资产带有 front + 至少另一视角时自动切换多视角生成。 */
   tripoGenerationMode: z.enum(["auto", "single", "multiview"]).default("auto"),
 });
@@ -116,16 +120,13 @@ export const Batch3dOptionsSchema = z.object({
 export const start3dBatchTool = createTool({
   id: "start-3d-batch",
   description:
-    "Generate 3D models in parallel using Tripo3D, the only enabled model provider. Auto uses Tripo 3.1; a specific Tripo 3.1/P1/P2 selection in the dropdown pins the model ID. Get user consent before starting paid work. tripoGenerationMode=auto detects multiview references; single/multiview can be specified. Returns task IDs and measured modelInfo; ask once whether to decimate a high-poly result.",
+    "Generate 3D models in parallel with Volcano Engine Ark. The dropdown pins the actual model: Seed3D 2.0 (default), Hyper3D Gen-2 or Hi3D 2.0; Auto uses Seed3D 2.0. Seed3D accepts a data URI and takes subdivisionLevel (high/medium/low ≈ 1M/500k/100k triangles); Hi3D needs a publicly reachable image URL (the tool falls back to one when the project has a Seedream image). Get user consent before starting paid work. Returns task IDs and measured modelInfo; ask once whether to decimate a high-poly result.",
   inputSchema: Batch3dOptionsSchema,
   execute: async (input, context) => {
     const projectSlug = requireCurrentProject(context);
     const { assetSlugs, ...options } = Batch3dOptionsSchema.parse(input);
-    const pinned = currentThreeDModel(context);
-    if (pinned && pinned.provider !== "tripo-direct") {
-      throw new ChatServiceError("Only Tripo3D is enabled for model generation", 409, "model_provider_disabled");
-    }
-    const model = pinned?.model ?? tripoModelFor(undefined).model;
+    // 界面上选的模型决定渠道与模型 ID；Auto 走默认模型（当前是 Seed3D 2.0）
+    const resolved = currentThreeDModel(context) ?? generationModelFor(undefined);
     const objects = await resolve3dObjects(projectSlug, assetSlugs);
     /*
       闸门：这批对象有没有"要靠兜底拿图"的？
@@ -137,12 +138,27 @@ export const start3dBatchTool = createTool({
     */
     const sessionStartedAt = currentSessionStartedAt(context);
     await assertBatchReferencesUsable(projectSlug, objects, sessionStartedAt);
-    const tripo3dApiKey = requireContextString(
-      context, "tripo3dApiKey", "TRIPO_KEY is not configured in the local chat/.env",
-    );
-    const tasks = startTripo3dBatch(projectSlug, objects, {
-      tripo3dApiKey, generationMode: options.tripoGenerationMode,
-      imageModel: model, sessionStartedAt,
+    const keyName = threeDProviderKeyName(resolved.entry.provider);
+    // 火山那三个共用一把 VOLC_KEY：客户端/服务端注进来的字段名可能是 seed3dApiKey，
+    // 也可能只有 volcengineApiKey（LLM 与生图用的同一把）。两个都认，缺了才报。
+    const apiKey =
+      optionalContextString(context, keyName) ??
+      (resolved.entry.provider === "tripo-direct"
+        ? undefined
+        : optionalContextString(context, "volcengineApiKey"));
+    if (!apiKey) {
+      throw new ChatServiceError(
+        `${threeDProviderKeyEnv(resolved.entry.provider)} is not configured in the local chat/.env`,
+        401,
+        resolved.entry.provider === "tripo-direct" ? "missing_tripo_key" : "missing_seed3d_key",
+      );
+    }
+    const tasks = start3dBatch(projectSlug, objects, {
+      entry: resolved.entry,
+      keys: { [keyName]: apiKey },
+      generationMode: options.tripoGenerationMode,
+      subdivisionLevel: options.subdivisionLevel,
+      sessionStartedAt,
     });
     return { tasks: tasks.map(({ id, subject, status }) => ({ id, subject, status })) };
   },

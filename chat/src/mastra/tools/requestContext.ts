@@ -5,7 +5,7 @@ import {
   IMAGE_EDIT_MODEL_IDS,
   type ImageEditModel,
 } from "../../models/images";
-import { threeDModelFor, type ThreeDModelEntry, ENABLED_THREE_D_MODEL_SELECTIONS, type EnabledThreeDModelSelection } from "../../models/threeD";
+import { generationModelFor, ENABLED_THREE_D_MODEL_SELECTIONS, type EnabledThreeDModelSelection, type ResolvedThreeDModel } from "../../models/threeD";
 
 interface ToolContextLike {
   requestContext?: unknown;
@@ -120,11 +120,15 @@ export function currentImageGenerateModel(
     : "seedream";
 }
 
-/** AgentDock 当前 3D 模型选择；未选择（Auto）或键未注册时返回 undefined。 */
+/**
+ * AgentDock 当前 3D 模型选择（已解析成"渠道 + 模型 ID"）。
+ * 未选择（Auto）时返回 undefined，由调用方回退到默认模型；已下线的旧选择也回退。
+ */
 export function currentThreeDModel(
   context: ToolContextLike | undefined,
-): ThreeDModelEntry | undefined {
-  return threeDModelFor(readContextValue(context, "threeDModel"));
+): ResolvedThreeDModel | undefined {
+  const value = readContextValue(context, "threeDModel");
+  return typeof value === "string" && value ? generationModelFor(value) : undefined;
 }
 
 /**

@@ -3,23 +3,45 @@ import { config } from "../config";
 import { SEED3D_MODEL } from "./seed3d";
 import { TRIPO_P1_MODEL, TRIPO_P2_MODEL } from "./tripo";
 import {
+  DEFAULT_THREE_D_MODEL,
+  ENABLED_THREE_D_MODEL_SELECTIONS,
   THREE_D_MODELS,
   THREE_D_MODEL_SELECTIONS,
   THREE_D_PROVIDER_IDS,
+  generationModelFor,
+  isEnabledThreeDModel,
   threeDModelFor,
-  tripoModelFor,
 } from "./threeD";
 
 describe("3D 模型注册表", () => {
-  test("产品启用的模型只走 Tripo，Auto 与 P1/P2 选择一致", () => {
-    expect(tripoModelFor(undefined)).toEqual(THREE_D_MODELS["tripo-3-1"]);
-    expect(tripoModelFor("tripo-p1")).toEqual(THREE_D_MODELS["tripo-p1"]);
-    expect(tripoModelFor("tripo-p2")).toEqual(THREE_D_MODELS["tripo-p2"]);
-    for (const selection of ["seed3d-2", "hyper3d-gen2", "hi3d-2"]) {
-      expect(() => tripoModelFor(selection)).toThrow("Only Tripo3D");
-    }
+  test("当前只开放火山那三个模型，Auto 落到 Seed3D", () => {
+    expect([...ENABLED_THREE_D_MODEL_SELECTIONS]).toEqual([
+      "seed3d-2",
+      "hyper3d-gen2",
+      "hi3d-2",
+    ]);
+    expect(DEFAULT_THREE_D_MODEL).toBe("seed3d-2");
+    expect(generationModelFor(undefined)).toEqual({
+      key: "seed3d-2",
+      entry: THREE_D_MODELS["seed3d-2"],
+    });
   });
+
+  test("已下线的旧选择回退到默认模型，不抛错（旧客户端不该让整条会话失败）", () => {
+    for (const legacy of ["tripo-3-1", "tripo-p1", "tripo-p2", "not-a-model"]) {
+      expect(isEnabledThreeDModel(legacy)).toBe(false);
+      expect(generationModelFor(legacy).key).toBe("seed3d-2");
+    }
+    expect(generationModelFor("hyper3d-gen2").key).toBe("hyper3d-gen2");
+  });
+
   test("界面选具体模型：每个条目自带渠道与模型 ID", () => {
+    expect(THREE_D_MODELS["seed3d-2"]).toEqual({
+      label: "Seed3D 2.0",
+      provider: "seed3d-direct",
+      model: SEED3D_MODEL,
+      subdivision: "medium",
+    });
     expect(THREE_D_MODEL_SELECTIONS).toEqual([
       "seed3d-2",
       "hyper3d-gen2",
@@ -28,14 +50,9 @@ describe("3D 模型注册表", () => {
       "tripo-p1",
       "tripo-p2",
     ]);
-    expect(THREE_D_MODELS["seed3d-2"]).toEqual({
-      label: "Seed3D 2.0",
-      provider: "seed3d-direct",
-      model: SEED3D_MODEL,
-    });
   });
 
-  test("Tripo P 系列用带日期的固定 ID，低多边形选项与 H 系列并存", () => {
+  test("Tripo 条目保留只为读旧数据，字段不变", () => {
     expect(THREE_D_MODELS["tripo-p1"]).toEqual({
       label: "Tripo P1",
       provider: "tripo-direct",

@@ -68,9 +68,9 @@ Tripo 几何模型分两个系列：H 系列的 `v3.1-20260211` 是最高精度�
 
 模型 ID 已于 2026-09-18 通过火山方舟 `/api/v3/models` 核对。修改旧版 `.env` 时，将 `VOLC_LLM_MODEL` 的 Seed 2.0 Lite 值删除或改为以上模型 ID，并重启本机服务。
 
-保留的历史接入（当前未开放）：火山影眸 Hyper3D、数美 Hi3D 的模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
+火山影眸 Hyper3D、数美 Hi3D 的模型 ID 可分别用 `VOLC_HYPER3D_MODEL`、`VOLC_HI3D_MODEL` 覆盖（这两家与 Seed3D 共用一把 `VOLC_KEY`）。Hi3D 的方舟接口要求公网参考图 URL：当前流程可复用 Seedream 生成或编辑时的临时供应商 URL，正式工程文件仍保存在本机；仅有本地上传图时需先生成或编辑一张 Seedream 参考图。网页只获取是否配置的状态，不读取密钥；旧版浏览器保存的密钥会在启动时清除。
 
-3D 生成下拉菜单选的是具体模型，不是渠道；目前显示 Auto、Tripo 3.1、Tripo P1、Tripo P2，Seed3D、Hyper3D、Hi3D 暂时隐藏，后端接入保留。选定的模型同时决定渠道与提交给供应商的模型 ID，`start-3d-batch` 由服务端按该选择钉住，Auto 默认使用 Tripo 3.1。AI 工具、新任务 API 与重试入口只允许 Tripo3D，完整场景的模型节点也遵循所选 Tripo 型号，并持久化实际模型 ID 供后台续跑。保留的接入表如下，隐藏渠道不参与新模型生成：
+3D 生成下拉菜单选的是具体模型，不是渠道；目前显示 Auto、Seed3D 2.0、Hyper3D Gen-2、Hi3D 2.0（Tripo 已下线，条目保留只为读旧任务）。选定的模型同时决定渠道与提交给供应商的模型 ID，`start-3d-batch`、HTTP `/api/tasks/3d`、失败重试与浏览器本地版都经同一个分派器（`chat/src/mastra/tools/threeDBatch.ts`），Auto 默认使用 Seed3D 2.0（`--subdivisionlevel medium`）。界面里残留的 Tripo 选择会回退到默认模型而不是报错。完整场景（SceneJob）的模型节点仍走 Tripo，暂时关闭（`SCENE_JOB=1` 可恢复）：`start-scene-job` 会在生成任何参考图之前直接报错，避免先花钱再失败。
 
 | 菜单项 | 渠道 | 默认 Model ID | 覆盖变量 |
 | --- | --- | --- | --- |

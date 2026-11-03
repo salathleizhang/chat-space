@@ -89,14 +89,26 @@ export const Start3dBatchRequestSchema = z
     projectSlug: SlugSchema,
     /** 省略 = 项目下全部可生成对象（正式资产 + 已确认场景对象 + 单物体生成目标） */
     assetSlugs: z.array(SlugSchema).optional(),
-    provider: z.literal("tripo-direct").default("tripo-direct"),
+    provider: z
+      .enum(["seed3d-direct", "hyper3d-volc", "hi3d-volc", "tripo-direct"])
+      .default("seed3d-direct"),
+    /** 具体模型；省略时按渠道取默认模型（Seed3D 2.0 / Hyper3D Gen-2 / Hi3D 2.0） */
+    threeDModel: z.enum(["seed3d-2", "hyper3d-gen2", "hi3d-2"]).optional(),
     /** Tripo：自动识别带方位的多视角图，或显式强制单图/多视角。 */
     tripoGenerationMode: z.enum(["auto", "single", "multiview"]).default("auto"),
     tripo3dApiKey: z.string().min(1).optional(),
+    seed3dApiKey: z.string().min(1).optional(),
   })
   .superRefine((req, ctx) => {
-    if (!req.tripo3dApiKey) {
-      ctx.addIssue({ code: "custom", message: "provider=tripo-direct requires tripo3dApiKey" });
+    const needsTripo = req.provider === "tripo-direct";
+    const key = needsTripo ? req.tripo3dApiKey : req.seed3dApiKey;
+    if (!key) {
+      ctx.addIssue({
+        code: "custom",
+        message: needsTripo
+          ? "provider=tripo-direct requires tripo3dApiKey"
+          : "Volcano Engine 3D providers require seed3dApiKey (VOLC_KEY)",
+      });
     }
   });
 export type Start3dBatchRequest = z.infer<typeof Start3dBatchRequestSchema>;

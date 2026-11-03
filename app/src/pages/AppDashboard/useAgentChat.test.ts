@@ -113,7 +113,7 @@ describe("useAgentChat 服务端凭证", () => {
       model: "deepseek-v4-1-flash-260910",
     });
     expect(streamChat.mock.calls[0]![4]).toMatchObject({
-      threeDModel: "tripo-p2",
+      threeDModel: "seed3d-2",
       imageGenerateModel: "seedream-5",
     });
 

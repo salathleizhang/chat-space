@@ -28,13 +28,20 @@ export async function executeCloudOperation(task: GenerationTask, job: CloudOper
         startWorldTask(projectSlug, { ...input, worldLabsApiKey: keys.worldLabsApiKey ?? "" } as Parameters<typeof startWorldTask>[1]);
       } else {
         const retry = Retryable3dTaskSchema.parse(input.retry);
-        if (retry.provider !== "tripo-direct") throw new Error("This model provider is disabled; only Tripo3D is enabled");
+        const { modelForProvider, threeDProviderKeyName } = await import("../models/threeD");
+        const fallback = retry.provider ? modelForProvider(retry.provider) : undefined;
+        if (!fallback) throw new Error(`Provider ${retry.provider} is not enabled; generation now runs on Seed3D, Hyper3D and Hi3D`);
         const object = { slug: retry.assetSlug, name: retry.name, intent: retry.intent, sourceImages: retry.sourceImages, referenceViews: retry.referenceViews };
         const options = retry.options;
-        const { startTripo3dBatch } = await import("../mastra/tools/tripoOps");
-        startTripo3dBatch(projectSlug, [object], { tripo3dApiKey: tripo.apiKey,
-          imageModel: typeof options.imageModel === "string" ? options.imageModel : config.tripo.imageModel,
-          generationMode: options.generationMode as "auto" | "single" | "multiview" | undefined });
+        const pinned = typeof options.model === "string" && options.model ? options.model : undefined;
+        const entry = { ...fallback, model: pinned ?? fallback.model };
+        const keyName = threeDProviderKeyName(entry.provider);
+        const { start3dBatch } = await import("../mastra/tools/threeDBatch");
+        start3dBatch(projectSlug, [object], {
+          entry,
+          keys: { [keyName]: keyName === "seed3dApiKey" ? keys.seed3dApiKey : keys.tripo3dApiKey },
+          generationMode: options.generationMode as "auto" | "single" | "multiview" | undefined,
+        });
       }
     } finally { cloud.capture = undefined; }
     if (!capture.executor) throw new Error("Cannot restore the cloud executor");

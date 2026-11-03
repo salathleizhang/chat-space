@@ -98,8 +98,8 @@ describe("creator 回复协议", () => {
     expect(CREATOR_INSTRUCTIONS).toContain(
       'never "generate one and see, swap it if it is no good"',
     );
-    // 当前只开放 Tripo，不能用隐藏渠道的旧限制阻止用户直接使用原图。
-    expect(CREATOR_INSTRUCTIONS).toContain("only Tripo3D is enabled");
+    // 当前开放的是火山那三个模型；不能用"渠道旧限制"阻止用户直接使用原图。
+    expect(CREATOR_INSTRUCTIONS).toContain("only Seed3D 2.0, Hyper3D Gen-2 and Hi3D 2.0 are enabled");
     expect(CREATOR_INSTRUCTIONS).not.toContain("when Hi3D from ShuMei is selected");
   });
 

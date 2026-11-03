@@ -1,3 +1,4 @@
+import { config } from "../../config";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -473,6 +474,10 @@ describe("SceneJob（可修订 DAG 调度）", () => {
 
 describe("start-scene-job（runId 只是消歧参数，不是钥匙）", () => {
   test("模型传全零占位 runId 时，照常按唯一待确认分析启动（事故端到端回归）", async () => {
+    // SceneJob 默认关闭（模型节点仍走 Tripo），这条端到端回归需要把它打开
+    const previousSceneJob = config.sceneJob;
+    Object.assign(config, { sceneJob: true });
+    try {
     const projectSlug = "tool-placeholder";
     await createProject(storage, { name: "工具占位符", slug: projectSlug });
     const image = `${projectSourceDir(projectSlug)}/0-photo.png`;
@@ -504,6 +509,9 @@ describe("start-scene-job（runId 只是消歧参数，不是钥匙）", () => {
         continue;
       }
       break;
+    }
+    } finally {
+      Object.assign(config, { sceneJob: previousSceneJob });
     }
   }, 20000);
 });

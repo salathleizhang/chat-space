@@ -56,7 +56,7 @@ export function createCreatorAgent(llm: LlmConfig) {
   return new Agent({
     id: "chatspace-creator",
     name: "ChatSpace 3D Creator",
-    description: "ChatSpace's 3D creation agent: Tripo3D models and World Labs scenes",
+    description: "ChatSpace's 3D creation agent: Volcano Engine 3D models and World Labs scenes",
     instructions: CREATOR_INSTRUCTIONS + (config.blender.cloudService ? "\n\n" + CLOUD_BLENDER_INSTRUCTIONS : ""),
     tools: {
       "ask-user": askUserTool,

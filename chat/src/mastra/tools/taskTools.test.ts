@@ -13,7 +13,7 @@ import {
   RequestSidecarSchema,
 } from "../../dto/library";
 import { config } from "../../config";
-import { TRIPO_P1_MODEL } from "../../models/tripo";
+import { SEED3D_MODEL } from "../../models/seed3d";
 import {
   LocalFileStorage,
   readJson,
@@ -71,9 +71,16 @@ function installFakeFetch() {
         status: "success", output: { pbr_model: "https://cdn.fake/model.glb" },
       }])), missed: [] } });
     }
-    if (url.includes("/contents/generations/tasks")) {
-      arkBodies.push({ url });
-      throw new Error("Hidden provider must not be called");
+    if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+      arkBodies.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
+      return jsonResponse({ id: `ark-${arkBodies.length}` });
+    }
+    if (url.includes("/contents/generations/tasks/")) {
+      return jsonResponse({
+        id: "ark-1",
+        status: "succeeded",
+        content: { file_url: "https://cdn.fake/model.glb" },
+      });
     }
     if (url.endsWith("/worlds:generate") && init?.method === "POST") {
       worldBodies.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
@@ -130,34 +137,40 @@ async function runBatch(threeDModel: string | undefined, provider: string) {
 }
 
 describe("start-3d-batch 的 3D 模型选择", () => {
-  test("选择 Tripo P1 时将实际模型 ID 提交给 Tripo，未调用隐藏渠道", async () => {
+  test("Auto 走 Seed3D 2.0：模型 ID 与细分档都进请求体", async () => {
+    tripoBodies.length = 0; arkBodies.length = 0;
+    const task = await runBatch(undefined, "seed3d-direct");
+    expect(task.status).toBe("succeeded");
+    expect(arkBodies[0]).toMatchObject({ model: SEED3D_MODEL });
+    expect(JSON.stringify(arkBodies[0]!.content)).toContain("--subdivisionlevel medium");
+    expect(tripoBodies).toHaveLength(0);
+  });
+
+  test("选中 Hyper3D 时提交它自己的模型 ID", async () => {
+    tripoBodies.length = 0; arkBodies.length = 0;
+    const task = await runBatch("hyper3d-gen2", "hyper3d-volc");
+    expect(task.status).toBe("succeeded");
+    expect(arkBodies[0]).toMatchObject({ model: config.ark3d.hyper3dModel });
+    expect(tripoBodies).toHaveLength(0);
+  });
+
+  test("界面上残留的 Tripo 选择回退到 Seed3D，不再打 Tripo", async () => {
     tripoBodies.length = 0; arkBodies.length = 0;
     const task = await runBatch("tripo-p1", "tripo-direct");
     expect(task.status).toBe("succeeded");
-    expect(tripoBodies[0]).toMatchObject({ model: TRIPO_P1_MODEL });
-    expect(arkBodies).toHaveLength(0);
-    const sidecar = await readJson(storage, "projects/tt/assets/lamp/.0-lamp-request.json", RequestSidecarSchema);
-    expect(sidecar.provider).toBe("tripo");
-    expect(sidecar.params.image_model).toBe(TRIPO_P1_MODEL);
+    expect(tripoBodies).toHaveLength(0);
+    expect(arkBodies[0]).toMatchObject({ model: SEED3D_MODEL });
   });
 
-  test("Auto 使用 Tripo 默认模型", async () => {
-    tripoBodies.length = 0; arkBodies.length = 0;
-    const task = await runBatch(undefined, "tripo-direct");
-    expect(task.status).toBe("succeeded");
-    expect(tripoBodies[0]).toMatchObject({ model: config.tripo.imageModel });
+  test("缺 VOLC_KEY 时在提交前就拒绝", async () => {
+    arkBodies.length = 0;
+    await expect(
+      start3dBatchTool.execute!(
+        { provider: "seed3d-direct", tripoGenerationMode: "auto" } as never,
+        { requestContext: buildRequestContext({ projectSlug: "tt" }) } as never,
+      ),
+    ).rejects.toThrow(/VOLC_KEY/);
     expect(arkBodies).toHaveLength(0);
-  });
-
-  test("隐藏模型和隐藏渠道在提交付费请求前被拒绝", async () => {
-    tripoBodies.length = 0; arkBodies.length = 0;
-    for (const model of ["seed3d-2", "hyper3d-gen2", "hi3d-2"]) {
-      await expect(runBatch(model, "tripo-direct")).rejects.toThrow("Only Tripo3D");
-    }
-    for (const provider of ["seed3d-direct", "hyper3d-volc", "hi3d-volc"]) {
-      await expect(runBatch(undefined, provider)).rejects.toThrow();
-    }
-    expect(tripoBodies).toHaveLength(0); expect(arkBodies).toHaveLength(0);
   });
 });
 
@@ -287,7 +300,7 @@ describe("参考图跨会话复用的闸门", () => {
     );
     const taskId = (result as { tasks: { id: string }[] }).tasks[0]!.id;
     expect((await waitForSettle(taskId, "gate-pass")).status).toBe("succeeded");
-    expect(tripoBodies[0]?.input).toBeDefined();
+    expect(arkBodies[0]).toBeDefined();
     expect(image).toBe("projects/gate-pass/source/0-old-ref.png");
   });
 

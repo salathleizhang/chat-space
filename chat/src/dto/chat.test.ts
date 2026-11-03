@@ -34,12 +34,13 @@ describe("ChatStreamRequestSchema 图片生成模型偏好", () => {
     expect(parsed).not.toHaveProperty("threeDProvider");
   });
 
-  test.each(["seed3d-2", "hyper3d-gen2", "hi3d-2"])("隐藏模型 %s 不进入 AI 请求", (threeDModel) => {
-    expect(ChatStreamRequestSchema.safeParse({ ...baseRequest, threeDModel }).success).toBe(false);
+  test.each(["seed3d-2", "hyper3d-gen2", "hi3d-2"])("接受火山 3D 模型：%s", (threeDModel) => {
+    expect(ChatStreamRequestSchema.parse({ ...baseRequest, threeDModel }).threeDModel)
+      .toBe(threeDModel);
   });
 
   test.each(["tripo-3-1", "tripo-p1", "tripo-p2"])(
-    "接受已注册的 3D 模型：%s",
+    "历史 Tripo 选择仍能解析，服务端回退到当前默认模型：%s",
     (threeDModel) => {
       expect(ChatStreamRequestSchema.parse({ ...baseRequest, threeDModel }).threeDModel)
         .toBe(threeDModel);

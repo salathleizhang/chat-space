@@ -37,7 +37,20 @@ import type { RunKeys } from "./workflowRuns";
 import { runPlateGeneration } from "../mastra/tools/imageEdit";
 import { runReferenceImageEdit } from "../mastra/tools/referenceImage";
 import { startTripo3dBatch } from "../mastra/tools/tripoOps";
-import { tripoModelFor } from "../models/threeD";
+
+/**
+ * 完整场景的模型节点仍按 Tripo 记录模型 ID（`tripoImageModel` 字段是持久化契约）。
+ * 这条链路当前**暂时关闭**（见 `mastra/agents/creator.ts` 的 scene 工具开关），
+ * 保留常量只是为了让存量任务与测试仍能读出原来的模型 ID。
+ */
+const SCENE_MODEL_ID = THREE_D_MODELS["tripo-3-1"].model;
+
+/** 场景任务记录的是 **Tripo 模型 ID**（持久化字段 `tripoImageModel`）：选中 Tripo 时沿用它，否则用默认。 */
+function sceneModelFor(selection: unknown): string {
+  const entry = threeDModelFor(selection);
+  return entry && entry.provider === "tripo-direct" ? entry.model : SCENE_MODEL_ID;
+}
+import { THREE_D_MODELS, threeDModelFor } from "../models/threeD";
 import {
   composeEmptyWorldPrompt,
   runProjectWorldGeneration,
@@ -276,7 +289,7 @@ async function executeModelNode(
       const existing = await succeededSidecar(storage, assetDir(job.projectSlug, object.slug), (sidecar) =>
         sidecar.provider === "tripo" && sidecar.params.image === reference &&
         sidecar.model === "v3/generation/image-to-model" &&
-        sidecar.params.image_model === (job.tripoImageModel ?? tripoModelFor(keys.threeDModel).model),
+        sidecar.params.image_model === (job.tripoImageModel ?? SCENE_MODEL_ID),
       );
       const files = renderablePathsFromResult({ files: existing?.outputs.map((output) => output.path) });
       if (files.length > 0) return files;
@@ -291,7 +304,7 @@ async function executeModelNode(
     job.projectSlug,
     [{ slug: object.slug, name: object.name, intent: object.description, sourceImages: [reference] }],
     { tripo3dApiKey: requireRunKey(keys, "tripo3dApiKey"),
-      imageModel: job.tripoImageModel ?? tripoModelFor(keys.threeDModel).model, generationMode: "single" },
+      imageModel: job.tripoImageModel ?? sceneModelFor(keys.threeDModel), generationMode: "single" },
   )[0];
   if (!task) throw new ChatServiceError("Could not create the Tripo3D task", 500, "scene_model_task_missing");
   await updateNode(storage, job, node.id, (currentNode) => ({
@@ -418,7 +431,7 @@ export async function runSceneJob(
   }
 
   await mutateSceneJob(storage, projectSlug, jobId, (job) => ({ ...job, status: "running", error: undefined,
-    tripoImageModel: job.tripoImageModel ?? tripoModelFor(keys.threeDModel).model,
+    tripoImageModel: job.tripoImageModel ?? sceneModelFor(keys.threeDModel),
     ...(currentCloudContext() ? { nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [id,
       node.status === "running" ? { ...node, status: "pending", attempts: Math.max(0, node.attempts - 1) } : node])) } : {}),
   }));
@@ -500,7 +513,7 @@ export async function createAndStartSceneJob(projectSlug: string, keys: RunKeys)
     ? await mutateSceneJob(storage, projectSlug, job.id, () => ensured.job)
     : job;
   if (!current.tripoImageModel) {
-    const model = tripoModelFor(keys.threeDModel).model;
+    const model = sceneModelFor(keys.threeDModel);
     current = await mutateSceneJob(storage, projectSlug, job.id, stored => ({ ...stored, tripoImageModel: model }));
   }
   if (!ensured.changed && current.status === "succeeded" && current.parentTaskId) {
@@ -521,7 +534,7 @@ export async function resumeSceneJob(projectSlug: string, jobId: string, keys: R
       ...job,
       status: "paused",
       error: undefined,
-      tripoImageModel: keys.threeDModel ? tripoModelFor(keys.threeDModel).model : job.tripoImageModel ?? tripoModelFor(undefined).model,
+      tripoImageModel: job.tripoImageModel ?? sceneModelFor(keys.threeDModel),
       nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [
         id,
         node.status === "running" || node.status === "failed"
