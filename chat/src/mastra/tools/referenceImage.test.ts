@@ -19,6 +19,8 @@ import {
 import { routeImageEditChannel, routeImageGenerateChannel, runImageGenerate } from "../../models/images";
 import { LocalFileStorage, readJson, setAssetStorage, writeJson } from "../../services/assetStorage";
 import { resolve3dObjects } from "../../services/tasks";
+import { parseRequestSidecarName } from "../../common/indexedFiles";
+import { repairProjectAssets } from "./assetRepair";
 import { createProject } from "./projectTools";
 import {
   composeReferenceImageEditPrompt,
@@ -505,6 +507,42 @@ describe("runReferenceImageGeneration", () => {
    * `ref`。旧实现是"列目录 → 取最大 +1"，三个并发调用算出同一个索引、写同一个
    * 文件，后写的静默盖掉先写的，用户只看到一张图。
    */
+  /**
+   * 回归（2026-11-03 生产实测）：Seedream 出图后浏览器直连 TOS 被跨域拦下，
+   * 旧实现是「下完再写侧写」，失败的图连供应商地址都没留下——错误信息却让用户
+   * 去 repair-assets，而 repair 那里没有可补的东西。地址必须先记账。
+   */
+  test("下载失败时侧写仍留着供应商地址，repair-assets 能把它补回来", async () => {
+    await createProject(storage, { name: "补图", slug: "repair-ref" });
+    const url = "https://cdn.fake/chair-ref.png";
+    const blockedFetch = (async (input: string | URL | Request) => {
+      if (String(input).startsWith("https://cdn.fake/")) return new Response("nope", { status: 404 });
+      return jsonResponse({ data: [{ url }] });
+    }) as unknown as typeof fetch;
+    await expect(
+      runReferenceImageGeneration(
+        storage,
+        { projectSlug: "repair-ref", prompt: "chair", channel: "volcengine" },
+        { volcengineApiKey: "vk" },
+        { fetchFn: blockedFetch },
+      ),
+    ).rejects.toThrow("Artifact download failed");
+
+    const dir = projectSourceDir("repair-ref");
+    const names = (await storage.list(dir)).filter((name) => parseRequestSidecarName(name));
+    expect(names).toHaveLength(1);
+    const sidecarPath = `${dir}/${names[0]}`;
+    const sidecar = await readJson(storage, sidecarPath, RequestSidecarSchema);
+    expect(sidecar.status).toBe("failed");
+    expect(sidecar.outputs).toEqual([{ path: sidecar.outputs[0]!.path, providerUrl: url }]);
+    const path = sidecar.outputs[0]!.path;
+    expect(await storage.exists(path)).toBe(false);
+
+    const report = await repairProjectAssets(storage, "repair-ref", { fetchFn: fakeFetch });
+    expect(report.repaired).toEqual([path]);
+    expect(await storage.exists(path)).toBe(true);
+  });
+
   test("并发文生图各自占用独立索引，不再互相覆盖", async () => {
     await createProject(storage, { name: "并发参考图", slug: "parallel-refs" });
     const results = await Promise.all(

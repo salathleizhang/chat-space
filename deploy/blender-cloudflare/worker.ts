@@ -17,7 +17,7 @@ import { tickTaskPumps } from "../../chat/src/common/taskPump";
 import { cloudBudget } from "../../chat/src/models/cloudBudget";
 import { DurableSql } from "./sql";
 import { StreamingFiles } from "./transfers";
-import { relayArk, relayCors } from "./llmRelay";
+import { relayArk, relayCors, relayDownload } from "./llmRelay";
 
 const pool = (env: Env) => env.BLENDER_POOLS.getByName(env.BLENDER_POOL, { locationHint: "apac" });
 type Grant = { owner: string; session: string; epoch: number; instance: string; desktop: string; target: string; deadline: number; readOnly: boolean };
@@ -267,6 +267,8 @@ export default {
         这一跳（固定 ~16.5 秒后失败），换 Cloudflare 的出口就把这一跳整个换掉（见 llmRelay.ts）。
         票据是网站签的短期票据（scope `llm`），跨域只放行网站自己的源。
       */
+      // 产物下载：票据在查询参数里（供应商 CDN 的地址不发 CORS，只能由这里取，见 llmRelay.ts）。
+      if (path === "/v1/download") return await relayDownload(request, env);
       if (path.startsWith("/v1/llm/")) {
         const cors = relayCors(env, request.headers.get("origin"));
         if (!cors) return unavailable(403);

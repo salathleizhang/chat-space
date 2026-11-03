@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { BlenderStore } from "../../chat/src/blenderService/storeCore";
 import { BlenderJobs } from "../../chat/src/blenderService/jobs";
 import { issueIdentity } from "../../chat/src/blenderService/auth";
+import { signDownloadTicket } from "./llmRelay";
 import { SandboxSecrets } from "../../chat/src/blenderService/secrets";
 import { DurableSql } from "./sql";
 import { FileInspector, StreamingFiles } from "./transfers";
@@ -309,4 +310,18 @@ test("256 MiB blend is hashed incrementally and preserves size limit", () => {
   inspector.feed(chunk); chunk.fill(0); for (let i = 1; i < 256; i++) inspector.feed(chunk);
   expect(inspector.finish().bytes).toBe(256 * 1024 * 1024);
   expect(() => inspector.feed(new Uint8Array([1]))).toThrow("size");
+});
+
+test("产物下载只认票据、不要 Authorization，且带网站自己的跨域头", async () => {
+  const artifact = "https://ark-content-generation-v2-cn-beijing.tos-cn-beijing.volces.com/doubao-seedream-4-5/chair_0.jpeg";
+  const ticket = await signDownloadTicket(artifact, env.BLENDER_SERVICE_SECRET);
+  const network = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(new Uint8Array([1, 2]), { headers: { "Content-Type": "image/jpeg" } }));
+  try {
+    const response = await SELF.fetch(`https://worker.example/v1/download?ticket=${encodeURIComponent(ticket!)}`, { headers: { Origin: "https://www.junwei.cool" } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://www.junwei.cool");
+    expect((await response.arrayBuffer()).byteLength).toBe(2);
+    expect((await SELF.fetch("https://worker.example/v1/download?ticket=forged", { headers: { Origin: "https://www.junwei.cool" } })).status).toBe(403);
+    expect((await SELF.fetch(`https://worker.example/v1/download?ticket=${encodeURIComponent(ticket!)}`, { headers: { Origin: "https://evil.test" } })).status).toBe(403);
+  } finally { network.mockRestore(); }
 });

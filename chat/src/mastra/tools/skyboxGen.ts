@@ -305,8 +305,10 @@ export async function runCurrentSkyboxEdit(
       imageExtension(ref),
     )}`;
     if (ref.url) {
-      await downloadToLibrary(storage, ref.url, outputPath, { fetchFn: options.fetchFn });
+      // 先记账、再下载：失败时侧写里留着供应商地址，repair-assets 才补得回来（同 referenceImage）。
       sidecar.outputs = [{ path: outputPath, providerUrl: ref.url }];
+      await saveSidecar();
+      await downloadToLibrary(storage, ref.url, outputPath, { fetchFn: options.fetchFn });
     } else if (ref.dataBase64) {
       await storage.writeBytes(outputPath, new Uint8Array(Buffer.from(ref.dataBase64, "base64")));
       sidecar.outputs = [{ path: outputPath }];

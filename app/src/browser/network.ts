@@ -15,16 +15,57 @@ const ARK_ENDPOINT = /^https:\/\/ark\.cn-beijing\.volces\.com\/api\/v3\//;
 
 interface RelayTicket { url: string; ticket: string; expiresAt: number }
 
+/**
+ * `.downloads/<hash>.json`：直连供应商 CDN 被跨域拦下时的退路。
+ * `href` 是完整地址（方舟中继自签，见 `deploy/blender-cloudflare/llmRelay.ts`），
+ * `ticket` 是 Vercel `/api/download` 的旧口径（`/api/provider` 那条路仍在用）。
+ */
+export interface DownloadRecord { url: string; href?: string; ticket?: string }
+
+async function downloadRecordPath(url: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url));
+  const hash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  return `.downloads/${hash}.json`;
+}
+
+type DownloadStore = Pick<BrowserAssetStorage, "writeText" | "readText" | "exists">;
+
+/** 记下这份回包里可下载的产物：`href` 已经是完整地址，`ticket` 留给网站拼 `/api/download`。 */
+export async function rememberDownloads(entries: Record<string, string>, storage: DownloadStore): Promise<void> {
+  await Promise.all(Object.entries(entries).map(async ([url, value]) => {
+    // 键必须与下载时那个 `url.href` 一致（URL 规范化过），否则回填查不到记录。
+    let normalized: string; try { normalized = new URL(url).href; } catch { return; }
+    const record: DownloadRecord = { url: normalized, ...(/^https:\/\//i.test(value) ? { href: value } : { ticket: value }) };
+    await storage.writeText(await downloadRecordPath(normalized), JSON.stringify(record));
+  }));
+}
+
+/** 记录指向哪里取：`href` 直接可用；旧口径的 `ticket` 由网站的 `/api/download` 换。 */
+export function downloadTarget(record: DownloadRecord, origin: string): string | undefined {
+  if (record.href) return record.href;
+  return record.ticket ? `${origin}/api/download?ticket=${encodeURIComponent(record.ticket)}` : undefined;
+}
+
+/** 把中继回包里的 `_chatspaceDownloads` 落进本地库，再把回包**原样**交还给调用方。 */
+export async function keepRelayDownloads(response: Response, storage: DownloadStore): Promise<Response> {
+  if (!response.headers.get("content-type")?.includes("application/json")) return response;
+  let payload: { _chatspaceDownloads?: Record<string, string> };
+  try { payload = await response.clone().json() as typeof payload; } catch { return response; }
+  await rememberDownloads(payload._chatspaceDownloads ?? {}, storage);
+  return response;
+}
+
 /** 把方舟请求转到 Cloudflare 的 `/v1/llm/*`：每次现取一张短期票据（5 分钟有效）。 */
-export async function relayArk(request: Request, url: URL, fetchFn: typeof fetch = nativeFetch): Promise<Response> {
+export async function relayArk(request: Request, url: URL, fetchFn: typeof fetch = nativeFetch, storage: DownloadStore = new BrowserAssetStorage()): Promise<Response> {
   const grant = await fetchFn("/api/llm/ticket", { credentials: "same-origin" });
   if (!grant.ok) throw new Error(`AI relay ticket failed (${grant.status})`);
   const { url: base, ticket } = await grant.json() as RelayTicket;
   const headers = new Headers(request.headers); headers.delete("authorization"); headers.delete("x-api-key"); headers.delete("WLT-Api-Key");
   headers.set("authorization", `Bearer ${ticket}`);
-  return fetchFn(`${base}${url.pathname.replace(/^\/api\/v3\//, "")}${url.search}`, {
+  const response = await fetchFn(`${base}${url.pathname.replace(/^\/api\/v3\//, "")}${url.search}`, {
     method: request.method, headers, signal: request.signal, credentials: "omit",
     ...(["GET", "HEAD"].includes(request.method) ? {} : { body: await request.blob() }) });
+  return keepRelayDownloads(response, storage);
 }
 
 export function installProviderProxy() {
@@ -41,11 +82,7 @@ export function installProviderProxy() {
         method: request.method, headers, body, signal: request.signal, credentials: "same-origin" });
       if (response.headers.get("content-type")?.includes("application/json")) {
         const payload = await response.clone().json() as { _chatspaceDownloads?: Record<string, string> };
-        const storage = new BrowserAssetStorage();
-        await Promise.all(Object.entries(payload._chatspaceDownloads ?? {}).map(async ([url, ticket]) => {
-          const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url)))].map(byte => byte.toString(16).padStart(2, "0")).join("");
-          await storage.writeText(`.downloads/${hash}.json`, JSON.stringify({ url, ticket }));
-        }));
+        await rememberDownloads(payload._chatspaceDownloads ?? {}, new BrowserAssetStorage());
       }
       return response;
     }
@@ -53,11 +90,14 @@ export function installProviderProxy() {
     try { return await nativeFetch(request); }
     catch (error) {
       if (request.signal.aborted || !["GET", "HEAD"].includes(request.method)) throw error;
-      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url.href)))].map(byte => byte.toString(16).padStart(2, "0")).join("");
       const storage = new BrowserAssetStorage();
-      if (!await storage.exists(`.downloads/${hash}.json`)) throw error;
-      const { ticket } = JSON.parse(await storage.readText(`.downloads/${hash}.json`)) as { ticket: string };
-      return nativeFetch(`${location.origin}/api/download?ticket=${encodeURIComponent(ticket)}`, { method: request.method, headers: request.headers, signal: request.signal });
+      const recordPath = await downloadRecordPath(url.href);
+      if (!await storage.exists(recordPath)) throw error;
+      const record = JSON.parse(await storage.readText(recordPath)) as DownloadRecord;
+      // `href` 是完整地址（方舟中继）；`ticket` 走网站的 `/api/download`。两条都不需要凭据。
+      const href = downloadTarget(record, location.origin);
+      if (!href) throw error;
+      return nativeFetch(href, { method: request.method, headers: request.headers, signal: request.signal });
     }
   };
   globalThis.fetch = Object.assign(proxy, nativeFetch) as typeof fetch;

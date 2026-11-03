@@ -356,9 +356,13 @@ export async function runReferenceImageGeneration(
       const fileSlug = i === 0 ? slug : `${slug}-v${i + 1}`;
       if (ref.url) {
         const path = `${sourceDir}/${formatIndexedName(index, fileSlug, extFromUrl(ref.url))}`;
+        // 先记账、再下载：下载失败时侧写里已经留着供应商地址，repair-assets 才能把它补回来。
+        // 反过来写（下完再 push）会让「图生成出来了、只是没落盘」变成补无可补，
+        // 而错误信息还在让用户去 repair-assets（2026-11-03 实测踩到）。
+        sidecar.outputs.push({ path, providerUrl: ref.url });
+        await saveSidecar();
         await downloadToLibrary(storage, ref.url, path, { fetchFn: options.fetchFn });
         images.push(path);
-        sidecar.outputs.push({ path, providerUrl: ref.url });
       } else if (ref.dataBase64) {
         const path = `${sourceDir}/${formatIndexedName(index, fileSlug, extFromMime(ref.mimeType))}`;
         await storage.writeBytes(path, new Uint8Array(Buffer.from(ref.dataBase64, "base64")));
