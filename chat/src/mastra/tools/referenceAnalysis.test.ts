@@ -1,4 +1,3 @@
-import { config } from "../../config";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,6 +19,7 @@ import { readSceneJob, readSceneSpec } from "../../services/sceneJobs";
 import { createAndStartSceneJob } from "../../services/sceneJobRunner";
 import { buildRequestContext } from "../../services/workflowRuns";
 import { createProject } from "./projectTools";
+import { SEED3D_MODEL } from "../../models/seed3d";
 import {
   analyzeReferenceTool,
   runAnalyzeReference,
@@ -32,9 +32,11 @@ const storage = new LocalFileStorage(root);
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 const GLB_BYTES = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
 const realFetch = globalThis.fetch;
-const requests: { world: Record<string, unknown>[]; tripo: Record<string, unknown>[] } = {
-  world: [], tripo: [],
-};
+const requests: {
+  world: Record<string, unknown>[];
+  tripo: Record<string, unknown>[];
+  ark: Record<string, unknown>[];
+} = { world: [], tripo: [], ark: [] };
 const GARAGE_ANALYSIS = {
   sceneName: "车库",
   sceneDescription: "老旧车库内部",
@@ -68,7 +70,17 @@ function installFakeFetch() {
         status: "success", output: { pbr_model: "https://cdn.fake/model.glb" },
       }])), missed: [] } });
     }
-    if (url.includes("/contents/generations/tasks")) throw new Error("Hidden 3D provider called");
+    if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+      requests.ark.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      return jsonResponse({ id: `ark-${requests.ark.length}` });
+    }
+    if (url.includes("/contents/generations/tasks/")) {
+      return jsonResponse({
+        id: "ark-1",
+        status: "succeeded",
+        content: { file_url: "https://cdn.fake/model.glb" },
+      });
+    }
     if (url.endsWith("/images/generations")) {
       return jsonResponse({ data: [{ url: "https://cdn.fake/out.png" }] });
     }
@@ -103,8 +115,8 @@ afterAll(async () => {
 const KEYS = {
   llm: { apiKey: "sk-llm" },
   volcengineApiKey: "sk-volc",
-  tripo3dApiKey: "tripo-fixture",
-  threeDModel: "tripo-p2" as const,
+  seed3dApiKey: "sk-volc",
+  threeDModel: "seed3d-2" as const,
   worldLabsApiKey: "wlt-key",
 };
 
@@ -456,8 +468,10 @@ describe("SceneJob（可修订 DAG 调度）", () => {
       expect(task?.status).toBe("succeeded");
       const job = await readSceneJob(storage, projectSlug, started.job.id);
       expect(job.status).toBe("succeeded");
-      expect(job.tripoImageModel).toBe("P2-20260801");
-      expect(requests.tripo.at(-1)?.model).toBe("P2-20260801");
+      // 任务把渠道与模型 ID 钉住；Auto/下拉都在创建时落进这两个字段
+      expect(job.modelProvider).toBe("seed3d-direct");
+      expect(job.modelId).toBe(SEED3D_MODEL);
+      expect(requests.ark.at(-1)?.model).toBe(SEED3D_MODEL);
       expect(job.nodes["reference:toolbox"]?.status).toBe("succeeded");
       expect(job.nodes["model:toolbox"]?.status).toBe("succeeded");
       expect(job.nodes.plate?.status).toBe("succeeded");
@@ -474,10 +488,6 @@ describe("SceneJob（可修订 DAG 调度）", () => {
 
 describe("start-scene-job（runId 只是消歧参数，不是钥匙）", () => {
   test("模型传全零占位 runId 时，照常按唯一待确认分析启动（事故端到端回归）", async () => {
-    // SceneJob 默认关闭（模型节点仍走 Tripo），这条端到端回归需要把它打开
-    const previousSceneJob = config.sceneJob;
-    Object.assign(config, { sceneJob: true });
-    try {
     const projectSlug = "tool-placeholder";
     await createProject(storage, { name: "工具占位符", slug: projectSlug });
     const image = `${projectSourceDir(projectSlug)}/0-photo.png`;
@@ -509,9 +519,6 @@ describe("start-scene-job（runId 只是消歧参数，不是钥匙）", () => {
         continue;
       }
       break;
-    }
-    } finally {
-      Object.assign(config, { sceneJob: previousSceneJob });
     }
   }, 20000);
 });

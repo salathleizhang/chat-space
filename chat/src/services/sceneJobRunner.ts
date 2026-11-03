@@ -36,32 +36,72 @@ import {
 import type { RunKeys } from "./workflowRuns";
 import { runPlateGeneration } from "../mastra/tools/imageEdit";
 import { runReferenceImageEdit } from "../mastra/tools/referenceImage";
-import { startTripo3dBatch } from "../mastra/tools/tripoOps";
+import { start3dBatch } from "../mastra/tools/threeDBatch";
+
+import {
+  generationModelFor,
+  type ThreeDModelEntry,
+  type ThreeDProviderId,
+} from "../models/threeD";
 
 /**
- * 完整场景的模型节点仍按 Tripo 记录模型 ID（`tripoImageModel` 字段是持久化契约）。
- * 这条链路当前**暂时关闭**（见 `mastra/agents/creator.ts` 的 scene 工具开关），
- * 保留常量只是为了让存量任务与测试仍能读出原来的模型 ID。
+ * 场景任务用哪个模型：**任务创建时钉住**（`modelProvider` + `modelId`），之后续跑、
+ * 重试、局部重跑都沿用它——用户改了界面下拉也不会把已经在跑的整屋换成另一个供应商。
+ *
+ * 旧任务只有 `tripoImageModel`（Tripo 时代的持久化字段），读的时候按 Tripo 还原；
+ * Tripo 已下线，这类任务续跑会在模型节点上报缺 TRIPO_KEY，属预期。
  */
-const SCENE_MODEL_ID = THREE_D_MODELS["tripo-3-1"].model;
+type SceneModel = { provider: ThreeDProviderId; model: string };
 
-/** 场景任务记录的是 **Tripo 模型 ID**（持久化字段 `tripoImageModel`）：选中 Tripo 时沿用它，否则用默认。 */
-function sceneModelFor(selection: unknown): string {
-  const entry = threeDModelFor(selection);
-  return entry && entry.provider === "tripo-direct" ? entry.model : SCENE_MODEL_ID;
+function sceneModelFor(selection: unknown): SceneModel {
+  const { entry } = generationModelFor(selection);
+  return { provider: entry.provider, model: entry.model };
 }
-import { THREE_D_MODELS, threeDModelFor } from "../models/threeD";
+
+function jobSceneModel(job: SceneJob): SceneModel {
+  if (job.modelProvider && job.modelId) {
+    return { provider: job.modelProvider, model: job.modelId };
+  }
+  if (job.tripoImageModel) return { provider: "tripo-direct", model: job.tripoImageModel };
+  return sceneModelFor(undefined);
+}
+
+/** 渠道 → 该渠道写进侧写的 provider 名（续跑与"已有产物"判重都按它认）。 */
+const SIDECAR_PROVIDER: Record<ThreeDProviderId, string> = {
+  "seed3d-direct": "seed3d",
+  "hyper3d-volc": "ark-hyper3d",
+  "hi3d-volc": "ark-hitem3d",
+  "tripo-direct": "tripo",
+};
+
+/** 已有的成功侧写能不能代表"这个物体的这个模型"——避免重复付费。 */
+function matchesModelSidecar(
+  sidecar: RequestSidecar,
+  model: SceneModel,
+  reference: string,
+): boolean {
+  if (sidecar.provider !== SIDECAR_PROVIDER[model.provider]) return false;
+  if (sidecar.params.image !== reference) return false;
+  // Tripo 的 sidecar.model 是端点路径，真正的模型 ID 在 params.image_model
+  if (model.provider === "tripo-direct") return sidecar.params.image_model === model.model;
+  return sidecar.model === model.model;
+}
 import {
   composeEmptyWorldPrompt,
   runProjectWorldGeneration,
 } from "../mastra/tools/worldGen";
 import { runScenePlacement } from "./scenePlacementRun";
 
-function requireRunKey(keys: RunKeys, name: "volcengineApiKey" | "tripo3dApiKey" | "worldLabsApiKey") {
+function requireRunKey(
+  keys: RunKeys,
+  name: "volcengineApiKey" | "tripo3dApiKey" | "seed3dApiKey" | "worldLabsApiKey",
+) {
   const value = keys[name];
   if (value) return value;
   throw new ChatServiceError(
-    `Full scene generation requires ${name === "worldLabsApiKey" ? "WORLDLABS_KEY" : name === "tripo3dApiKey" ? "TRIPO_KEY" : "VOLC_KEY"} to be configured in the local chat/.env`,
+    `Full scene generation requires ${
+      name === "worldLabsApiKey" ? "WORLDLABS_KEY" : name === "tripo3dApiKey" ? "TRIPO_KEY" : "VOLC_KEY"
+    } to be configured in the local chat/.env`,
     401,
     "scene_job_missing_key",
   );
@@ -286,10 +326,9 @@ async function executeModelNode(
   if (await storage.exists(identityPath)) {
     const identity = await readJson(storage, identityPath, AssetIdentitySchema);
     if (identity.kind === "model") {
+      const model = jobSceneModel(job);
       const existing = await succeededSidecar(storage, assetDir(job.projectSlug, object.slug), (sidecar) =>
-        sidecar.provider === "tripo" && sidecar.params.image === reference &&
-        sidecar.model === "v3/generation/image-to-model" &&
-        sidecar.params.image_model === (job.tripoImageModel ?? SCENE_MODEL_ID),
+        matchesModelSidecar(sidecar, model, reference),
       );
       const files = renderablePathsFromResult({ files: existing?.outputs.map((output) => output.path) });
       if (files.length > 0) return files;
@@ -300,13 +339,19 @@ async function executeModelNode(
   if (currentCloudContext() && current.nodes[node.id]?.taskIds.length) {
     return waitForModelTask(job.projectSlug, current.nodes[node.id]!.taskIds.at(-1)!);
   }
-  const task = startTripo3dBatch(
+  const model = jobSceneModel(job);
+  const entry: ThreeDModelEntry = { label: model.model, provider: model.provider, model: model.model };
+  const keyName = model.provider === "tripo-direct" ? "tripo3dApiKey" : "seed3dApiKey";
+  const task = start3dBatch(
     job.projectSlug,
     [{ slug: object.slug, name: object.name, intent: object.description, sourceImages: [reference] }],
-    { tripo3dApiKey: requireRunKey(keys, "tripo3dApiKey"),
-      imageModel: job.tripoImageModel ?? sceneModelFor(keys.threeDModel), generationMode: "single" },
+    {
+      entry,
+      keys: { [keyName]: requireRunKey(keys, keyName) },
+      generationMode: "single",
+    },
   )[0];
-  if (!task) throw new ChatServiceError("Could not create the Tripo3D task", 500, "scene_model_task_missing");
+  if (!task) throw new ChatServiceError("Could not create the 3D generation task", 500, "scene_model_task_missing");
   await updateNode(storage, job, node.id, (currentNode) => ({
     ...currentNode,
     taskIds: [...new Set([...currentNode.taskIds, task.id])],
@@ -420,7 +465,10 @@ export async function runSceneJob(
     if (unfinishedKinds.has("reference") || unfinishedKinds.has("plate")) {
       requireRunKey(keys, "volcengineApiKey");
     }
-    if (unfinishedKinds.has("model")) requireRunKey(keys, "tripo3dApiKey");
+    if (unfinishedKinds.has("model")) {
+      const provider = jobSceneModel(initial).provider;
+      requireRunKey(keys, provider === "tripo-direct" ? "tripo3dApiKey" : "seed3dApiKey");
+    }
     if (unfinishedKinds.has("world")) requireRunKey(keys, "worldLabsApiKey");
   } catch (error) {
     // 父任务会失败，但 get-scene-job 读的是这份记录；不能永远留在 running。
@@ -431,7 +479,12 @@ export async function runSceneJob(
   }
 
   await mutateSceneJob(storage, projectSlug, jobId, (job) => ({ ...job, status: "running", error: undefined,
-    tripoImageModel: job.tripoImageModel ?? sceneModelFor(keys.threeDModel),
+    ...(job.modelId && job.modelProvider
+      ? {}
+      : (() => {
+          const model = sceneModelFor(keys.threeDModel);
+          return { modelProvider: model.provider, modelId: model.model };
+        })()),
     ...(currentCloudContext() ? { nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [id,
       node.status === "running" ? { ...node, status: "pending", attempts: Math.max(0, node.attempts - 1) } : node])) } : {}),
   }));
@@ -512,9 +565,13 @@ export async function createAndStartSceneJob(projectSlug: string, keys: RunKeys)
   let current = ensured.changed
     ? await mutateSceneJob(storage, projectSlug, job.id, () => ensured.job)
     : job;
-  if (!current.tripoImageModel) {
+  if (!current.modelId || !current.modelProvider) {
     const model = sceneModelFor(keys.threeDModel);
-    current = await mutateSceneJob(storage, projectSlug, job.id, stored => ({ ...stored, tripoImageModel: model }));
+    current = await mutateSceneJob(storage, projectSlug, job.id, (stored) => ({
+      ...stored,
+      modelProvider: model.provider,
+      modelId: model.model,
+    }));
   }
   if (!ensured.changed && current.status === "succeeded" && current.parentTaskId) {
     const completedTask = await getTask(projectSlug, current.parentTaskId);
@@ -534,7 +591,12 @@ export async function resumeSceneJob(projectSlug: string, jobId: string, keys: R
       ...job,
       status: "paused",
       error: undefined,
-      tripoImageModel: job.tripoImageModel ?? sceneModelFor(keys.threeDModel),
+      ...(job.modelId && job.modelProvider
+        ? {}
+        : (() => {
+            const model = sceneModelFor(keys.threeDModel);
+            return { modelProvider: model.provider, modelId: model.model };
+          })()),
       nodes: Object.fromEntries(Object.entries(job.nodes).map(([id, node]) => [
         id,
         node.status === "running" || node.status === "failed"

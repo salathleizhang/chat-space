@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { THREE_D_PROVIDER_IDS } from "../models/threeD";
 import {
   CameraEstimateSchema,
   LogicalPathSchema,
@@ -107,7 +108,14 @@ export const SceneJobSchema = z.object({
   error: z.string().optional(),
   /** 不含任何密钥；重启后要由 resume 请求重新注入本机凭证。 */
   parentTaskId: z.string().optional(),
-  /** 实际 Tripo 模型 ID；跨 Worker 和重启保留界面选择，不含密钥。 */
+  /** 创建时钉住的 3D 渠道；续跑/重试沿用它，用户改界面下拉不会换掉在跑的任务。 */
+  modelProvider: z.enum(THREE_D_PROVIDER_IDS).optional(),
+  /** 创建时钉住的供应商模型 ID（与 `modelProvider` 成对出现）。 */
+  modelId: z.string().min(1).optional(),
+  /**
+   * @deprecated Tripo 时代的持久化字段。新任务只写 `modelProvider` + `modelId`；
+   * 这里保留是为了让存量 SceneJob 仍能读出它用过的 Tripo 模型（续跑会因缺 TRIPO_KEY 失败）。
+   */
   tripoImageModel: z.string().min(1).optional(),
   nodes: z.record(z.string(), SceneJobNodeSchema),
   createdAt: z.iso.datetime(),

@@ -1,7 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ChatServiceError } from "../../common/errors";
-import { config } from "../../config";
 import { ObjectCandidateSchema, SlugSchema } from "../../dto/library";
 import { getAssetStorage } from "../../services/assetStorage";
 import {
@@ -73,16 +72,6 @@ export const startSceneJobTool = createTool({
     selectedSlugs: z.array(SlugSchema).min(1).optional(),
   }),
   execute: async (input, context) => {
-    // 模型节点仍然调 Tripo（积分已用尽）。**必须在确认参考图之前拦住**：
-    // 否则会先花掉一批参考图的钱，再在模型节点上必然失败。
-    if (!config.sceneJob) {
-      throw new ChatServiceError(
-        "Full-scene generation is temporarily unavailable: its model nodes still call Tripo, which has no credits left. " +
-          "Build the scene object by object with start-3d-batch instead.",
-        409,
-        "scene_job_disabled",
-      );
-    }
     const projectSlug = requireCurrentProject(context);
     const confirmation = await runConfirmReferenceAssets(projectSlug, input, {
       imagePaths: currentImagePaths(context),

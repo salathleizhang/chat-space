@@ -6,14 +6,14 @@ import { projectAnalysisFile, projectTaskFile } from "../common/libraryPaths";
 import { CloudTaskPending, withCloudContext, type CloudOperation } from "../cloud/context";
 import { SceneAnalysisSchema } from "../dto/library";
 import { GenerationTaskSchema, type GenerationTask } from "../dto/tasks";
-import { TRIPO_P1_MODEL } from "../models/tripo";
+import { config } from "../config";
 import { createProject } from "../mastra/tools/projectTools";
 import { LocalFileStorage, withAssetStorage, writeJson } from "./assetStorage";
 import { createSceneJob, ensureSceneSpecFromAnalysis, mutateSceneJob, readSceneJob, retrySceneJobNodes } from "./sceneJobs";
 import { runSceneJob } from "./sceneJobRunner";
 import type { RunKeys } from "./workflowRuns";
 
-test("完整场景用 Tripo P1，后台续跑保留选择，显式重试不再等待旧的失败子任务", async () => {
+test("完整场景钉住所选渠道与模型 ID，后台续跑保留选择，显式重试不再等待旧的失败子任务", async () => {
   const root = await mkdtemp(join(tmpdir(), "scene-tripo-"));
   const storage = new LocalFileStorage(root);
   const project = "tripo-scene";
@@ -58,20 +58,26 @@ test("完整场景用 Tripo P1，后台续跑保留选择，显式重试不再�
         catch (error) { if (!(error instanceof CloudTaskPending)) throw error; }
         finally { await Promise.all(cloud.pending); }
       };
-      await step({ tripo3dApiKey: "fixture", threeDModel: "tripo-p1" });
+      await step({ seed3dApiKey: "fixture", threeDModel: "hyper3d-gen2" });
       expect(queued).toHaveLength(1);
       expect(queued[0]!.operation).toMatchObject({ operation: "3d", input: {
-        retry: { provider: "tripo-direct", options: { imageModel: TRIPO_P1_MODEL } },
+        retry: {
+          provider: "hyper3d-volc",
+          options: { model: config.ark3d.hyper3dModel },
+        },
       } });
-      expect((await readSceneJob(storage, project, created.id)).tripoImageModel).toBe(TRIPO_P1_MODEL);
-      await step({ tripo3dApiKey: "fixture" });
+      // 任务把渠道与模型 ID 钉在自己身上：后续续跑/重试都看这两个字段
+      const pinned = await readSceneJob(storage, project, created.id);
+      expect(pinned.modelProvider).toBe("hyper3d-volc");
+      expect(pinned.modelId).toBe(config.ark3d.hyper3dModel);
+      await step({ seed3dApiKey: "fixture" });
       expect(queued).toHaveLength(1);
       const model = `projects/${project}/assets/chair/0-chair.glb`;
       await storage.writeBytes(model, new Uint8Array([1]));
       await writeJson(storage, projectTaskFile(project, queued[0]!.task.id), GenerationTaskSchema, {
         ...queued[0]!.task, status: "succeeded", result: { files: [model] },
       });
-      await step({ tripo3dApiKey: "fixture" });
+      await step({ seed3dApiKey: "fixture" });
       await step({});
       expect((await readSceneJob(storage, project, created.id)).status).toBe("succeeded");
       expect(queued).toHaveLength(1);
